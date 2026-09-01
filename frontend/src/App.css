@@ -736,3 +736,13 @@ body {
     grid-template-columns: 1fr;
   }
 }
+/* Força todos os campos de texto, select e textarea a terem letras escuras legíveis */
+input, select, textarea {
+  color: #0f172a !important;
+}
+
+/* Garante que o texto de placeholder também fique visível e cinza suave */
+input::placeholder, textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1;
+}
