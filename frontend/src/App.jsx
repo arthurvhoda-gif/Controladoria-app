@@ -16,6 +16,7 @@ function App() {
   const [senhaLogin, setSenhaLogin] = useState('')
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [pagina, setPagina] = useState(usuarioLogado?.perfil === 'Solicitante' ? 'solicitacoes' : 'dashboard')
+  const [sidebarAberta, setSidebarAberta] = useState(false)
 
   const [backendOnline, setBackendOnline] = useState(false)
   const [solicitacoes, setSolicitacoes] = useState([])
@@ -586,27 +587,30 @@ function App() {
         </div>
       )}
 
-      {/* SIDEBAR COM CORREÇÃO DE SCROLL E FIXAÇÃO DO BOTÃO DE SAIR */}
-      <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0, overflowY: 'auto' }}>
-        <div className="brand" style={{ flexShrink: 0 }}>
-          <div className="brand-mark">G</div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <strong style={{ fontSize: '18px' }}>Controladoria</strong>
-            <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize</span>
+      {/* SIDEBAR COM SUPORTE A MENU RESPONSIVO (HAMBÚRGUER) */}
+      <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`} style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0, overflowY: 'auto' }}>
+        <div className="brand" style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="brand-mark">G</div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <strong style={{ fontSize: '18px' }}>Controladoria</strong>
+              <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize</span>
+            </div>
           </div>
+          <button onClick={() => setSidebarAberta(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '20px', cursor: 'pointer', display: window.innerWidth <= 768 ? 'block' : 'none' }}>×</button>
         </div>
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
-          <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('dashboard')}><span className="nav-icon">◈</span><span>Dashboard</span></button>
-          <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('analises')}><span className="nav-icon">◠</span><span>Análises</span></button>
-          <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('solicitacoes')}><span className="nav-icon">▣</span><span>Solicitações</span>{ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}</button>
-          <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('compras')}><span className="nav-icon">◫</span><span>Compras</span></button>
+          <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}><span className="nav-icon">◈</span><span>Dashboard</span></button>
+          <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}><span className="nav-icon">◠</span><span>Análises</span></button>
+          <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}><span className="nav-icon">▣</span><span>Solicitações</span>{ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}</button>
+          <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}><span className="nav-icon">◫</span><span>Compras</span></button>
           
           <div style={{ margin: '16px 0 8px 0', borderTop: '1px solid rgba(255,255,255,0.1)' }}></div>
           
-          <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('condominios')}><span className="nav-icon">🏢</span><span>Condomínios</span></button>
-          <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('categorias')}><span className="nav-icon">🏷️</span><span>Categorias</span></button>
-          <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => setPagina('fornecedores')}><span className="nav-icon">🤝</span><span>Fornecedores</span></button>
+          <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}><span className="nav-icon">🏢</span><span>Condomínios</span></button>
+          <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}><span className="nav-icon">🏷️</span><span>Categorias</span></button>
+          <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}><span className="nav-icon">🤝</span><span>Fornecedores</span></button>
         </nav>
 
         <div style={{ flexShrink: 0, marginTop: 'auto', paddingBottom: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '12px', background: '#0f172a' }}>
@@ -622,11 +626,14 @@ function App() {
 
       <main className="main-content">
         <header className="topbar">
-          <div>
-            <span className="breadcrumb">
-              Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina}
-            </span>
-            <h1>{pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? ehControladoria ? 'Aprovações' : 'Minhas Solicitações' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button className="icon-button" onClick={() => setSidebarAberta(true)} style={{ fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>☰</button>
+            <div>
+              <span className="breadcrumb">
+                Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina}
+              </span>
+              <h1>{pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? ehControladoria ? 'Aprovações' : 'Minhas Solicitações' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}</h1>
+            </div>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" onClick={() => carregarDados()}>↻</button>
