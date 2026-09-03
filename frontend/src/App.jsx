@@ -533,6 +533,14 @@ function App() {
     }, true)
   }
 
+  function atualizarCampoCondominio(campo, valor) {
+    setFormularioCondominio(atual => ({ ...atual, [campo]: valor }))
+  }
+
+  function atualizarCampoCategoria(campo, valor) {
+    setFormularioCategoria(atual => ({ ...atual, [campo]: valor }))
+  }
+
   function atualizarCampoFornecedor(campo, valor) {
     setFormularioFornecedor(atual => ({ ...atual, [campo]: valor }))
   }
@@ -587,7 +595,12 @@ function App() {
         </div>
       )}
 
-      {/* SIDEBAR COM SUPORTE A MENU RESPONSIVO (HAMBÚRGUER) */}
+      {/* CAMADA DE FUNDO ESCURO QUANDO A SIDEBAR ESTÁ ABERTA NO CELULAR */}
+      {sidebarAberta && (
+        <div className="sidebar-overlay" onClick={() => setSidebarAberta(false)} />
+      )}
+
+      {/* SIDEBAR */}
       <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`} style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0, overflowY: 'auto' }}>
         <div className="brand" style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -597,7 +610,8 @@ function App() {
               <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize</span>
             </div>
           </div>
-          <button onClick={() => setSidebarAberta(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '20px', cursor: 'pointer', display: window.innerWidth <= 768 ? 'block' : 'none' }}>×</button>
+          {/* Botão de fechar dentro do menu em dispositivos móveis */}
+          <button onClick={() => setSidebarAberta(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '22px', cursor: 'pointer', display: window.innerWidth <= 768 ? 'block' : 'none', padding: '4px' }}>✕</button>
         </div>
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
@@ -627,7 +641,14 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button className="icon-button" onClick={() => setSidebarAberta(true)} style={{ fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>☰</button>
+            {/* Botão de menu integrado perfeitamente ao cabeçalho */}
+            <button 
+              className="icon-button" 
+              onClick={() => setSidebarAberta(!sidebarAberta)}
+              style={{ fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '40px', minHeight: '40px' }}
+            >
+              ☰
+            </button>
             <div>
               <span className="breadcrumb">
                 Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina}
