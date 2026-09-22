@@ -547,12 +547,13 @@ function App() {
 
   if (!usuarioLogado) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', width: '100vw', backgroundColor: '#f8fafc', backgroundImage: 'radial-gradient(circle at 50% -20%, #dbeafe, #f8fafc 60%)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', width: '100%', backgroundColor: '#f8fafc', backgroundImage: 'radial-gradient(circle at 50% -20%, #dbeafe, #f8fafc 60%)', padding: '20px', boxSizing: 'border-box' }}>
         <div className="toast-container">
           {toasts.map(t => (<div key={t.id} className={`toast ${t.tipo}`}><span className="toast-icon">{t.tipo === 'success' ? '✓' : '!'}</span><span>{t.mensagem}</span></div>))}
         </div>
         <div style={{ background: '#ffffff', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)', width: '100%', maxWidth: '420px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <div style={{ width: '64px', height: '64px', background: 'linear-gradient(135deg, #3b82f6, #2563eb)', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: '800', color: 'white', margin: '0 0 24px 0' }}>C</div>
+          <img src="/logo.png" alt="Haize Logo" style={{ width: '80px', height: '80px', marginBottom: '16px', borderRadius: '12px' }} onError={(e) => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
+          <div style={{ display: 'none', width: '64px', height: '64px', background: 'linear-gradient(135deg, #3b82f6, #2563eb)', borderRadius: '16px', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: '800', color: 'white', margin: '0 0 24px 0' }}>C</div>
           <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>Controladoria</h2>
           <p style={{ fontSize: '14px', color: '#64748b', textAlign: 'center', margin: '0 0 32px 0' }}>Acesso restrito ao sistema.</p>
           <form onSubmit={fazerLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -579,15 +580,16 @@ function App() {
         {toasts.map(toast => (<div key={toast.id} className={`toast ${toast.tipo}`}><span className="toast-icon">{toast.tipo === 'success' ? '✓' : '!'}</span><span>{toast.mensagem}</span></div>))}
       </div>
 
+      {/* MODAL DE CONFIRMAÇÃO / PROMPT */}
       {dialog.isOpen && (
-        <div style={{ zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)' }} onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
-          <div style={{ width: '100%', maxWidth: '400px', backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', display: 'flex', flexDirection: 'column', gap: '16px', animation: 'slideUp 0.2s ease-out' }}>
+        <div className="dialog-overlay" onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
+          <div className="dialog-box">
             <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>{dialog.title}</h3>
             <p style={{ margin: 0, fontSize: '14px', color: '#475569' }}>{dialog.message}</p>
             {dialog.type === 'prompt' && (
-              <input type="text" value={dialog.inputValue} onChange={e => setDialog(p => ({ ...p, inputValue: e.target.value }))} autoFocus onKeyDown={e => { if (e.key === 'Enter') handleConfirmDialog() }} style={{ width: '100%', padding: '12px 16px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '15px', outline: 'none', boxSizing: 'border-box' }} />
+              <input type="text" className="dialog-input" value={dialog.inputValue} onChange={e => setDialog(p => ({ ...p, inputValue: e.target.value }))} autoFocus onKeyDown={e => { if (e.key === 'Enter') handleConfirmDialog() }} />
             )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+            <div className="dialog-actions">
               <button type="button" className="button-secondary" onClick={fecharDialog}>{dialog.cancelText}</button>
               <button type="button" className={dialog.isDanger ? 'button-danger' : 'button-primary'} onClick={handleConfirmDialog}>{dialog.confirmText}</button>
             </div>
@@ -600,18 +602,17 @@ function App() {
         <div className="sidebar-overlay" onClick={() => setSidebarAberta(false)} />
       )}
 
-      {/* SIDEBAR */}
-      <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`} style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0, overflowY: 'auto' }}>
-        <div className="brand" style={{ flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* SIDEBAR COM A LOGO OFICIAL HAIZE */}
+      <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`}>
+        <div className="brand">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className="brand-mark">G</div>
+            <img src="/logo.png" alt="Haize" style={{ width: '38px', height: '38px', borderRadius: '8px', backgroundColor: 'white', padding: '2px' }} onError={(e) => { e.target.style.display='none'; }} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <strong style={{ fontSize: '18px' }}>Controladoria</strong>
-              <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize</span>
+              <strong style={{ fontSize: '18px', letterSpacing: '-0.5px' }}>Controladoria</strong>
+              <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize Síndico Profissional</span>
             </div>
           </div>
-          {/* Botão de fechar dentro do menu em dispositivos móveis */}
-          <button onClick={() => setSidebarAberta(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '22px', cursor: 'pointer', display: window.innerWidth <= 768 ? 'block' : 'none', padding: '4px' }}>✕</button>
+          <button onClick={() => setSidebarAberta(false)} className="fechar-menu-mobile">✕</button>
         </div>
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
@@ -641,11 +642,9 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* Botão de menu integrado perfeitamente ao cabeçalho */}
             <button 
-              className="icon-button" 
+              className="icon-button menu-mobile-btn" 
               onClick={() => setSidebarAberta(!sidebarAberta)}
-              style={{ fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '40px', minHeight: '40px' }}
             >
               ☰
             </button>
@@ -922,7 +921,7 @@ function App() {
 
         {/* MODAL DETALHES DA SOLICITAÇÃO */}
         {solicitacaoSelecionada && (
-          <div className="modal-overlay" style={{ zIndex: 100 }} onClick={e => { if (e.target === e.currentTarget) fecharSolicitacao() }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharSolicitacao() }}>
             <div className="modal modal-large">
               <div className="modal-header">
                 <div><span className="eyebrow">DETALHES</span><h3>{solicitacaoSelecionada.numero}</h3></div>
@@ -1019,10 +1018,10 @@ function App() {
                 </div>
               </div>
               <div className="modal-actions">
-                {!ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => editarSolicitacao(solicitacaoSelecionada)}>Corrigir Pedido</button><button className="button-danger" style={{ marginLeft: 'auto' }} onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Pedido</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button><button className="button-danger" style={{ marginLeft: 'auto' }} onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (<><button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button><button className="button-danger" style={{ marginLeft: 'auto' }} onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (<><button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button><button className="button-danger" style={{ marginLeft: 'auto' }} onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
+                {!ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => editarSolicitacao(solicitacaoSelecionada)}>Corrigir Pedido</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Pedido</button></>)}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (<><button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (<><button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
                 {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Finalizada' && (<div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: '13px', fontWeight: '600', color: '#059669' }}>✓ Solicitação finalizada</span><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></div>)}
               </div>
             </div>
@@ -1031,65 +1030,66 @@ function App() {
 
         {/* MODAL: NOVA SOLICITAÇÃO / EDIÇÃO */}
         {mostrarFormulario && (
-          <div className="modal-overlay" style={{ zIndex: 500 }} onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
             <div className="modal">
               <div className="modal-header">
                 <div><span className="eyebrow">{solicitacaoEditando ? 'EDIÇÃO' : 'NOVA SOLICITAÇÃO'}</span><h3>{solicitacaoEditando ? 'Editar solicitação' : 'Criar Solicitação'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormulario}>×</button>
               </div>
-              <form className="form" onSubmit={salvarSolicitacao}>
-                <div className="form-grid">
-                  
-                  <div className="form-group full">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Condomínio *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCondominio() }}>+ Novo</button></div>
-                    <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
-                      <option value="">Selecione...</option>
-                      {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
-                    </select>
-                  </div>
-                  
-                  <div className="form-group full">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Categoria da Despesa *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCategoria() }}>+ Nova</button></div>
-                    <select value={formulario.categoria} onChange={e => atualizarCampoFormulario('categoria', e.target.value)} required>
-                      <option value="">Selecione...</option>
-                      {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
-                    </select>
-                  </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarSolicitacao}>
+                  <div className="form-grid">
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Condomínio *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCondominio() }}>+ Novo</button></div>
+                      <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Categoria da Despesa *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCategoria() }}>+ Nova</button></div>
+                      <select value={formulario.categoria} onChange={e => atualizarCampoFormulario('categoria', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
+                      </select>
+                    </div>
 
-                  <div className="form-group full">
-                    <label>O que está sendo comprado? *</label>
-                    <input type="text" placeholder="Ex: Reforma da guarita..." value={formulario.descricao} onChange={e => atualizarCampoFormulario('descricao', e.target.value)} required />
-                  </div>
-                  
-                  <div className="form-group">
-                    <label>Valor de Serviço (R$)</label>
-                    <input type="text" placeholder="Ex: 500,00" value={formulario.valor_servico} onChange={e => atualizarCampoFormulario('valor_servico', e.target.value)} />
-                  </div>
-                  
-                  <div className="form-group">
-                    <label>Valor de Produto / Material (R$)</label>
-                    <input type="text" placeholder="Ex: 1200,00" value={formulario.valor_produto} onChange={e => atualizarCampoFormulario('valor_produto', e.target.value)} />
-                  </div>
-                  
-                  <div className="form-group full">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Fornecedor / Prestador de Serviço *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoFornecedor() }}>+ Novo</button></div>
-                    <select value={formulario.fornecedor} onChange={e => atualizarCampoFormulario('fornecedor', e.target.value)} required>
-                      <option value="">Selecione...</option>
-                      {fornecedores.map(forn => (<option key={forn.id || forn.nome} value={forn.nome}>{forn.nome}</option>))}
-                    </select>
-                  </div>
+                    <div className="form-group full">
+                      <label>O que está sendo comprado? *</label>
+                      <input type="text" placeholder="Ex: Reforma da guarita..." value={formulario.descricao} onChange={e => atualizarCampoFormulario('descricao', e.target.value)} required />
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Valor de Serviço (R$)</label>
+                      <input type="text" placeholder="Ex: 500,00" value={formulario.valor_servico} onChange={e => atualizarCampoFormulario('valor_servico', e.target.value)} />
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Valor de Produto / Material (R$)</label>
+                      <input type="text" placeholder="Ex: 1200,00" value={formulario.valor_produto} onChange={e => atualizarCampoFormulario('valor_produto', e.target.value)} />
+                    </div>
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Fornecedor / Prestador de Serviço *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoFornecedor() }}>+ Novo</button></div>
+                      <select value={formulario.fornecedor} onChange={e => atualizarCampoFormulario('fornecedor', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {fornecedores.map(forn => (<option key={forn.id || forn.nome} value={forn.nome}>{forn.nome}</option>))}
+                      </select>
+                    </div>
 
-                  <div className="form-group full">
-                    <label>Observação adicional *</label>
-                    <textarea rows="3" placeholder="Informações úteis para a controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                    <div className="form-group full">
+                      <label>Observação adicional *</label>
+                      <textarea rows="3" placeholder="Informações úteis para a controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                    </div>
                   </div>
-                </div>
-                <div className="form-footer">
-                  <div style={{ marginRight: 'auto', display: 'flex', alignItems: 'center' }}><span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Total estimado: </span><strong style={{ fontSize: '18px', marginLeft: '8px', color: 'var(--text-primary)' }}>{formatarValor(numero(formulario.valor_servico) + numero(formulario.valor_produto))}</strong></div>
-                  <button type="button" className="button-secondary" onClick={fecharFormulario}>Cancelar</button>
-                  <button type="submit" className="button-primary" disabled={salvando}>{salvando ? 'Enviando...' : 'Enviar Solicitação'}</button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormulario}>Cancelar</button>
+                <button type="submit" className="button-primary" onClick={salvarSolicitacao} disabled={salvando}>{salvando ? 'Enviando...' : 'Enviar Solicitação'}</button>
+              </div>
             </div>
           </div>
         )}
@@ -1102,31 +1102,33 @@ function App() {
                 <div><span className="eyebrow">{condominioEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{condominioEditando ? 'Editar Condomínio' : 'Cadastrar Condomínio'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormularioCondominio}>×</button>
               </div>
-              <form className="form" onSubmit={salvarCondominio}>
-                <div className="form-grid">
-                  <div className="form-group full">
-                    <label>Nome do Condomínio *</label>
-                    <input type="text" value={formularioCondominio.nome} onChange={e => atualizarCampoCondominio('nome', e.target.value)} required autoFocus />
+              <div className="modal-body">
+                <form className="form">
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome do Condomínio *</label>
+                      <input type="text" value={formularioCondominio.nome} onChange={e => atualizarCampoCondominio('nome', e.target.value)} required autoFocus />
+                    </div>
+                    <div className="form-group">
+                      <label>CNPJ</label>
+                      <input type="text" value={formularioCondominio.cnpj} onChange={e => atualizarCampoCondominio('cnpj', e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label>Código Interno</label>
+                      <input type="text" value={formularioCondominio.codigo} onChange={e => atualizarCampoCondominio('codigo', e.target.value)} />
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>CNPJ</label>
-                    <input type="text" value={formularioCondominio.cnpj} onChange={e => atualizarCampoCondominio('cnpj', e.target.value)} />
-                  </div>
-                  <div className="form-group">
-                    <label>Código Interno</label>
-                    <input type="text" value={formularioCondominio.codigo} onChange={e => atualizarCampoCondominio('codigo', e.target.value)} />
-                  </div>
-                </div>
-                <div className="form-footer">
-                  <button type="button" className="button-secondary" onClick={fecharFormularioCondominio} disabled={salvando}>Cancelar</button>
-                  <button type="submit" className="button-primary" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioCondominio} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarCondominio} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* MODAL: NOVA CATEGORIA (COM LISTA DE LIMITES) */}
+        {/* MODAL: NOVA CATEGORIA */}
         {mostrarFormularioCategoria && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCategoria() }}>
             <div className="modal">
@@ -1134,60 +1136,62 @@ function App() {
                 <div><span className="eyebrow">{categoriaEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{categoriaEditando ? 'Editar Categoria' : 'Cadastrar Categoria'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormularioCategoria}>×</button>
               </div>
-              <form className="form" onSubmit={salvarCategoria}>
-                <div className="form-grid">
-                  <div className="form-group full">
-                    <label>Nome da Categoria *</label>
-                    <input type="text" value={formularioCategoria.nome} onChange={e => atualizarCampoCategoria('nome', e.target.value)} required autoFocus placeholder="Ex: Limpeza, Manutenção..." />
-                  </div>
-                  <div className="form-group full">
-                    <label>Descrição Breve</label>
-                    <input type="text" value={formularioCategoria.descricao} onChange={e => atualizarCampoCategoria('descricao', e.target.value)} />
-                  </div>
+              <div className="modal-body">
+                <form className="form">
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome da Categoria *</label>
+                      <input type="text" value={formularioCategoria.nome} onChange={e => atualizarCampoCategoria('nome', e.target.value)} required autoFocus placeholder="Ex: Limpeza, Manutenção..." />
+                    </div>
+                    <div className="form-group full">
+                      <label>Descrição Breve</label>
+                      <input type="text" value={formularioCategoria.descricao} onChange={e => atualizarCampoCategoria('descricao', e.target.value)} />
+                    </div>
 
-                  <div className="form-group full" style={{ marginTop: '8px' }}>
-                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>Limites de Aprovação Automática por Condomínio</span>
-                    </label>
-                    
-                    {condominios.length === 0 ? (
-                      <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
-                        Cadastre condomínios primeiro para definir limites de aprovação automática.
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
-                        {condominios.map(c => (
-                          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                            <span style={{ fontSize: '14px', fontWeight: '600', color: '#334155' }}>{c.nome}</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ fontSize: '13px', color: '#64748b' }}>R$</span>
-                              <input 
-                                type="text" 
-                                style={{ width: '110px', padding: '8px', fontSize: '14px', textAlign: 'right', border: '1px solid #cbd5e1', borderRadius: '6px' }} 
-                                placeholder="0,00"
-                                value={formularioCategoria.limites[c.nome] || ''}
-                                onChange={e => {
-                                  setFormularioCategoria(prev => ({
-                                    ...prev,
-                                    limites: {
-                                      ...prev.limites,
-                                      [c.nome]: e.target.value
-                                    }
-                                  }))
-                                }}
-                              />
+                    <div className="form-group full" style={{ marginTop: '8px' }}>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Limites de Aprovação Automática por Condomínio</span>
+                      </label>
+                      
+                      {condominios.length === 0 ? (
+                        <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+                          Cadastre condomínios primeiro para definir limites de aprovação automática.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                          {condominios.map(c => (
+                            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#334155' }}>{c.nome}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '13px', color: '#64748b' }}>R$</span>
+                                <input 
+                                  type="text" 
+                                  style={{ width: '110px', padding: '8px', fontSize: '14px', textAlign: 'right', border: '1px solid #cbd5e1', borderRadius: '6px' }} 
+                                  placeholder="0,00"
+                                  value={formularioCategoria.limites[c.nome] || ''}
+                                  onChange={e => {
+                                    setFormularioCategoria(prev => ({
+                                      ...prev,
+                                      limites: {
+                                        ...prev.limites,
+                                        [c.nome]: e.target.value
+                                      }
+                                    }))
+                                  }}
+                                />
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="form-footer">
-                  <button type="button" className="button-secondary" onClick={fecharFormularioCategoria} disabled={salvando}>Cancelar</button>
-                  <button type="submit" className="button-primary" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioCategoria} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarCategoria} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
             </div>
           </div>
         )}
@@ -1200,26 +1204,28 @@ function App() {
                 <div><span className="eyebrow">{fornecedorEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{fornecedorEditando ? 'Editar Fornecedor' : 'Cadastrar Fornecedor'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormularioFornecedor}>×</button>
               </div>
-              <form className="form" onSubmit={salvarFornecedor}>
-                <div className="form-grid">
-                  <div className="form-group full">
-                    <label>Nome / Razão Social *</label>
-                    <input type="text" placeholder="Nome do fornecedor..." value={formularioFornecedor.nome} onChange={e => atualizarCampoFornecedor('nome', e.target.value)} required autoFocus />
+              <div className="modal-body">
+                <form className="form">
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome / Razão Social *</label>
+                      <input type="text" placeholder="Nome do fornecedor..." value={formularioFornecedor.nome} onChange={e => atualizarCampoFornecedor('nome', e.target.value)} required autoFocus />
+                    </div>
+                    <div className="form-group">
+                      <label>CNPJ</label>
+                      <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('cnpj', e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label>Categoria de Serviço</label>
+                      <input type="text" value={formularioFornecedor.categoria} onChange={e => atualizarCampoFornecedor('categoria', e.target.value)} />
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>CNPJ</label>
-                    <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('cnpj', e.target.value)} />
-                  </div>
-                  <div className="form-group">
-                    <label>Categoria de Serviço</label>
-                    <input type="text" value={formularioFornecedor.categoria} onChange={e => atualizarCampoFornecedor('categoria', e.target.value)} />
-                  </div>
-                </div>
-                <div className="form-footer">
-                  <button type="button" className="button-secondary" onClick={fecharFormularioFornecedor} disabled={salvando}>Cancelar</button>
-                  <button type="submit" className="button-primary" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioFornecedor} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarFornecedor} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
             </div>
           </div>
         )}
