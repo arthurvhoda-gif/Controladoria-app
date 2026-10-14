@@ -28,7 +28,7 @@ from schemas import (
 os.makedirs("uploads", exist_ok=True)
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Controladoria", version="1.1.0")
+app = FastAPI(title="Controladoria", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -154,6 +154,29 @@ def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario
             "limites": [{"condominio": l.condominio_nome, "limite": l.limite} for l in limites_db]
         })
     return resultado
+
+@app.get("/orcamento-categoria")
+def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+    limite_obj = db.query(models.LimiteCategoriaCondominio).filter(
+        models.LimiteCategoriaCondominio.categoria_nome == categoria,
+        models.LimiteCategoriaCondominio.condominio_nome == condominio
+    ).first()
+    
+    teto = limite_obj.limite if limite_obj else 0.0
+    
+    sols_existentes = db.query(models.SolicitacaoCompra).filter(
+        models.SolicitacaoCompra.condominio == condominio,
+        models.SolicitacaoCompra.categoria == categoria,
+        models.SolicitacaoCompra.status.in_(["Aprovada", "Em execução", "Finalizada"])
+    ).all()
+    
+    gasto_atual = sum((s.valor_aprovado if s.valor_aprovado is not None else s.valor) for s in sols_existentes)
+    
+    return {
+        "teto": teto,
+        "gasto_atual": gasto_atual,
+        "saldo": teto - gasto_atual if teto > 0 else 0
+    }
 
 @app.post("/categorias")
 def criar_categoria(cat: CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):

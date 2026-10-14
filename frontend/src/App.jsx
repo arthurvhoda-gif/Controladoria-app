@@ -55,6 +55,8 @@ function App() {
   const [filtroMesAnalise, setFiltroMesAnalise] = useState('todos')
   const [filtroCondominioAnalise, setFiltroCondominioAnalise] = useState('todos')
 
+  const [orcamentoAtualFormulario, setOrcamentoAtualFormulario] = useState(null)
+
   const [formulario, setFormulario] = useState({
     condominio: '', categoria: '', fornecedor: '', descricao: '',
     valor_servico: '', valor_produto: '', observacao: ''
@@ -159,6 +161,27 @@ function App() {
       return () => clearInterval(int)
     }
   }, [usuarioLogado])
+
+  useEffect(() => {
+    async function consultarOrcamento() {
+      if (formulario.condominio && formulario.categoria) {
+        try {
+          const res = await fetch(`${API_URL}/orcamento-categoria?condominio=${encodeURIComponent(formulario.condominio)}&categoria=${encodeURIComponent(formulario.categoria)}`, { headers: getAuthHeaders() })
+          if (res.ok) {
+            const dados = await res.json()
+            setOrcamentoAtualFormulario(dados)
+          } else {
+            setOrcamentoAtualFormulario(null)
+          }
+        } catch {
+          setOrcamentoAtualFormulario(null)
+        }
+      } else {
+        setOrcamentoAtualFormulario(null)
+      }
+    }
+    consultarOrcamento()
+  }, [formulario.condominio, formulario.categoria])
 
   function numero(v) {
     if (v === null || v === undefined || v === '') return 0
@@ -289,7 +312,7 @@ function App() {
 
 
   function atualizarCampoFormulario(campo, valor) { setFormulario(atual => ({ ...atual, [campo]: valor })) }
-  function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null) }
+  function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null); setOrcamentoAtualFormulario(null) }
   function fecharFormulario() { setMostrarFormulario(false); limparFormulario() }
 
   function editarSolicitacao(solicitacao) {
@@ -1152,6 +1175,21 @@ function App() {
                         {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
                       </select>
                     </div>
+
+                    {orcamentoAtualFormulario && (
+                      <div className="form-group full" style={{ background: orcamentoAtualFormulario.teto === 0 ? '#f8fafc' : orcamentoAtualFormulario.saldo < 0 ? '#fef2f2' : '#f0fdf4', border: `1px solid ${orcamentoAtualFormulario.teto === 0 ? '#cbd5e1' : orcamentoAtualFormulario.saldo < 0 ? '#fecaca' : '#bbf7d0'}`, padding: '12px 16px', borderRadius: '8px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: orcamentoAtualFormulario.teto === 0 ? '#64748b' : orcamentoAtualFormulario.saldo < 0 ? '#991b1b' : '#15803d' }}>
+                          {orcamentoAtualFormulario.teto === 0 ? 'ℹ️ Sem regra de teto cadastrada para esta categoria' : orcamentoAtualFormulario.saldo < 0 ? '⚠️ Alerta: Teto Orçamentário Estourado' : '✅ Teto Orçamentário Disponível'}
+                        </span>
+                        {orcamentoAtualFormulario.teto > 0 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '8px', fontSize: '13px' }}>
+                            <div><span>Teto: </span><strong>{formatarValor(orcamentoAtualFormulario.teto)}</strong></div>
+                            <div><span>Comprometido: </span><strong>{formatarValor(orcamentoAtualFormulario.gasto_atual)}</strong></div>
+                            <div><span>Saldo: </span><strong style={{ color: orcamentoAtualFormulario.saldo < 0 ? '#dc2626' : '#059669' }}>{formatarValor(orcamentoAtualFormulario.saldo)}</strong></div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="form-group full">
                       <label>O que está sendo comprado? *</label>
