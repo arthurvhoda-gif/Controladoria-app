@@ -175,7 +175,20 @@ function App() {
   function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
   function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
   function formatarDataHora(dataStr) { if (!dataStr) return '-'; try { const d = new Date(dataStr); return isNaN(d.getTime()) ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return dataStr } }
-  function formatarMesAno(yyyyMM) { try { if (!yyyyMM || typeof yyyMM !== 'string' || !yyyyMM.includes('-')) return String(yyyyMM || ''); const [ano, mes] = yyyMM.split('-'); const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']; const indice = parseInt(mes, 10) - 1; if (indice >= 0 && indice <= 11) return `${meses[indice]}/${ano}`; return yyyMM } catch (e) { return String(yyyyMM || '') } }
+  
+  function formatarMesAno(yyyyMM) {
+    try {
+      if (!yyyyMM || typeof yyyyMM !== 'string' || !yyyyMM.includes('-')) return String(yyyyMM || '')
+      const [ano, mes] = yyyyMM.split('-')
+      const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+      const indice = parseInt(mes, 10) - 1
+      if (indice >= 0 && indice <= 11) return `${meses[indice]}/${ano}`
+      return yyyyMM
+    } catch (e) {
+      return String(yyyyMM || '')
+    }
+  }
+
   function normalizarTexto(v) { return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() }
 
   function textoStatus(status) {
@@ -217,7 +230,15 @@ function App() {
   const valorTotalSolicitado = solicitacoes.reduce((total, item) => total + solicitado(item), 0)
   const valorTotalAprovado = solicitacoes.reduce((total, item) => ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(item.status)) ? total + (aprovado(item) || solicitado(item)) : total, 0)
   const valorTotalRealizado = solicitacoes.reduce((total, item) => textoStatus(item.status) === 'Finalizada' ? total + (realizado(item) || aprovado(item) || solicitado(item)) : total, 0)
-  const economiaTotal = valorTotalSolicitado - valorTotalRealizado
+  
+  const economiaTotal = solicitacoes.reduce((total, item) => {
+    if (textoStatus(item.status) === 'Finalizada') {
+      const vSol = solicitado(item)
+      const vReal = realizado(item) || aprovado(item) || vSol
+      return total + (vSol - vReal)
+    }
+    return total
+  }, 0)
 
   const solicitacoesFiltradas = solicitacoes.filter(sol => {
     const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''} ${textoStatus(sol.status) || ''}`)
@@ -356,6 +377,38 @@ function App() {
     })
   }
 
+  function solicitarAjuste(solicitacao) {
+    pedirInput('Solicitar Ajuste', 'Informe o motivo ou o que precisa ser corrigido pelo solicitante:', solicitacao.motivo_ajuste || '', async motivo => {
+      if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo do ajuste.', 'error'); return }
+      try {
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'Ajuste solicitado', motivo_ajuste: motivo.trim() }) })
+        if (!res.ok) {
+          const erroMsg = await extrairErro(res, 'Erro ao solicitar ajuste.')
+          throw new Error(erroMsg)
+        }
+        await carregarDados()
+        mostrarToast('Ajuste solicitado ao autor.', 'success')
+        fecharSolicitacao()
+      } catch (e) { mostrarToast(e.message, 'error') }
+    })
+  }
+
+  function reprovarSolicitacao(solicitacao) {
+    pedirInput('Reprovar Solicitação', 'Informe o motivo da reprovação:', '', async motivo => {
+      if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo da reprovação.', 'error'); return }
+      try {
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'Reprovada', motivo_ajuste: motivo.trim() }) })
+        if (!res.ok) {
+          const erroMsg = await extrairErro(res, 'Erro ao reprovar solicitação.')
+          throw new Error(erroMsg)
+        }
+        await carregarDados()
+        mostrarToast('Solicitação reprovada.', 'success')
+        fecharSolicitacao()
+      } catch (e) { mostrarToast(e.message, 'error') }
+    }, true)
+  }
+
   function iniciarExecucao(solicitacao) {
     confirmarAcao('Executar solicitação', `Deseja executar a solicitação ${solicitacao.numero || ''}?`, async () => {
       try {
@@ -404,7 +457,7 @@ function App() {
   }
 
   function fecharFormularioCondominio() { setMostrarFormularioCondominio(false); setCondominioEditando(null); setFormularioCondominio({ nome: '', cnpj: '', codigo: '' }) }
-  function abrirFormularioNovoCondominio() { limparFormularioCondominio(); setMostrarFormularioCondominio(true) }
+  function abrirFormularioNovoCondominio() { setCondominioEditando(null); setFormularioCondominio({ nome: '', cnpj: '', codigo: '' }); setMostrarFormularioCondominio(true) }
   function editarCondominio(cond) { setCondominioEditando(cond); setFormularioCondominio({ nome: cond.nome || '', cnpj: cond.cnpj || '', codigo: cond.codigo || '' }); setMostrarFormularioCondominio(true) }
   
   async function salvarCondominio(e) {
@@ -421,7 +474,7 @@ function App() {
       await carregarDados()
       fecharFormularioCondominio()
       if (mostrarFormulario && !condominioEditando) atualizarCampoFormulario('condominio', salvo.nome)
-      mostrarToast('Salvo!', 'success')
+      mostrarToast('Condomínio salvo com sucesso!', 'success')
     } catch (err) { mostrarToast(err.message, 'error') } finally { setSalvando(false) }
   }
 
@@ -667,18 +720,19 @@ function App() {
               <div className="kpi-card"><div className="kpi-top"><span>Solicitado</span><span className="kpi-icon">$</span></div><strong>{formatarValor(valorTotalSolicitado)}</strong></div>
               <div className="kpi-card"><div className="kpi-top"><span>Aprovado</span><span className="kpi-icon success">✓</span></div><strong>{formatarValor(valorTotalAprovado)}</strong></div>
               <div className="kpi-card"><div className="kpi-top"><span>Realizado</span><span className="kpi-icon">◫</span></div><strong>{formatarValor(valorTotalRealizado)}</strong></div>
-              <div className="kpi-card highlight"><div className="kpi-top"><span>Economia</span><span className="kpi-icon success">↓</span></div><strong>{formatarValor(economiaTotal)}</strong></div>
+              <div className="kpi-card highlight"><div className="kpi-top"><span>Economia (Finalizadas)</span><span className="kpi-icon success">↓</span></div><strong>{formatarValor(economiaTotal)}</strong></div>
             </section>
 
             <section className="dashboard-grid">
               <div className="panel">
                 <div className="panel-header"><div><span className="eyebrow">DESTAQUES</span><h3>Maiores Solicitações</h3></div></div>
                 <div className="table">
-                  <div className="table-header"><span>ID</span><span>Condomínio</span><span>Valor Total</span><span>Status</span></div>
+                  <div className="table-header"><span>ID</span><span>Condomínio</span><span>Descrição</span><span>Valor Total</span><span>Status</span></div>
                   {maioresSolicitacoes.slice(0, 5).map(sol => (
                     <div className="table-row clickable" key={sol.id} onClick={() => abrirSolicitacao(sol)}>
                       <span className="id">{sol.numero}</span>
                       <span>{sol.condominio}</span>
+                      <span>{sol.descricao}</span>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <strong>{formatarValor(sol.valor)}</strong>
                         {aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
@@ -773,18 +827,22 @@ function App() {
                     <select style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff' }} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
                       <option value="todos">Todos os Status</option>
                       <option value="Aprovação pendente">Aprovação pendente</option>
+                      <option value="Ajuste solicitado">Ajuste solicitado</option>
                       <option value="Aprovada">Aprovada</option>
                       <option value="Em execução">Em execução</option>
                       <option value="Finalizada">Finalizada</option>
+                      <option value="Reprovada">Reprovada</option>
                     </select>
                   )}
                   <input style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px' }} type="text" placeholder="Buscar..." value={pagina === 'solicitacoes' ? filtroSolicitacao : filtroCompra} onChange={e => pagina === 'solicitacoes' ? setFiltroSolicitacao(e.target.value) : setFiltroCompra(e.target.value)} />
                 </div>
               </div>
               <div className="table">
-                <div className="table-header"><span>ID</span><span>Condomínio</span><span>Descrição</span>{pagina === 'compras' && (<span>Solicitado</span>)}<span>{pagina === 'compras' ? 'Aprovado' : 'Total'}</span><span>Status</span></div>
+                <div className="table-header" style={pagina === 'compras' ? { gridTemplateColumns: '100px 1.2fr 2fr 1fr 1fr 120px' } : undefined}>
+                  <span>ID</span><span>Condomínio</span><span>Descrição</span>{pagina === 'compras' && (<span>Solicitado</span>)}<span>{pagina === 'compras' ? 'Aprovado' : 'Total'}</span><span>Status</span>
+                </div>
                 {(pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).map(sol => (
-                  <div className="table-row clickable" key={sol.id} onClick={() => abrirSolicitacao(sol)}>
+                  <div className="table-row clickable" key={sol.id} style={pagina === 'compras' ? { gridTemplateColumns: '100px 1.2fr 2fr 1fr 1fr 120px' } : undefined} onClick={() => abrirSolicitacao(sol)}>
                     <span className="id">{sol.numero}</span><span>{sol.condominio}</span>
                     <span>
                       {sol.descricao}
@@ -868,6 +926,7 @@ function App() {
                       </div>
                       <h4>{nome}</h4>
                       {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
+                      {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
                       
                       <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
@@ -933,6 +992,15 @@ function App() {
                   const temCorte = vApr > 0 && vApr < vSol; const taFinalizado = vReal > 0; const limite = vApr > 0 ? vApr : vSol; const estourou = taFinalizado && vReal > limite
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                      {solicitacaoSelecionada.motivo_ajuste && (
+                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <span style={{ fontSize: '20px' }}>📌</span>
+                          <div>
+                            <strong style={{ display: 'block', fontSize: '14px', color: '#991b1b', marginBottom: '4px' }}>Motivo do Ajuste / Reprovação</strong>
+                            <span style={{ fontSize: '13px', color: '#b91c1c' }}>{solicitacaoSelecionada.motivo_ajuste}</span>
+                          </div>
+                        </div>
+                      )}
                       {temCorte && (
                         <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ fontSize: '20px' }}>⚠️</span>
@@ -1018,11 +1086,40 @@ function App() {
                 </div>
               </div>
               <div className="modal-actions">
-                {!ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => editarSolicitacao(solicitacaoSelecionada)}>Corrigir Pedido</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Pedido</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovação pendente' && (<><button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (<><button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (<><button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></>)}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Finalizada' && (<div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: '13px', fontWeight: '600', color: '#059669' }}>✓ Solicitação finalizada</span><button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button></div>)}
+                {!ehControladoria && ['Aprovação pendente', 'Ajuste solicitado'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <>
+                    <button className="button-primary" onClick={() => editarSolicitacao(solicitacaoSelecionada)}>Corrigir Pedido</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Pedido</button>
+                  </>
+                )}
+                {ehControladoria && ['Aprovação pendente', 'Ajuste solicitado'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <>
+                    <button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button>
+                    <button className="button-secondary" onClick={() => solicitarAjuste(solicitacaoSelecionada)}>Solicitar Ajuste</button>
+                    <button className="button-danger" onClick={() => reprovarSolicitacao(solicitacaoSelecionada)}>Reprovar</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                  </>
+                )}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
+                  <>
+                    <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </>
+                )}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
+                  <>
+                    <button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </>
+                )}
+                {ehControladoria && ['Finalizada', 'Reprovada'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '600', color: textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '#059669' : '#dc2626' }}>
+                      {textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '✓ Solicitação finalizada' : '✕ Solicitação reprovada'}
+                    </span>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1094,7 +1191,7 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: NOVO CONDÔMINIO */}
+        {/* MODAL: NOVO CONDOMÍNIO */}
         {mostrarFormularioCondominio && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCondominio() }}>
             <div className="modal">
@@ -1103,7 +1200,7 @@ function App() {
                 <button type="button" className="modal-close" onClick={fecharFormularioCondominio}>×</button>
               </div>
               <div className="modal-body">
-                <form className="form">
+                <form className="form" onSubmit={salvarCondominio}>
                   <div className="form-grid">
                     <div className="form-group full">
                       <label>Nome do Condomínio *</label>
@@ -1137,7 +1234,7 @@ function App() {
                 <button type="button" className="modal-close" onClick={fecharFormularioCategoria}>×</button>
               </div>
               <div className="modal-body">
-                <form className="form">
+                <form className="form" onSubmit={salvarCategoria}>
                   <div className="form-grid">
                     <div className="form-group full">
                       <label>Nome da Categoria *</label>
@@ -1205,7 +1302,7 @@ function App() {
                 <button type="button" className="modal-close" onClick={fecharFormularioFornecedor}>×</button>
               </div>
               <div className="modal-body">
-                <form className="form">
+                <form className="form" onSubmit={salvarFornecedor}>
                   <div className="form-grid">
                     <div className="form-group full">
                       <label>Nome / Razão Social *</label>

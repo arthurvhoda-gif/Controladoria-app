@@ -167,7 +167,7 @@
 /* ========================================================
    MODAIS E DIALOGS (Caixas Pop-up)
    ======================================================== */
-.modal-overlay, .dialog-overlay {
+.modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background-color: rgba(15, 23, 42, 0.6);
@@ -176,6 +176,18 @@
   align-items: center;
   justify-content: center;
   z-index: 2000;
+  padding: 16px;
+}
+
+.dialog-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
   padding: 16px;
 }
 
@@ -251,12 +263,16 @@ input::placeholder, textarea::placeholder { color: #94a3b8 !important; opacity: 
 .text-button { background: none; border: none; color: var(--primary); font-weight: 600; font-size: 13px; cursor: pointer; }
 .text-button:hover { text-decoration: underline; }
 
-/* Status Badges */
+/* Status Badges e Variações de Texto */
 .badge { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; display: inline-block; text-align: center; }
 .badge.neutral { background-color: #f1f5f9; color: var(--text-secondary); }
 .badge.approved { background-color: #dbeafe; color: #2563eb; }
 .badge.positive { background-color: #d1fae5; color: #059669; }
 .badge.negative { background-color: #fee2e2; color: #dc2626; }
+
+strong.positive { color: var(--success); }
+strong.negative { color: var(--danger); }
+strong.neutral { color: var(--text-secondary); }
 
 /* Timeline de Histórico */
 .timeline { display: flex; flex-direction: column; gap: 16px; position: relative; margin-top: 12px; }
@@ -267,7 +283,7 @@ input::placeholder, textarea::placeholder { color: #94a3b8 !important; opacity: 
 
 /* Toasts de Notificação (Doca no topo) */
 .toast-container {
-  position: fixed; top: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px;
+  position: fixed; top: 24px; right: 24px; z-index: 99999; display: flex; flex-direction: column; gap: 10px;
 }
 .toast {
   background-color: #0f172a; color: white; padding: 14px 20px; border-radius: 10px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 12px; font-size: 14px; animation: slideDown 0.3s ease-out;
@@ -335,15 +351,15 @@ input::placeholder, textarea::placeholder { color: #94a3b8 !important; opacity: 
   
   /* O Pulo do Gato: Modais em Formato "Bottom Sheet" Ancorados (Estilo Nubank/Ifood) */
   .modal-overlay, .dialog-overlay {
-    padding: 0; /* Anula bordas mortas */
-    align-items: flex-end; /* Cola no chão do celular */
+    padding: 0;
+    align-items: flex-end;
   }
 
   .modal, .dialog-box {
     max-width: 100%;
     margin: 0;
     max-height: 90vh;
-    border-radius: 20px 20px 0 0; /* Arredonda só em cima */
+    border-radius: 20px 20px 0 0;
     animation: slideUpMobile 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
