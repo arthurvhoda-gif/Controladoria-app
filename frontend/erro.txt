@@ -1,0 +1,51 @@
+
+> frontend@0.0.0 build
+> vite build
+
+[36mvite v8.2.2 [32mbuilding client environment for production...[36m[39m
+transforming...
+[31m✗[39m Build failed in 144ms
+
+PWA v1.3.0
+mode      generateSW
+precache  2 entries (0.00 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-2fbc6a65.js
+warnings
+  One of the glob patterns doesn't match any files. Please remove or fix the following: {
+  "globDirectory": "C:\\Users\\Windows\\Documents\\Controladoria\\frontend\\dist",
+  "globPattern": "**/*.{js,wasm,css,html}",
+  "globIgnores": [
+    "**/node_modules/**/*",
+    "sw.js",
+    "workbox-*.js"
+  ]
+}
+
+[31merror during build:
+[31mBuild failed with 1 error:
+
+[plugin vite-plugin-pwa:build]
+Error: Build failed with 1 error:
+
+[31m[builtin:vite-transform] [0mUnterminated string
+      [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/App.jsx:1681:116 [38;5;246m][0m
+      [38;5;246m│[0m
+ [38;5;246m1681 │[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m<[0m[38;5;249mi[0m[38;5;249mn[0m[38;5;249mp[0m[38;5;249mu[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249mt[0m[38;5;249my[0m[38;5;249mp[0m[38;5;249me[0m[38;5;249m=[0m[38;5;249m"[0m[38;5;249mt[0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mt[0m[38;5;249m"[0m[38;5;249m [0m[38;5;249mv[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249mu[0m[38;5;249me[0m[38;5;249m=[0m[38;5;249m{[0m[38;5;249mf[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mm[0m[38;5;249mu[0m[38;5;249ml[0m[38;5;249ma[0m[38;5;249mr[0m[38;5;249mi[0m[38;5;249mo[0m[38;5;249mF[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mn[0m[38;5;249me[0m[38;5;249mc[0m[38;5;249me[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249m.[0m[38;5;249mc[0m[38;5;249mn[0m[38;5;249mp[0m[38;5;249mj[0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mo[0m[38;5;249mn[0m[38;5;249mC[0m[38;5;249mh[0m[38;5;249ma[0m[38;5;249mn[0m[38;5;249mg[0m[38;5;249me[0m[38;5;249m=[0m[38;5;249m{[0m[38;5;249me[0m[38;5;249m [0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249ma[0m[38;5;249mt[0m[38;5;249mu[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249mi[0m[38;5;249mz[0m[38;5;249ma[0m[38;5;249mr[0m[38;5;249mC[0m[38;5;249ma[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mF[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mn[0m[38;5;249me[0m[38;5;249mc[0m[38;5;249me[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249m([0m'
+ [38;5;240m     │[0m                                                                                                                    ┬  
+ [38;5;240m     │[0m                                                                                                                    ╰── 
+[38;5;246m──────╯[0m
+    at aggregateBindingErrorsIntoJsError (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/error-NcRuXAVN.mjs:48:18)
+    at plugin (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/bindingify-input-options-COG1sboO.mjs:1449:60)
+    at file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/bindingify-input-options-COG1sboO.mjs:1928:21
+    at plugin.<computed> (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/bindingify-input-options-COG1sboO.mjs:2125:18)[31m
+    at aggregateBindingErrorsIntoJsError (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/error-NcRuXAVN.mjs:48:18)
+    at unwrapBindingResult (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/error-NcRuXAVN.mjs:18:128)
+    at #build (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/rolldown/dist/shared/rolldown-vcii7mEa.mjs:132:34)
+    at async buildEnvironment (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/vite/dist/node/chunks/node.js:33821:66)
+    at async Object.build (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/vite/dist/node/chunks/node.js:34242:19)
+    at async Object.buildApp (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/vite/dist/node/chunks/node.js:34239:153)
+    at async CAC.<anonymous> (file:///C:/Users/Windows/Documents/Controladoria/frontend/node_modules/vite/dist/node/cli.js:776:3) {
+  errors: [Getter/Setter]
+}[39m

@@ -314,7 +314,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // ==========================================
-  // EXPORTAÇÃO EXCEL (.XLSX) COM FÓRMULAS REAIS E CONTADOR
+  // EXPORTAÇÃO EXCEL (.XLSX) COM FÓRMULAS E TOTAIS
   // ==========================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -324,9 +324,7 @@ function App() {
 
     const wb = XLSX.utils.book_new()
 
-    // ----------------------------------------------------
     // ABA 1: RESUMO POR CONDOMÍNIO
-    // ----------------------------------------------------
     const totalQtdResumo = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
@@ -352,7 +350,6 @@ function App() {
       ])
     })
 
-    // Primeira linha imediatamente sem digitação após os itens: entra a soma dinâmica
     const ultimaLinhaDadosResumo = linhasMatrizResumo.length
     linhasMatrizResumo.push([
       'TOTAL GERAL',
@@ -365,18 +362,16 @@ function App() {
 
     const wsResumo = XLSX.utils.aoa_to_sheet(linhasMatrizResumo)
     wsResumo['!cols'] = [
-      { wch: 28 }, // A: Condomínio
-      { wch: 18 }, // B: Qtd Solicitações
-      { wch: 20 }, // C: Teto Aprovado
-      { wch: 20 }, // D: Gasto Realizado
-      { wch: 20 }, // E: Saldo
-      { wch: 24 }  // F: Status
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 24 }
     ]
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
-    // ----------------------------------------------------
     // ABA 2: EXTRATO DE SOLICITAÇÕES
-    // ----------------------------------------------------
     const totalSol = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + solicitado(s), 0)
     const totalApr = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (aprovado(s) || solicitado(s)), 0)
     const totalReal = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (realizado(s) || 0), 0)
@@ -412,7 +407,6 @@ function App() {
       ])
     })
 
-    // Primeira linha sem digitação logo abaixo da última solicitação: Total Gastos e Contador
     const ultimaLinhaDadosExtrato = linhasMatrizExtrato.length
     linhasMatrizExtrato.push([
       'TOTAL GASTOS',
@@ -429,16 +423,16 @@ function App() {
 
     const wsExtrato = XLSX.utils.aoa_to_sheet(linhasMatrizExtrato)
     wsExtrato['!cols'] = [
-      { wch: 16 }, // A: Código
-      { wch: 24 }, // B: Condomínio / Contador
-      { wch: 18 }, // C: Categoria
-      { wch: 36 }, // D: Descrição
-      { wch: 24 }, // E: Fornecedor
-      { wch: 22 }, // F: Solicitado
-      { wch: 22 }, // G: Aprovado
-      { wch: 22 }, // H: Realizado
-      { wch: 18 }, // I: Status
-      { wch: 20 }  // J: Data
+      { wch: 16 },
+      { wch: 24 },
+      { wch: 18 },
+      { wch: 36 },
+      { wch: 24 },
+      { wch: 22 },
+      { wch: 22 },
+      { wch: 22 },
+      { wch: 18 },
+      { wch: 20 }
     ]
     XLSX.utils.book_append_sheet(wb, wsExtrato, 'Extrato de Solicitações')
 
@@ -927,7 +921,6 @@ function App() {
         {toasts.map(toast => (<div key={toast.id} className={`toast ${toast.tipo}`}><span className="toast-icon">{toast.tipo === 'success' ? '✓' : '!'}</span><span>{toast.mensagem}</span></div>))}
       </div>
 
-      {/* MODAL DE CONFIRMAÇÃO / PROMPT */}
       {dialog.isOpen && (
         <div className="dialog-overlay" onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
           <div className="dialog-box">
@@ -944,12 +937,10 @@ function App() {
         </div>
       )}
 
-      {/* CAMADA DE FUNDO ESCURO QUANDO A SIDEBAR ESTÁ ABERTA NO CELULAR */}
       {sidebarAberta && (
         <div className="sidebar-overlay" onClick={() => setSidebarAberta(false)} />
       )}
 
-      {/* SIDEBAR COM A LOGO OFICIAL HAIZE */}
       <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`}>
         <div className="brand">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1164,7 +1155,6 @@ function App() {
           </div>
         )}
 
-        {/* ABA CATEGORIAS */}
         {pagina === 'categorias' && (
           <div className="page">
             <section className="panel">
@@ -1208,7 +1198,6 @@ function App() {
           </div>
         )}
 
-        {/* ABA CONDOMINIOS */}
         {pagina === 'condominios' && (
           <div className="page">
             <section className="panel">
@@ -1245,7 +1234,6 @@ function App() {
           </div>
         )}
 
-        {/* ABA FORNECEDORES */}
         {pagina === 'fornecedores' && (
           <div className="page">
             <section className="panel">
@@ -1280,7 +1268,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL DETALHES DA SOLICITAÇÃO */}
         {solicitacaoSelecionada && (
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharSolicitacao() }}>
             <div className="modal modal-large">
@@ -1427,7 +1414,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: NOVA SOLICITAÇÃO / EDIÇÃO */}
         {mostrarFormulario && (
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
             <div className="modal">
@@ -1559,7 +1545,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: NOVO CONDOMÍNIO */}
         {mostrarFormularioCondominio && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCondominio() }}>
             <div className="modal">
@@ -1593,7 +1578,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: NOVA CATEGORIA */}
         {mostrarFormularioCategoria && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCategoria() }}>
             <div className="modal">
@@ -1661,7 +1645,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: NOVO FORNECEDOR */}
         {mostrarFormularioFornecedor && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioFornecedor() }}>
             <div className="modal">
@@ -1678,4 +1661,26 @@ function App() {
                     </div>
                     <div className="form-group">
                       <label>CNPJ</label>
-                      <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('
+                      <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('cnpj', e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label>Categoria de Serviço</label>
+                      <input type="text" value={formularioFornecedor.categoria} onChange={e => atualizarCampoFornecedor('categoria', e.target.value)} />
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioFornecedor} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarFornecedor} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  )
+}
+
+export default App
