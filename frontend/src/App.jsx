@@ -166,7 +166,8 @@ function App() {
     async function consultarOrcamento() {
       if (formulario.condominio && formulario.categoria) {
         try {
-          const res = await fetch(`${API_URL}/orcamento-categoria?condominio=${encodeURIComponent(formulario.condominio)}&categoria=${encodeURIComponent(formulario.categoria)}`, { headers: getAuthHeaders() })
+          const ignorarParam = solicitacaoEditando?.id ? `&ignorar_id=${solicitacaoEditando.id}` : ''
+          const res = await fetch(`${API_URL}/orcamento-categoria?condominio=${encodeURIComponent(formulario.condominio)}&categoria=${encodeURIComponent(formulario.categoria)}${ignorarParam}`, { headers: getAuthHeaders() })
           if (res.ok) {
             const dados = await res.json()
             setOrcamentoAtualFormulario(dados)
@@ -181,7 +182,7 @@ function App() {
       }
     }
     consultarOrcamento()
-  }, [formulario.condominio, formulario.categoria])
+  }, [formulario.condominio, formulario.categoria, solicitacaoEditando])
 
   function numero(v) {
     if (v === null || v === undefined || v === '') return 0
@@ -1176,20 +1177,74 @@ function App() {
                       </select>
                     </div>
 
-                    {orcamentoAtualFormulario && (
-                      <div className="form-group full" style={{ background: orcamentoAtualFormulario.teto === 0 ? '#f8fafc' : orcamentoAtualFormulario.saldo < 0 ? '#fef2f2' : '#f0fdf4', border: `1px solid ${orcamentoAtualFormulario.teto === 0 ? '#cbd5e1' : orcamentoAtualFormulario.saldo < 0 ? '#fecaca' : '#bbf7d0'}`, padding: '12px 16px', borderRadius: '8px' }}>
-                        <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: orcamentoAtualFormulario.teto === 0 ? '#64748b' : orcamentoAtualFormulario.saldo < 0 ? '#991b1b' : '#15803d' }}>
-                          {orcamentoAtualFormulario.teto === 0 ? 'ℹ️ Sem regra de teto cadastrada para esta categoria' : orcamentoAtualFormulario.saldo < 0 ? '⚠️ Alerta: Teto Orçamentário Estourado' : '✅ Teto Orçamentário Disponível'}
-                        </span>
-                        {orcamentoAtualFormulario.teto > 0 && (
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '8px', fontSize: '13px' }}>
-                            <div><span>Teto: </span><strong>{formatarValor(orcamentoAtualFormulario.teto)}</strong></div>
-                            <div><span>Comprometido: </span><strong>{formatarValor(orcamentoAtualFormulario.gasto_atual)}</strong></div>
-                            <div><span>Saldo: </span><strong style={{ color: orcamentoAtualFormulario.saldo < 0 ? '#dc2626' : '#059669' }}>{formatarValor(orcamentoAtualFormulario.saldo)}</strong></div>
+                    {orcamentoAtualFormulario && (() => {
+                      const teto = numero(orcamentoAtualFormulario.teto)
+                      const gasto = numero(orcamentoAtualFormulario.gasto_atual)
+                      const saldo = numero(orcamentoAtualFormulario.saldo)
+                      const valorDigitado = numero(formulario.valor_servico) + numero(formulario.valor_produto)
+                      const saldoAposPedido = saldo - valorDigitado
+                      const percentual = teto > 0 ? Math.min(100, Math.round((gasto / teto) * 100)) : 0
+                      const percentualComPedido = teto > 0 ? Math.min(100, Math.round(((gasto + valorDigitado) / teto) * 100)) : 0
+                      const vaiEstourar = teto > 0 && (saldo < 0 || (valorDigitado > 0 && saldoAposPedido < 0))
+
+                      if (teto === 0) {
+                        return (
+                          <div className="form-group full" style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Sem teto de aprovação automática definido para esta categoria neste condomínio.</span>
+                            <span className="badge neutral">Análise Manual</span>
                           </div>
-                        )}
-                      </div>
-                    )}
+                        )
+                      }
+
+                      return (
+                        <div className="form-group full" style={{ background: '#ffffff', border: `1px solid ${vaiEstourar ? '#fecaca' : '#e2e8f0'}`, borderRadius: '12px', padding: '14px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: vaiEstourar ? '#ef4444' : '#10b981', display: 'inline-block' }}></span>
+                              <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#475569' }}>
+                                Resumo Orçamentário da Categoria
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '999px', backgroundColor: vaiEstourar ? '#fef2f2' : '#ecfdf5', color: vaiEstourar ? '#dc2626' : '#059669' }}>
+                              {vaiEstourar ? 'Exige Aprovação Manual' : `${percentual}% utilizado`}
+                            </span>
+                          </div>
+
+                          {/* Barra de progresso elegante */}
+                          <div style={{ width: '100%', height: '6px', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
+                            <div style={{ width: `${valorDigitado > 0 ? percentualComPedido : percentual}%`, height: '100%', backgroundColor: vaiEstourar ? '#ef4444' : percentualComPedido > 80 ? '#f59e0b' : '#10b981', transition: 'width 0.3s ease, background-color 0.3s ease', borderRadius: '999px' }} />
+                          </div>
+
+                          {/* Grid de 3 cards internos alinhados */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Teto Limite</span>
+                              <strong style={{ fontSize: '13px', color: '#0f172a', whiteSpace: 'nowrap' }}>{formatarValor(teto)}</strong>
+                            </div>
+                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Comprometido</span>
+                              <strong style={{ fontSize: '13px', color: '#475569', whiteSpace: 'nowrap' }}>{formatarValor(gasto)}</strong>
+                            </div>
+                            <div style={{ background: saldo < 0 ? '#fef2f2' : '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: `1px solid ${saldo < 0 ? '#fecaca' : '#bbf7d0'}`, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: saldo < 0 ? '#991b1b' : '#166534', textTransform: 'uppercase' }}>Saldo Livre</span>
+                              <strong style={{ fontSize: '13px', color: saldo < 0 ? '#dc2626' : '#059669', whiteSpace: 'nowrap' }}>{formatarValor(saldo)}</strong>
+                            </div>
+                          </div>
+
+                          {/* Simulação em tempo real quando o usuário digita o valor do pedido */}
+                          {valorDigitado > 0 && (
+                            <div style={{ paddingTop: '8px', borderTop: '1px dashed #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                              <span style={{ color: '#475569' }}>
+                                {saldoAposPedido >= 0 ? '⚡ Este pedido será aprovado automaticamente' : '⏳ Valor excede o saldo (irá para análise)'}
+                              </span>
+                              <strong style={{ color: saldoAposPedido >= 0 ? '#059669' : '#dc2626', whiteSpace: 'nowrap' }}>
+                                Saldo final: {formatarValor(saldoAposPedido)}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
 
                     <div className="form-group full">
                       <label>O que está sendo comprado? *</label>
