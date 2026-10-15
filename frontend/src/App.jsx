@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
-import * as XLSX from 'xlsx'
+import XLSX from 'xlsx-js-style'
 import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
@@ -67,7 +67,7 @@ function App() {
     nome: '', cnpj: '', codigo: ''
   })
 
-  const [formularioFornecedor, setFormularioFornecedor] = useState({
+  const [formularioFornecedor, setFormularioFornecedor, ] = useState({
     nome: '', cnpj: '', categoria: ''
   })
 
@@ -313,9 +313,9 @@ function App() {
 
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
-  // ==========================================
-  // EXPORTAÇÃO EXCEL (.XLSX) COM FÓRMULAS E TOTAIS
-  // ==========================================
+  // =========================================================================
+  // EXPORTAÇÃO EXCEL (.XLSX) EXECUTIVA ESTILIZADA (COM CORES, BORDAS E SOMAS)
+  // =========================================================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
       mostrarToast('Não existem dados para exportar no filtro selecionado.', 'error')
@@ -323,122 +323,392 @@ function App() {
     }
 
     const wb = XLSX.utils.book_new()
+    const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
+    const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
+    const dataEmissao = new Date().toLocaleString('pt-BR')
 
+    const bordaPadrao = {
+      top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      right: { style: 'thin', color: { rgb: 'CBD5E1' } }
+    }
+
+    const bordaTotal = {
+      top: { style: 'medium', color: { rgb: '0F172A' } },
+      bottom: { style: 'double', color: { rgb: '0F172A' } },
+      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      right: { style: 'thin', color: { rgb: 'CBD5E1' } }
+    }
+
+    const estiloTitulo = {
+      font: { name: 'Calibri', sz: 14, bold: true, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '0F172A' } },
+      alignment: { vertical: 'center', horizontal: 'left' }
+    }
+
+    const estiloSubtitulo = {
+      font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '334155' } },
+      fill: { fgColor: { rgb: 'F1F5F9' } },
+      alignment: { vertical: 'center', horizontal: 'left' },
+      border: bordaPadrao
+    }
+
+    const estiloCabecalhoTabela = {
+      font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '1E293B' } },
+      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+      border: bordaPadrao
+    }
+
+    const formatoMoeda = '"R$" #,##0.00'
+
+    // =========================================================================
     // ABA 1: RESUMO POR CONDOMÍNIO
+    // =========================================================================
     const totalQtdResumo = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
     const totalSaldo = totalTeto - totalRealizado
 
-    const linhasMatrizResumo = [
-      ['Condomínio', 'Qtd Solicitações', 'Teto Aprovado (R$)', 'Gasto Realizado (R$)', 'Saldo (R$)', 'Status Orçamentário']
+    const linhasResumo = [
+      // Linha 1: Título Principal
+      [
+        { v: 'HAIZE SÍNDICO PROFISSIONAL — RESUMO EXECUTIVO POR CONDOMÍNIO', s: estiloTitulo },
+        { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }
+      ],
+      // Linha 2: Metadados do filtro
+      [
+        { v: `Condomínio: ${condFormatado}   |   Período: ${mesFormatado}   |   Emitido em: ${dataEmissao}`, s: estiloSubtitulo },
+        { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }
+      ],
+      // Linha 3: Espaço em branco
+      [],
+      // Linha 4: Cabeçalho da Tabela
+      [
+        { v: 'Condomínio', s: { ...estiloCabecalhoTabela, alignment: { vertical: 'center', horizontal: 'left' } } },
+        { v: 'Qtd Solicitações', s: estiloCabecalhoTabela },
+        { v: 'Teto Aprovado (R$)', s: estiloCabecalhoTabela },
+        { v: 'Gasto Realizado (R$)', s: estiloCabecalhoTabela },
+        { v: 'Saldo Orçamentário (R$)', s: estiloCabecalhoTabela },
+        { v: 'Status Orçamentário', s: estiloCabecalhoTabela }
+      ]
     ]
 
-    listaOrcamentoCondominio.forEach(item => {
+    listaOrcamentoCondominio.forEach((item, idx) => {
+      const corZebra = idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC'
       let estado = 'No Limite'
-      if (item.saldo > 0) estado = 'Economia'
-      if (item.saldo < 0) estado = 'Estourado'
-      if (item.aprovado === 0) estado = 'Sem Orçamento'
+      let bgStatus = 'F1F5F9'
+      let corStatus = '475569'
 
-      linhasMatrizResumo.push([
-        item.nome,
-        item.qtdSolicitacoes || 0,
-        Number(item.aprovado.toFixed(2)),
-        Number(item.realizado.toFixed(2)),
-        Number(item.saldo.toFixed(2)),
-        estado
+      if (item.saldo > 0) { estado = 'Economia'; bgStatus = 'D1FAE5'; corStatus = '065F46' }
+      if (item.saldo < 0) { estado = 'Estourado'; bgStatus = 'FEE2E2'; corStatus = '991B1B' }
+      if (item.aprovado === 0) { estado = 'Sem Orçamento'; bgStatus = 'F1F5F9'; corStatus = '64748B' }
+
+      const corSaldo = item.saldo < 0 ? 'DC2626' : '059669'
+
+      linhasResumo.push([
+        {
+          v: item.nome,
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+        },
+        {
+          v: item.qtdSolicitacoes || 0,
+          t: 'n',
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '334155' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaPadrao }
+        },
+        {
+          v: Number(item.aprovado.toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '1E293B' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: Number(item.realizado.toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '1E293B' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: Number(item.saldo.toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corSaldo } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: estado,
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corStatus } }, fill: { fgColor: { rgb: bgStatus } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaPadrao }
+        }
       ])
     })
 
-    const ultimaLinhaDadosResumo = linhasMatrizResumo.length
-    linhasMatrizResumo.push([
-      'TOTAL GERAL',
-      { t: 'n', f: `SUM(B2:B${ultimaLinhaDadosResumo})`, v: totalQtdResumo },
-      { t: 'n', f: `SUM(C2:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)) },
-      { t: 'n', f: `SUM(D2:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)) },
-      { t: 'n', f: `SUM(E2:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)) },
-      totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO'
+    // Primeira linha imediatamente livre após os dados (começam na linha 5 do Excel)
+    const ultimaLinhaDadosResumo = 4 + listaOrcamentoCondominio.length
+    const bgTotalSaldoResumo = totalSaldo < 0 ? 'FEE2E2' : 'D1FAE5'
+    const corTotalSaldoResumo = totalSaldo < 0 ? '991B1B' : '065F46'
+
+    linhasResumo.push([
+      {
+        v: 'TOTAL CONSOLIDADO',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(B5:B${ultimaLinhaDadosResumo})`,
+        v: totalQtdResumo,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(C5:C${ultimaLinhaDadosResumo})`,
+        v: Number(totalTeto.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(D5:D${ultimaLinhaDadosResumo})`,
+        v: Number(totalRealizado.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(E5:E${ultimaLinhaDadosResumo})`,
+        v: Number(totalSaldo.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        v: totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: bgTotalSaldoResumo } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      }
     ])
 
-    const wsResumo = XLSX.utils.aoa_to_sheet(linhasMatrizResumo)
+    const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo)
+    wsResumo['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, // Mescla título A1:F1
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }  // Mescla subtítulo A2:F2
+    ]
     wsResumo['!cols'] = [
-      { wch: 28 },
-      { wch: 18 },
-      { wch: 20 },
-      { wch: 20 },
-      { wch: 20 },
-      { wch: 24 }
+      { wch: 32 }, // A: Condomínio
+      { wch: 18 }, // B: Qtd Solicitações
+      { wch: 22 }, // C: Teto Aprovado
+      { wch: 22 }, // D: Gasto Realizado
+      { wch: 24 }, // E: Saldo
+      { wch: 22 }  // F: Status
+    ]
+    wsResumo['!rows'] = [
+      { hpt: 32 }, // Altura linha 1
+      { hpt: 22 }, // Altura linha 2
+      { hpt: 10 }, // Altura linha 3
+      { hpt: 28 }, // Altura cabeçalho
+      ...listaOrcamentoCondominio.map(() => ({ hpt: 22 })),
+      { hpt: 26 }  // Altura linha de total
     ]
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
+    // =========================================================================
     // ABA 2: EXTRATO DE SOLICITAÇÕES
+    // =========================================================================
     const totalSol = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + solicitado(s), 0)
     const totalApr = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (aprovado(s) || solicitado(s)), 0)
     const totalReal = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (realizado(s) || 0), 0)
     const qtdPedidos = solicitacoesAnaliseFiltradas.length
 
-    const linhasMatrizExtrato = [
+    const linhasExtrato = [
+      // Linha 1: Título Principal
       [
-        'Código',
-        'Condomínio',
-        'Categoria',
-        'Descrição do Pedido',
-        'Fornecedor',
-        'Valor Solicitado (R$)',
-        'Valor Aprovado (R$)',
-        'Valor Realizado (R$)',
-        'Status',
-        'Data de Abertura'
+        { v: 'HAIZE SÍNDICO PROFISSIONAL — EXTRATO DETALHADO DE SOLICITAÇÕES', s: estiloTitulo },
+        { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo },
+        { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }, { v: '', s: estiloTitulo }
+      ],
+      // Linha 2: Subtítulo com filtros e contador rápido
+      [
+        { v: `Condomínio: ${condFormatado}   |   Período: ${mesFormatado}   |   Total de Solicitações: ${qtdPedidos}   |   Emitido em: ${dataEmissao}`, s: estiloSubtitulo },
+        { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo },
+        { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }, { v: '', s: estiloSubtitulo }
+      ],
+      // Linha 3: Espaço
+      [],
+      // Linha 4: Cabeçalho da Tabela
+      [
+        { v: 'Código', s: estiloCabecalhoTabela },
+        { v: 'Condomínio', s: { ...estiloCabecalhoTabela, alignment: { vertical: 'center', horizontal: 'left' } } },
+        { v: 'Categoria', s: { ...estiloCabecalhoTabela, alignment: { vertical: 'center', horizontal: 'left' } } },
+        { v: 'Descrição do Pedido', s: { ...estiloCabecalhoTabela, alignment: { vertical: 'center', horizontal: 'left' } } },
+        { v: 'Fornecedor', s: { ...estiloCabecalhoTabela, alignment: { vertical: 'center', horizontal: 'left' } } },
+        { v: 'Valor Solicitado (R$)', s: estiloCabecalhoTabela },
+        { v: 'Valor Aprovado (R$)', s: estiloCabecalhoTabela },
+        { v: 'Valor Realizado (R$)', s: estiloCabecalhoTabela },
+        { v: 'Status', s: estiloCabecalhoTabela },
+        { v: 'Data de Abertura', s: estiloCabecalhoTabela }
       ]
     ]
 
-    solicitacoesAnaliseFiltradas.forEach(s => {
-      linhasMatrizExtrato.push([
-        s.numero || '',
-        s.condominio || '',
-        s.categoria || '-',
-        s.descricao || '',
-        s.fornecedor || '-',
-        Number(solicitado(s).toFixed(2)),
-        Number((aprovado(s) || solicitado(s)).toFixed(2)),
-        Number((realizado(s) || 0).toFixed(2)),
-        textoStatus(s.status),
-        formatarDataHora(s.data)
+    solicitacoesAnaliseFiltradas.forEach((s, idx) => {
+      const corZebra = idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC'
+      const st = textoStatus(s.status)
+      let bgSt = 'FEF3C7'; let corSt = 'D97706'
+      if (st === 'Aprovada') { bgSt = 'DBEAFE'; corSt = '1D4ED8' }
+      if (st === 'Em execução') { bgSt = 'E0E7FF'; corSt = '4338CA' }
+      if (st === 'Finalizada') { bgSt = 'D1FAE5'; corSt = '065F46' }
+      if (st === 'Reprovada') { bgSt = 'FEE2E2'; corSt = '991B1B' }
+
+      linhasExtrato.push([
+        {
+          v: s.numero || '',
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '2563EB' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaPadrao }
+        },
+        {
+          v: s.condominio || '',
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+        },
+        {
+          v: s.categoria || '-',
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '6B21A8' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+        },
+        {
+          v: s.descricao || '',
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '334155' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+        },
+        {
+          v: s.fornecedor || '-',
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '475569' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+        },
+        {
+          v: Number(solicitado(s).toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '334155' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: Number((aprovado(s) || solicitado(s)).toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: Number((realizado(s) || 0).toFixed(2)),
+          t: 'n',
+          z: formatoMoeda,
+          s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaPadrao }
+        },
+        {
+          v: st,
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corSt } }, fill: { fgColor: { rgb: bgSt } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaPadrao }
+        },
+        {
+          v: formatarDataHora(s.data),
+          t: 's',
+          s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: corZebra } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaPadrao }
+        }
       ])
     })
 
-    const ultimaLinhaDadosExtrato = linhasMatrizExtrato.length
-    linhasMatrizExtrato.push([
-      'TOTAL GASTOS',
-      { t: 'n', f: `COUNTA(A2:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos },
-      'solicitações',
-      `Contador automático: ${qtdPedidos} pedidos`,
-      '-',
-      { t: 'n', f: `SUM(F2:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)) },
-      { t: 'n', f: `SUM(G2:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)) },
-      { t: 'n', f: `SUM(H2:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)) },
-      '-',
-      '-'
+    // Primeira linha imediatamente livre após as solicitações (começam na linha 5 do Excel)
+    const ultimaLinhaDadosExtrato = 4 + solicitacoesAnaliseFiltradas.length
+
+    linhasExtrato.push([
+      {
+        v: 'TOTAL GASTOS',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `COUNTA(A5:A${ultimaLinhaDadosExtrato})`,
+        v: qtdPedidos,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      },
+      {
+        v: 'solicitações no período',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal }
+      },
+      {
+        v: `Soma consolidada automática (${qtdPedidos} pedidos)`,
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal }
+      },
+      {
+        v: '-',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 11, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(F5:F${ultimaLinhaDadosExtrato})`,
+        v: Number(totalSol.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(G5:G${ultimaLinhaDadosExtrato})`,
+        v: Number(totalApr.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        t: 'n',
+        f: `SUM(H5:H${ultimaLinhaDadosExtrato})`,
+        v: Number(totalReal.toFixed(2)),
+        z: formatoMoeda,
+        s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal }
+      },
+      {
+        v: `${qtdPedidos} itens`,
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      },
+      {
+        v: '-',
+        t: 's',
+        s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal }
+      }
     ])
 
-    const wsExtrato = XLSX.utils.aoa_to_sheet(linhasMatrizExtrato)
+    const wsExtrato = XLSX.utils.aoa_to_sheet(linhasExtrato)
+    wsExtrato['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }, // Mescla título A1:J1
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } }  // Mescla subtítulo A2:J2
+    ]
     wsExtrato['!cols'] = [
-      { wch: 16 },
-      { wch: 24 },
-      { wch: 18 },
-      { wch: 36 },
-      { wch: 24 },
-      { wch: 22 },
-      { wch: 22 },
-      { wch: 22 },
-      { wch: 18 },
-      { wch: 20 }
+      { wch: 16 }, // A: Código
+      { wch: 24 }, // B: Condomínio / Qtd
+      { wch: 22 }, // C: Categoria
+      { wch: 38 }, // D: Descrição
+      { wch: 24 }, // E: Fornecedor
+      { wch: 22 }, // F: Solicitado
+      { wch: 22 }, // G: Aprovado
+      { wch: 22 }, // H: Realizado
+      { wch: 18 }, // I: Status
+      { wch: 20 }  // J: Data
+    ]
+    wsExtrato['!rows'] = [
+      { hpt: 32 }, // Altura linha 1
+      { hpt: 22 }, // Altura linha 2
+      { hpt: 10 }, // Altura linha 3
+      { hpt: 28 }, // Altura cabeçalho
+      ...solicitacoesAnaliseFiltradas.map(() => ({ hpt: 22 })),
+      { hpt: 26 }  // Altura linha de total
     ]
     XLSX.utils.book_append_sheet(wb, wsExtrato, 'Extrato de Solicitações')
 
     const nomeArquivo = `Relatorio_Controladoria_${filtroCondominioAnalise !== 'todos' ? filtroCondominioAnalise : 'Geral'}_${filtroMesAnalise !== 'todos' ? filtroMesAnalise : 'Consolidado'}.xlsx`
     XLSX.writeFile(wb, nomeArquivo)
-    mostrarToast('Planilha exportada com linha de Total Gastos e Fórmulas!', 'success')
+    mostrarToast('Relatório Executivo Excel (.xlsx) gerado com sucesso!', 'success')
   }
 
   function exportarRelatorioPDF() {
