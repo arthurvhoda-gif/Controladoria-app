@@ -311,6 +311,158 @@ function App() {
 
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
+  // ==========================================
+  // FUNÇÕES DE EXPORTAÇÃO (EXCEL & PDF)
+  // ==========================================
+  function exportarRelatorioExcel() {
+    if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
+      mostrarToast('Não existem dados para exportar no filtro selecionado.', 'error')
+      return
+    }
+
+    const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
+    const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
+
+    let csv = '\uFEFF' // BOM para garantir acentos corretos no Excel
+    csv += `RELATÓRIO DE FECHO - CONTROLADORIA HAIZE\n`
+    csv += `Filtro Condomínio:;${condFormatado}\n`
+    csv += `Filtro Período:;${mesFormatado}\n`
+    csv += `Emitido em:;${new Date().toLocaleString('pt-BR')}\n\n`
+
+    csv += `RESUMO ORÇAMENTAL POR CONDOMÍNIO\n`
+    csv += `Condomínio;Teto Aprovado (R$);Gasto Realizado (R$);Saldo (R$);Estado Orçamental\n`
+    listaOrcamentoCondominio.forEach(item => {
+      let estado = 'No Limite'
+      if (item.saldo > 0) estado = 'Economia'
+      if (item.saldo < 0) estado = 'Estourado'
+      if (item.aprovado === 0) estado = 'Sem Orçamento'
+      csv += `"${item.nome}";"${item.aprovado.toFixed(2).replace('.', ',')}";"${item.realizado.toFixed(2).replace('.', ',')}";"${item.saldo.toFixed(2).replace('.', ',')}";"${estado}"\n`
+    })
+
+    csv += `\nEXTRATO DETALHADO DE SOLICITAÇÕES\n`
+    csv += `Número;Condomínio;Categoria;Descrição;Fornecedor;Valor Solicitado (R$);Valor Aprovado (R$);Valor Realizado (R$);Estado;Data\n`
+    solicitacoesAnaliseFiltradas.forEach(s => {
+      const vSol = solicitado(s).toFixed(2).replace('.', ',')
+      const vApr = aprovado(s) ? aprovado(s).toFixed(2).replace('.', ',') : '-'
+      const vReal = realizado(s) ? realizado(s).toFixed(2).replace('.', ',') : '-'
+      csv += `"${s.numero || ''}";"${s.condominio || ''}";"${s.categoria || ''}";"${(s.descricao || '').replace(/"/g, '""')}";"${s.fornecedor || ''}";"${vSol}";"${vApr}";"${vReal}";"${textoStatus(s.status)}";"${formatarDataHora(s.data)}"\n`
+    })
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `Relatorio_Controladoria_${filtroCondominioAnalise}_${filtroMesAnalise}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
+    mostrarToast('Relatório Excel exportado com sucesso!', 'success')
+  }
+
+  function exportarRelatorioPDF() {
+    if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
+      mostrarToast('Não existem dados para exportar no filtro selecionado.', 'error')
+      return
+    }
+
+    const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
+    const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
+
+    const janela = window.open('', '_blank')
+    if (!janela) {
+      mostrarToast('Permita pop-ups no navegador para gerar o PDF.', 'error')
+      return
+    }
+
+    const linhasResumo = listaOrcamentoCondominio.map(item => `
+      <tr>
+        <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">${item.nome}</td>
+        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
+        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
+        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; font-weight: bold;">${formatarValor(item.saldo)}</td>
+      </tr>
+    `).join('')
+
+    const linhasSols = solicitacoesAnaliseFiltradas.map(s => `
+      <tr>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace;">${s.numero || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.condominio || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.categoria || '-'}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.descricao || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor)}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor_realizado || s.valor_aprovado || s.valor)}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${textoStatus(s.status)}</td>
+      </tr>
+    `).join('')
+
+    janela.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Relatório de Fecho - Controladoria Haize</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 30px; color: #0f172a; margin: 0; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
+          .title { font-size: 22px; font-weight: 800; }
+          .subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
+          .meta { font-size: 12px; color: #334155; }
+          h3 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; margin: 24px 0 10px 0; color: #1e293b; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
+          th { background-color: #f1f5f9; padding: 8px; border: 1px solid #cbd5e1; text-align: left; font-weight: 700; }
+          @media print {
+            body { padding: 15px; }
+            button { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">HAIZE SÍNDICO PROFISSIONAL</div>
+            <div class="subtitle">Relatório Consolidado de Fecho Orçamental e Compras</div>
+          </div>
+          <div class="meta" style="text-align: right;">
+            <div><strong>Filtro:</strong> ${condFormatado}</div>
+            <div><strong>Período:</strong> ${mesFormatado}</div>
+            <div><strong>Emissão:</strong> ${new Date().toLocaleDateString('pt-BR')}</div>
+          </div>
+        </div>
+
+        <h3>Resumo por Condomínio</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Condomínio</th>
+              <th style="text-align: right;">Teto Aprovado</th>
+              <th style="text-align: right;">Gasto Realizado</th>
+              <th style="text-align: right;">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>${linhasResumo}</tbody>
+        </table>
+
+        <h3>Extrato de Solicitações</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Condomínio</th>
+              <th>Categoria</th>
+              <th>Descrição</th>
+              <th style="text-align: right;">Solicitado</th>
+              <th style="text-align: right;">Final/Realizado</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>${linhasSols}</tbody>
+        </table>
+
+        <script>
+          window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `)
+    janela.document.close()
+  }
 
   function atualizarCampoFormulario(campo, valor) { setFormulario(atual => ({ ...atual, [campo]: valor })) }
   function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null); setOrcamentoAtualFormulario(null) }
@@ -775,7 +927,7 @@ function App() {
           <div className="page">
             <section className="welcome" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
               <div><span className="eyebrow">ANÁLISES E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
-              <div style={{ display: 'flex', gap: '16px' }}>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)} style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '14px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}>
                   <option value="todos">Todos os Condomínios</option>
                   {condominios?.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
@@ -784,6 +936,14 @@ function App() {
                   <option value="todos">Todos os Meses</option>
                   {mesesDisponiveis?.map(m => (<option key={m} value={m}>{formatarMesAno(m)}</option>))}
                 </select>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="button-secondary" onClick={exportarRelatorioExcel} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📊</span> Exportar Excel
+                  </button>
+                  <button className="button-secondary" onClick={exportarRelatorioPDF} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>🖨️</span> Imprimir / PDF
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -1210,12 +1370,10 @@ function App() {
                             </span>
                           </div>
 
-                          {/* Barra de progresso elegante */}
                           <div style={{ width: '100%', height: '6px', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
                             <div style={{ width: `${valorDigitado > 0 ? percentualComPedido : percentual}%`, height: '100%', backgroundColor: vaiEstourar ? '#ef4444' : percentualComPedido > 80 ? '#f59e0b' : '#10b981', transition: 'width 0.3s ease, background-color 0.3s ease', borderRadius: '999px' }} />
                           </div>
 
-                          {/* Grid de 3 cards internos alinhados */}
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                             <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                               <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Teto Limite</span>
@@ -1231,7 +1389,6 @@ function App() {
                             </div>
                           </div>
 
-                          {/* Simulação em tempo real quando o usuário digita o valor do pedido */}
                           {valorDigitado > 0 && (
                             <div style={{ paddingTop: '8px', borderTop: '1px dashed #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
                               <span style={{ color: '#475569' }}>
