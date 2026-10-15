@@ -303,7 +303,8 @@ function App() {
 
   const orcamentoPorCondominio = solicitacoesAnaliseFiltradas.reduce((acc, sol) => {
     const cond = sol.condominio || 'Sem condomínio'
-    if (!acc[cond]) acc[cond] = { aprovado: 0, realizado: 0 }
+    if (!acc[cond]) acc[cond] = { aprovado: 0, realizado: 0, qtdSolicitacoes: 0 }
+    acc[cond].qtdSolicitacoes += 1
     const statusAtual = textoStatus(sol.status)
     if (['Aprovada', 'Em execução', 'Finalizada'].includes(statusAtual)) acc[cond].aprovado += aprovado(sol) || solicitado(sol)
     if (statusAtual === 'Finalizada') acc[cond].realizado += realizado(sol) || aprovado(sol) || solicitado(sol)
@@ -313,7 +314,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // ==========================================
-  // EXPORTAÇÃO EXCEL (.XLSX) COM LINHAS DE TOTAIS
+  // EXPORTAÇÃO EXCEL (.XLSX) COM CONTADOR E TOTAIS
   // ==========================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -323,7 +324,8 @@ function App() {
 
     const wb = XLSX.utils.book_new()
 
-    // 1. Dados da aba Resumo por Condomínio
+    // 1. Aba: Resumo por Condomínio
+    const totalQtd = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
     const totalSaldo = totalTeto - totalRealizado
@@ -335,6 +337,7 @@ function App() {
       if (item.aprovado === 0) estado = 'Sem Orçamento'
       return {
         'Condomínio': item.nome,
+        'Qtd Solicitações': item.qtdSolicitacoes || 0,
         'Teto Aprovado (R$)': Number(item.aprovado.toFixed(2)),
         'Gasto Realizado (R$)': Number(item.realizado.toFixed(2)),
         'Saldo (R$)': Number(item.saldo.toFixed(2)),
@@ -342,26 +345,38 @@ function App() {
       }
     })
 
-    // Adiciona linha de total consolidado
+    // Linha em branco separadora
+    dadosResumo.push({
+      'Condomínio': '',
+      'Qtd Solicitações': '',
+      'Teto Aprovado (R$)': '',
+      'Gasto Realizado (R$)': '',
+      'Saldo (R$)': '',
+      'Estado Orçamentário': ''
+    })
+
+    // Linha de Total Consolidado com Contador
     dadosResumo.push({
       'Condomínio': 'TOTAL CONSOLIDADO',
+      'Qtd Solicitações': totalQtd,
       'Teto Aprovado (R$)': Number(totalTeto.toFixed(2)),
       'Gasto Realizado (R$)': Number(totalRealizado.toFixed(2)),
       'Saldo (R$)': Number(totalSaldo.toFixed(2)),
-      'Estado Orçamentário': totalSaldo >= 0 ? 'Positivo' : 'Estourado'
+      'Estado Orçamentário': totalSaldo >= 0 ? 'Economia Geral' : 'Estourado Geral'
     })
 
     const wsResumo = XLSX.utils.json_to_sheet(dadosResumo)
     wsResumo['!cols'] = [
       { wch: 30 }, // Condomínio
-      { wch: 20 }, // Teto
-      { wch: 20 }, // Realizado
+      { wch: 18 }, // Qtd Solicitações
+      { wch: 20 }, // Teto Aprovado
+      { wch: 20 }, // Gasto Realizado
       { wch: 20 }, // Saldo
       { wch: 22 }  // Estado
     ]
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
-    // 2. Dados da aba Extrato de Solicitações
+    // 2. Aba: Extrato de Solicitações
     const totalSol = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + solicitado(s), 0)
     const totalApr = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (aprovado(s) || solicitado(s)), 0)
     const totalReal = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (realizado(s) || 0), 0)
@@ -379,24 +394,38 @@ function App() {
       'Data de Abertura': formatarDataHora(s.data)
     }))
 
-    // Adiciona linha de total geral do extrato
+    // Linha em branco separadora
+    dadosExtrato.push({
+      'Código': '',
+      'Condomínio': '',
+      'Categoria': '',
+      'Descrição do Pedido': '',
+      'Fornecedor': '',
+      'Valor Solicitado (R$)': '',
+      'Valor Aprovado (R$)': '',
+      'Valor Realizado (R$)': '',
+      'Status': '',
+      'Data de Abertura': ''
+    })
+
+    // Linha de Total Geral com contador total de solicitações
     dadosExtrato.push({
       'Código': 'TOTAL GERAL',
-      'Condomínio': `${solicitacoesAnaliseFiltradas.length} pedidos`,
+      'Condomínio': `Total: ${solicitacoesAnaliseFiltradas.length} solicitações`,
       'Categoria': '-',
-      'Descrição do Pedido': 'Consolidação de todas as solicitações filtradas',
+      'Descrição do Pedido': `Soma de ${solicitacoesAnaliseFiltradas.length} itens do período`,
       'Fornecedor': '-',
       'Valor Solicitado (R$)': Number(totalSol.toFixed(2)),
       'Valor Aprovado (R$)': Number(totalApr.toFixed(2)),
       'Valor Realizado (R$)': Number(totalReal.toFixed(2)),
-      'Status': '-',
+      'Status': `${solicitacoesAnaliseFiltradas.length} itens`,
       'Data de Abertura': '-'
     })
 
     const wsExtrato = XLSX.utils.json_to_sheet(dadosExtrato)
     wsExtrato['!cols'] = [
       { wch: 14 }, // Código
-      { wch: 26 }, // Condomínio
+      { wch: 28 }, // Condomínio
       { wch: 20 }, // Categoria
       { wch: 38 }, // Descrição
       { wch: 24 }, // Fornecedor
@@ -410,7 +439,7 @@ function App() {
 
     const nomeArquivo = `Relatorio_Controladoria_${filtroCondominioAnalise !== 'todos' ? filtroCondominioAnalise : 'Geral'}_${filtroMesAnalise !== 'todos' ? filtroMesAnalise : 'Consolidado'}.xlsx`
     XLSX.writeFile(wb, nomeArquivo)
-    mostrarToast('Planilha Excel (.xlsx) com totais exportada com sucesso!', 'success')
+    mostrarToast('Planilha Excel (.xlsx) atualizada com contadores e totais!', 'success')
   }
 
   function exportarRelatorioPDF() {
@@ -422,6 +451,7 @@ function App() {
     const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
     const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
 
+    const totalQtd = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
     const totalSaldo = totalTeto - totalRealizado
@@ -438,6 +468,7 @@ function App() {
     const linhasResumo = listaOrcamentoCondominio.map(item => `
       <tr>
         <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">${item.nome}</td>
+        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: center; font-weight: 600;">${item.qtdSolicitacoes || 0}</td>
         <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
         <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
         <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; font-weight: bold;">${formatarValor(item.saldo)}</td>
@@ -495,6 +526,7 @@ function App() {
           <thead>
             <tr>
               <th>Condomínio</th>
+              <th style="text-align: center;">Qtd Solicitações</th>
               <th style="text-align: right;">Teto Aprovado</th>
               <th style="text-align: right;">Gasto Realizado</th>
               <th style="text-align: right;">Saldo</th>
@@ -504,6 +536,7 @@ function App() {
           <tfoot>
             <tr>
               <td>TOTAL CONSOLIDADO</td>
+              <td style="text-align: center;">${totalQtd}</td>
               <td style="text-align: right;">${formatarValor(totalTeto)}</td>
               <td style="text-align: right;">${formatarValor(totalRealizado)}</td>
               <td style="text-align: right; color: ${totalSaldo < 0 ? '#dc2626' : '#059669'};">${formatarValor(totalSaldo)}</td>
@@ -527,7 +560,7 @@ function App() {
           <tbody>${linhasSols}</tbody>
           <tfoot>
             <tr>
-              <td colspan="4">TOTAL GERAL (${solicitacoesAnaliseFiltradas.length} solicitações)</td>
+              <td colspan="4">TOTAL GERAL (${solicitacoesAnaliseFiltradas.length} solicitações no período)</td>
               <td style="text-align: right;">${formatarValor(totalSol)}</td>
               <td style="text-align: right;">${formatarValor(totalReal)}</td>
               <td>-</td>
@@ -1217,21 +1250,21 @@ function App() {
               </div>
               <div className="company-grid">
                 {fornecedores.map(forn => {
-                  const nome = forn.nome || 'Sem nome'
+                  const nome = fornecedor.nome || 'Sem nome'
                   const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
                   return (
-                    <div className="company-card" key={forn.id}>
+                    <div className="company-card" key={fornecedor.id}>
                       <div className="company-card-top">
                         <div className="company-avatar" style={{ background: '#f1f5f9', color: '#475569' }}>{String(nome).charAt(0).toUpperCase()}</div>
                         <span className="badge neutral">Ativo</span>
                       </div>
                       <h4>{nome}</h4>
-                      {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
+                      {fornecedor.cnpj && (<span className="company-detail">CNPJ: {fornecedor.cnpj}</span>)}
                       <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="text-button" onClick={() => editarFornecedor(forn)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button>
+                          <button className="text-button" onClick={() => editarFornecedor(fornecedor)}>Editar</button>
+                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(fornecedor.id, nome)}>Excluir</button>
                         </div>
                       </div>
                     </div>
@@ -1285,3 +1318,20 @@ function App() {
                             </span>
                           </div>
                         </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="detail-grid">
+                  <div className="detail-card"><span>Status</span><strong>{renderBadge(solicitacaoSelecionada)}</strong></div>
+                  
+                  {solicitacaoSelecionada.categoria && (
+                    <div className="detail-card" style={{ background: '#faf5ff', borderColor: '#f3e8ff' }}>
+                      <span>Categoria</span><strong style={{ color: '#7e22ce' }}>📁 {solicitacaoSelecionada.categoria}</strong>
+                    </div>
+                  )}
+
+                  <div className="detail-card"><span>Valor Serviço</span><strong>{formatarValor(solicitacaoSelecionada.valor_servico)}</strong></div>
+                  <div className="detail-card"><span>Valor Produto</span><strong>{formatarValor(solicitacaoSelecionada.valor_produto)}</strong></div>
+                  <div className="detail-card" style={{ background: '#eff6ff', borderColor: '#bfdbfe' }}><span>Total Solicitado</span><strong style={{ color: '#1d4ed8' }}>{formatarValor(solicitacaoSelecionada
