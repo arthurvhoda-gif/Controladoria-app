@@ -28,7 +28,7 @@ from schemas import (
 os.makedirs("uploads", exist_ok=True)
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Controladoria", version="1.2.0")
+app = FastAPI(title="Controladoria", version="1.2.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -156,7 +156,7 @@ def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario
     return resultado
 
 @app.get("/orcamento-categoria")
-def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session = Depends(get_db)):
     limite_obj = db.query(models.LimiteCategoriaCondominio).filter(
         models.LimiteCategoriaCondominio.categoria_nome == categoria,
         models.LimiteCategoriaCondominio.condominio_nome == condominio
