@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
+import * as XLSX from 'xlsx'
 import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
@@ -312,7 +313,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // ==========================================
-  // FUNÇÕES DE EXPORTAÇÃO PROFISSIONAL
+  // EXPORTAÇÃO OFICIAL EXCEL (.XLSX) VIA SHEETJS
   // ==========================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -320,140 +321,66 @@ function App() {
       return
     }
 
-    const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
-    const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
-    const dataEmissao = new Date().toLocaleString('pt-BR')
+    const wb = XLSX.utils.book_new()
 
-    let tabelaResumoRows = ''
-    listaOrcamentoCondominio.forEach((item, index) => {
-      const corFundo = index % 2 === 0 ? '#ffffff' : '#f8fafc'
-      let badgeBg = '#f1f5f9'
-      let badgeCor = '#475569'
+    // 1. Dados da aba Resumo
+    const dadosResumo = listaOrcamentoCondominio.map(item => {
       let estado = 'No Limite'
-      if (item.saldo > 0) { badgeBg = '#d1fae5'; badgeCor = '#065f46'; estado = 'Economia' }
-      if (item.saldo < 0) { badgeBg = '#fee2e2'; badgeCor = '#991b1b'; estado = 'Estourado' }
-      if (item.aprovado === 0) { badgeBg = '#f1f5f9'; badgeCor = '#64748b'; estado = 'Sem Orçamento' }
-
-      tabelaResumoRows += `
-        <tr style="background-color: ${corFundo}; height: 26px;">
-          <td style="font-weight: 600; padding: 6px 10px; border: 1px solid #e2e8f0;">${item.nome}</td>
-          <td class="currency" style="padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.aprovado.toFixed(2)}</td>
-          <td class="currency" style="padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.realizado.toFixed(2)}</td>
-          <td class="currency" style="font-weight: bold; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.saldo.toFixed(2)}</td>
-          <td style="background-color: ${badgeBg}; color: ${badgeCor}; font-weight: bold; text-align: center; border: 1px solid #e2e8f0; font-size: 11px;">${estado}</td>
-        </tr>
-      `
+      if (item.saldo > 0) estado = 'Economia'
+      if (item.saldo < 0) estado = 'Estourado'
+      if (item.aprovado === 0) estado = 'Sem Orçamento'
+      return {
+        'Condomínio': item.nome,
+        'Teto Aprovado (R$)': item.aprovado,
+        'Gasto Realizado (R$)': item.realizado,
+        'Saldo (R$)': item.saldo,
+        'Estado Orçamentário': estado
+      }
     })
 
-    let tabelaSolicitacoesRows = ''
-    solicitacoesAnaliseFiltradas.forEach((s, index) => {
-      const corFundo = index % 2 === 0 ? '#ffffff' : '#f8fafc'
-      const st = textoStatus(s.status)
-      let badgeBg = '#fef3c7'
-      let badgeCor = '#d97706'
-      if (st === 'Aprovada') { badgeBg = '#dbeafe'; badgeCor = '#1d4ed8' }
-      if (st === 'Em execução') { badgeBg = '#e0e7ff'; badgeCor = '#4338ca' }
-      if (st === 'Finalizada') { badgeBg = '#d1fae5'; badgeCor = '#065f46' }
-      if (st === 'Reprovada') { badgeBg = '#fee2e2'; badgeCor = '#991b1b' }
+    const wsResumo = XLSX.utils.json_to_sheet(dadosResumo)
+    wsResumo['!cols'] = [
+      { wch: 30 }, // Condomínio
+      { wch: 18 }, // Teto
+      { wch: 18 }, // Realizado
+      { wch: 18 }, // Saldo
+      { wch: 20 }  // Estado
+    ]
+    XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
-      tabelaSolicitacoesRows += `
-        <tr style="background-color: ${corFundo}; height: 24px;">
-          <td style="text-align: center; font-weight: bold; color: #2563eb; border: 1px solid #e2e8f0; padding: 6px;">${s.numero || ''}</td>
-          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.condominio || ''}</td>
-          <td style="border: 1px solid #e2e8f0; padding: 6px 8px; color: #7e22ce; font-weight: 500;">${s.categoria || '-'}</td>
-          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.descricao || ''}</td>
-          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.fornecedor || '-'}</td>
-          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right;">${solicitado(s).toFixed(2)}</td>
-          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right;">${(aprovado(s) || solicitado(s)).toFixed(2)}</td>
-          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right; font-weight: bold;">${(realizado(s) || 0).toFixed(2)}</td>
-          <td style="background-color: ${badgeBg}; color: ${badgeCor}; font-weight: bold; text-align: center; border: 1px solid #e2e8f0; font-size: 11px;">${st}</td>
-          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: center; font-size: 11px; color: #64748b;">${formatarDataHora(s.data)}</td>
-        </tr>
-      `
-    })
+    // 2. Dados da aba Extrato de Solicitações
+    const dadosExtrato = solicitacoesAnaliseFiltradas.map(s => ({
+      'Código': s.numero || '',
+      'Condomínio': s.condominio || '',
+      'Categoria': s.categoria || '-',
+      'Descrição do Pedido': s.descricao || '',
+      'Fornecedor': s.fornecedor || '-',
+      'Valor Solicitado (R$)': solicitado(s),
+      'Valor Aprovado (R$)': aprovado(s) || solicitado(s),
+      'Valor Realizado (R$)': realizado(s) || 0,
+      'Status': textoStatus(s.status),
+      'Data de Abertura': formatarDataHora(s.data)
+    }))
 
-    const templateExcel = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head>
-        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-        <!--[if gte mso 9]>
-        <xml>
-          <x:ExcelWorkbook>
-            <x:ExcelWorksheets>
-              <x:ExcelWorksheet>
-                <x:Name>Relatorio de Fecho</x:Name>
-                <x:WorksheetOptions>
-                  <x:DisplayGridlines/>
-                </x:WorksheetOptions>
-              </x:ExcelWorksheet>
-            </x:ExcelWorksheets>
-          </x:ExcelWorkbook>
-        </xml>
-        <![endif]-->
-        <style>
-          body { font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 12px; }
-          .currency { mso-number-format:"\\R\\$\\ \\#\\,\\#\\#0\\.00"; }
-          th { font-size: 12px; font-weight: bold; text-align: center; vertical-align: middle; }
-          td { vertical-align: middle; }
-        </style>
-      </head>
-      <body>
-        <table>
-          <tr>
-            <td colspan="5" style="font-size: 18px; font-weight: bold; color: #0f172a; height: 35px; vertical-align: middle;">
-              HAIZE SÍNDICO PROFISSIONAL — RELATÓRIO EXECUTIVO DE CONTROLADORIA
-            </td>
-          </tr>
-          <tr>
-            <td colspan="5" style="color: #64748b; font-size: 11px; height: 20px;">
-              Filtro Condomínio: <b>${condFormatado}</b> | Período: <b>${mesFormatado}</b> | Emissão: <b>${dataEmissao}</b>
-            </td>
-          </tr>
-          <tr style="height: 15px;"></tr>
-          <tr>
-            <td colspan="5" style="background-color: #0f172a; color: #ffffff; font-weight: bold; font-size: 13px; padding: 8px;">
-              1. RESUMO ORÇAMENTAL POR CONDOMÍNIO
-            </td>
-          </tr>
-          <tr style="background-color: #1e293b; color: #ffffff; font-weight: bold; height: 28px;">
-            <th style="width: 250px; text-align: left; padding-left: 10px;">Condomínio</th>
-            <th style="width: 150px; text-align: right; padding-right: 10px;">Teto Aprovado</th>
-            <th style="width: 150px; text-align: right; padding-right: 10px;">Gasto Realizado</th>
-            <th style="width: 150px; text-align: right; padding-right: 10px;">Saldo</th>
-            <th style="width: 140px;">Estado Orçamental</th>
-          </tr>
-          ${tabelaResumoRows}
-          <tr style="height: 25px;"></tr>
-          <tr>
-            <td colspan="10" style="background-color: #0f172a; color: #ffffff; font-weight: bold; font-size: 13px; padding: 8px;">
-              2. EXTRATO DETALHADO DE SOLICITAÇÕES
-            </td>
-          </tr>
-          <tr style="background-color: #1e293b; color: #ffffff; font-weight: bold; height: 28px;">
-            <th style="width: 100px;">Código</th>
-            <th style="width: 220px; text-align: left; padding-left: 8px;">Condomínio</th>
-            <th style="width: 150px; text-align: left; padding-left: 8px;">Categoria</th>
-            <th style="width: 320px; text-align: left; padding-left: 8px;">Descrição do Pedido</th>
-            <th style="width: 200px; text-align: left; padding-left: 8px;">Fornecedor</th>
-            <th style="width: 130px; text-align: right; padding-right: 8px;">Solicitado</th>
-            <th style="width: 130px; text-align: right; padding-right: 8px;">Aprovado</th>
-            <th style="width: 130px; text-align: right; padding-right: 8px;">Realizado</th>
-            <th style="width: 130px;">Estado</th>
-            <th style="width: 140px;">Data/Hora</th>
-          </tr>
-          ${tabelaSolicitacoesRows}
-        </table>
-      </body>
-      </html>
-    `
+    const wsExtrato = XLSX.utils.json_to_sheet(dadosExtrato)
+    wsExtrato['!cols'] = [
+      { wch: 14 }, // Código
+      { wch: 26 }, // Condomínio
+      { wch: 20 }, // Categoria
+      { wch: 35 }, // Descrição
+      { wch: 24 }, // Fornecedor
+      { wch: 18 }, // Solicitado
+      { wch: 18 }, // Aprovado
+      { wch: 18 }, // Realizado
+      { wch: 18 }, // Status
+      { wch: 20 }  // Data
+    ]
+    XLSX.utils.book_append_sheet(wb, wsExtrato, 'Extrato de Solicitações')
 
-    const blob = new Blob([templateExcel], { type: 'application/vnd.ms-excel;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `Relatorio_Controladoria_${filtroCondominioAnalise}_${filtroMesAnalise}.xls`
-    link.click()
-    URL.revokeObjectURL(link.href)
-    mostrarToast('Planilha Excel profissional exportada com sucesso!', 'success')
+    // Gera e faz download do arquivo .xlsx nativo
+    const nomeArquivo = `Relatorio_Controladoria_${filtroCondominioAnalise !== 'todos' ? filtroCondominioAnalise : 'Geral'}_${filtroMesAnalise !== 'todos' ? filtroMesAnalise : 'Consolidado'}.xlsx`
+    XLSX.writeFile(wb, nomeArquivo)
+    mostrarToast('Pasta de Trabalho do Excel (.xlsx) gerada!', 'success')
   }
 
   function exportarRelatorioPDF() {
@@ -1037,7 +964,7 @@ function App() {
                 </select>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="button-secondary" onClick={exportarRelatorioExcel} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>📊</span> Exportar Excel
+                    <span>📊</span> Exportar Excel (.xlsx)
                   </button>
                   <button className="button-secondary" onClick={exportarRelatorioPDF} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span>🖨️</span> Imprimir / PDF
@@ -1235,7 +1162,7 @@ function App() {
                 <button className="button-primary" onClick={abrirFormularioNovoFornecedor}>+ Novo Fornecedor</button>
               </div>
               <div className="company-grid">
-                {fornecedores.map(fornecedor => {
+                {fornecedores.map(forn => {
                   const nome = fornecedor.nome || 'Sem nome'
                   const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
                   return (
@@ -1561,124 +1488,4 @@ function App() {
                     </div>
                     <div className="form-group">
                       <label>Código Interno</label>
-                      <input type="text" value={formularioCondominio.codigo} onChange={e => atualizarCampoCondominio('codigo', e.target.value)} />
-                    </div>
-                  </div>
-                </form>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button-secondary" onClick={fecharFormularioCondominio} disabled={salvando}>Cancelar</button>
-                <button type="button" className="button-primary" onClick={salvarCondominio} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL: NOVA CATEGORIA */}
-        {mostrarFormularioCategoria && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCategoria() }}>
-            <div className="modal">
-              <div className="modal-header">
-                <div><span className="eyebrow">{categoriaEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{categoriaEditando ? 'Editar Categoria' : 'Cadastrar Categoria'}</h3></div>
-                <button type="button" className="modal-close" onClick={fecharFormularioCategoria}>×</button>
-              </div>
-              <div className="modal-body">
-                <form className="form" onSubmit={salvarCategoria}>
-                  <div className="form-grid">
-                    <div className="form-group full">
-                      <label>Nome da Categoria *</label>
-                      <input type="text" value={formularioCategoria.nome} onChange={e => atualizarCampoCategoria('nome', e.target.value)} required autoFocus placeholder="Ex: Limpeza, Manutenção..." />
-                    </div>
-                    <div className="form-group full">
-                      <label>Descrição Breve</label>
-                      <input type="text" value={formularioCategoria.descricao} onChange={e => atualizarCampoCategoria('descricao', e.target.value)} />
-                    </div>
-
-                    <div className="form-group full" style={{ marginTop: '8px' }}>
-                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Limites de Aprovação Automática por Condomínio</span>
-                      </label>
-                      
-                      {condominios.length === 0 ? (
-                        <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
-                          Cadastre condomínios primeiro para definir limites de aprovação automática.
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
-                          {condominios.map(c => (
-                            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#334155' }}>{c.nome}</span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '13px', color: '#64748b' }}>R$</span>
-                                <input 
-                                  type="text" 
-                                  style={{ width: '110px', padding: '8px', fontSize: '14px', textAlign: 'right', border: '1px solid #cbd5e1', borderRadius: '6px' }} 
-                                  placeholder="0,00"
-                                  value={formularioCategoria.limites[c.nome] || ''}
-                                  onChange={e => {
-                                    setFormularioCategoria(prev => ({
-                                      ...prev,
-                                      limites: {
-                                        ...prev.limites,
-                                        [c.nome]: e.target.value
-                                      }
-                                    }))
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </form>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button-secondary" onClick={fecharFormularioCategoria} disabled={salvando}>Cancelar</button>
-                <button type="button" className="button-primary" onClick={salvarCategoria} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL: NOVO FORNECEDOR */}
-        {mostrarFormularioFornecedor && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioFornecedor() }}>
-            <div className="modal">
-              <div className="modal-header">
-                <div><span className="eyebrow">{fornecedorEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{fornecedorEditando ? 'Editar Fornecedor' : 'Cadastrar Fornecedor'}</h3></div>
-                <button type="button" className="modal-close" onClick={fecharFormularioFornecedor}>×</button>
-              </div>
-              <div className="modal-body">
-                <form className="form" onSubmit={salvarFornecedor}>
-                  <div className="form-grid">
-                    <div className="form-group full">
-                      <label>Nome / Razão Social *</label>
-                      <input type="text" placeholder="Nome do fornecedor..." value={formularioFornecedor.nome} onChange={e => atualizarCampoFornecedor('nome', e.target.value)} required autoFocus />
-                    </div>
-                    <div className="form-group">
-                      <label>CNPJ</label>
-                      <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('cnpj', e.target.value)} />
-                    </div>
-                    <div className="form-group">
-                      <label>Categoria de Serviço</label>
-                      <input type="text" value={formularioFornecedor.categoria} onChange={e => atualizarCampoFornecedor('categoria', e.target.value)} />
-                    </div>
-                  </div>
-                </form>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button-secondary" onClick={fecharFormularioFornecedor} disabled={salvando}>Cancelar</button>
-                <button type="button" className="button-primary" onClick={salvarFornecedor} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-      </main>
-    </div>
-  )
-}
-
-export default App
+                      <input type="text" value={formularioCondominio.codigo} onChange={e => atualizarCampoCondominio('codigo', e.target
