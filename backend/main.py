@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from typing import Optional
 import os
 import shutil
 from jose import JWTError, jwt
@@ -28,7 +29,7 @@ from schemas import (
 os.makedirs("uploads", exist_ok=True)
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Controladoria", version="1.2.1")
+app = FastAPI(title="Controladoria", version="1.2.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -156,7 +157,7 @@ def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario
     return resultado
 
 @app.get("/orcamento-categoria")
-def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session = Depends(get_db)):
+def consultar_orcamento_categoria(condominio: str, categoria: str, ignorar_id: Optional[int] = None, db: Session = Depends(get_db)):
     limite_obj = db.query(models.LimiteCategoriaCondominio).filter(
         models.LimiteCategoriaCondominio.categoria_nome == categoria,
         models.LimiteCategoriaCondominio.condominio_nome == condominio
@@ -164,12 +165,15 @@ def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session =
     
     teto = limite_obj.limite if limite_obj else 0.0
     
-    sols_existentes = db.query(models.SolicitacaoCompra).filter(
+    query = db.query(models.SolicitacaoCompra).filter(
         models.SolicitacaoCompra.condominio == condominio,
         models.SolicitacaoCompra.categoria == categoria,
         models.SolicitacaoCompra.status.in_(["Aprovada", "Em execução", "Finalizada"])
-    ).all()
-    
+    )
+    if ignorar_id is not None:
+        query = query.filter(models.SolicitacaoCompra.id != ignorar_id)
+        
+    sols_existentes = query.all()
     gasto_atual = sum((s.valor_aprovado if s.valor_aprovado is not None else s.valor) for s in sols_existentes)
     
     return {
@@ -179,374 +183,4 @@ def consultar_orcamento_categoria(condominio: str, categoria: str, db: Session =
     }
 
 @app.post("/categorias")
-def criar_categoria(cat: CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        existente = db.query(models.Categoria).filter(models.Categoria.nome == cat.nome).first()
-        if existente:
-            raise HTTPException(status_code=400, detail="Essa categoria já está cadastrada.")
-            
-        novo = models.Categoria(nome=cat.nome, descricao=cat.descricao)
-        db.add(novo)
-        db.commit()
-        db.refresh(novo)
-        
-        if cat.limites:
-            for lim in cat.limites:
-                if lim.limite > 0:
-                    db.add(models.LimiteCategoriaCondominio(
-                        categoria_nome=novo.nome, 
-                        condominio_nome=lim.condominio, 
-                        limite=lim.limite
-                    ))
-            db.commit()
-            
-        return novo
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/categorias/{id}")
-def atualizar_categoria(id: int, cat: CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        item = db.query(models.Categoria).filter(models.Categoria.id == id).first()
-        if not item: raise HTTPException(status_code=404, detail="Categoria não encontrada.")
-        
-        nome_antigo = item.nome
-        item.nome, item.descricao = cat.nome, cat.descricao
-        
-        if nome_antigo != cat.nome:
-            db.query(models.SolicitacaoCompra).filter(
-                models.SolicitacaoCompra.categoria == nome_antigo
-            ).update({"categoria": cat.nome})
-
-        db.query(models.LimiteCategoriaCondominio).filter(models.LimiteCategoriaCondominio.categoria_nome == nome_antigo).delete()
-        if cat.limites:
-            for lim in cat.limites:
-                if lim.limite > 0:
-                    db.add(models.LimiteCategoriaCondominio(
-                        categoria_nome=cat.nome, 
-                        condominio_nome=lim.condominio, 
-                        limite=lim.limite
-                    ))
-                
-        db.commit()
-        db.refresh(item)
-        return item
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/categorias/{id}")
-def deletar_categoria(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    item = db.query(models.Categoria).filter(models.Categoria.id == id).first()
-    if not item: raise HTTPException(status_code=404, detail="Categoria não encontrada.")
-    
-    db.query(models.LimiteCategoriaCondominio).filter(models.LimiteCategoriaCondominio.categoria_nome == item.nome).delete()
-    db.delete(item)
-    db.commit()
-    return {"msg": "Excluída"}
-
-@app.get("/condominios")
-def listar_condominios(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    return db.query(models.Condominio).order_by(models.Condominio.nome.asc()).all()
-
-@app.post("/condominios")
-def criar_condominio(cond: CondominioCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        existente = db.query(models.Condominio).filter(models.Condominio.nome == cond.nome).first()
-        if existente:
-            raise HTTPException(status_code=400, detail="Já existe um condomínio cadastrado com este nome.")
-        novo = models.Condominio(nome=cond.nome, cnpj=cond.cnpj, codigo=cond.codigo)
-        db.add(novo)
-        db.commit()
-        db.refresh(novo)
-        return novo
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/condominios/{id}")
-def atualizar_condominio(id: int, cond: CondominioCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        item = db.query(models.Condominio).filter(models.Condominio.id == id).first()
-        if not item: raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
-        
-        nome_antigo = item.nome
-        item.nome, item.cnpj, item.codigo = cond.nome, cond.cnpj, cond.codigo
-        
-        if nome_antigo != cond.nome:
-            db.query(models.LimiteCategoriaCondominio).filter(
-                models.LimiteCategoriaCondominio.condominio_nome == nome_antigo
-            ).update({"condominio_nome": cond.nome})
-            db.query(models.SolicitacaoCompra).filter(
-                models.SolicitacaoCompra.condominio == nome_antigo
-            ).update({"condominio": cond.nome})
-
-        db.commit()
-        db.refresh(item)
-        return item
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/condominios/{id}")
-def deletar_condominio(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    item = db.query(models.Condominio).filter(models.Condominio.id == id).first()
-    if not item: raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
-    db.query(models.LimiteCategoriaCondominio).filter(models.LimiteCategoriaCondominio.condominio_nome == item.nome).delete()
-    db.delete(item)
-    db.commit()
-    return {"msg": "Excluído"}
-
-@app.get("/fornecedores")
-def listar_fornecedores(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    return db.query(models.Fornecedor).order_by(models.Fornecedor.nome.asc()).all()
-
-@app.post("/fornecedores")
-def criar_fornecedor(forn: FornecedorCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        existente = db.query(models.Fornecedor).filter(models.Fornecedor.nome == forn.nome).first()
-        if existente:
-            raise HTTPException(status_code=400, detail="Já existe um fornecedor cadastrado com este nome.")
-        novo = models.Fornecedor(nome=forn.nome, cnpj=forn.cnpj, categoria=forn.categoria)
-        db.add(novo)
-        db.commit()
-        db.refresh(novo)
-        return novo
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/fornecedores/{id}")
-def atualizar_fornecedor(id: int, forn: FornecedorCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    try:
-        item = db.query(models.Fornecedor).filter(models.Fornecedor.id == id).first()
-        if not item: raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
-        
-        nome_antigo = item.nome
-        item.nome, item.cnpj, item.categoria = forn.nome, forn.cnpj, forn.categoria
-        
-        if nome_antigo != forn.nome:
-            db.query(models.SolicitacaoCompra).filter(
-                models.SolicitacaoCompra.fornecedor == nome_antigo
-            ).update({"fornecedor": forn.nome})
-
-        db.commit()
-        db.refresh(item)
-        return item
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/fornecedores/{id}")
-def deletar_fornecedor(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    item = db.query(models.Fornecedor).filter(models.Fornecedor.id == id).first()
-    if not item: raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
-    db.delete(item)
-    db.commit()
-    return {"msg": "Excluído"}
-
-@app.post("/solicitacoes")
-def criar_solicitacao(solicitacao: SolicitacaoCompraCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    ultimo = db.query(models.SolicitacaoCompra).order_by(models.SolicitacaoCompra.id.desc()).first()
-    proximo_num = (ultimo.id + 1) if ultimo else 1
-    valor_total = solicitacao.valor_servico + solicitacao.valor_produto
-
-    status_final = "Aprovação pendente"
-    valor_aprovado_final = None
-    mensagem_historico = "Solicitação criada"
-
-    if solicitacao.categoria and solicitacao.condominio:
-        limite_obj = db.query(models.LimiteCategoriaCondominio).filter(
-            models.LimiteCategoriaCondominio.categoria_nome == solicitacao.categoria,
-            models.LimiteCategoriaCondominio.condominio_nome == solicitacao.condominio
-        ).first()
-        
-        if limite_obj and limite_obj.limite > 0:
-            sols_existentes = db.query(models.SolicitacaoCompra).filter(
-                models.SolicitacaoCompra.condominio == solicitacao.condominio,
-                models.SolicitacaoCompra.categoria == solicitacao.categoria,
-                models.SolicitacaoCompra.status.in_(["Aprovada", "Em execução", "Finalizada"])
-            ).all()
-            
-            soma_atual = sum((s.valor_aprovado if s.valor_aprovado is not None else s.valor) for s in sols_existentes)
-            
-            if (soma_atual + valor_total) <= limite_obj.limite:
-                status_final = "Aprovada"
-                valor_aprovado_final = valor_total
-                mensagem_historico = f"Aprovada automaticamente (Dentro do teto acumulado de {solicitacao.categoria})"
-
-    nova = models.SolicitacaoCompra(
-        numero=f"SC-{proximo_num:06d}", solicitante=solicitacao.solicitante,
-        condominio=solicitacao.condominio, categoria=solicitacao.categoria,
-        descricao=solicitacao.descricao, fornecedor=solicitacao.fornecedor,
-        valor_servico=solicitacao.valor_servico, valor_produto=solicitacao.valor_produto,
-        valor=valor_total, observacao=solicitacao.observacao, prioridade=solicitacao.prioridade,
-        status=status_final, valor_aprovado=valor_aprovado_final, data=datetime.now()
-    )
-    
-    db.add(nova)
-    db.commit()
-    db.refresh(nova)
-
-    registrar_historico(
-        db, nova, acao=mensagem_historico, responsavel="Sistema" if status_final == "Aprovada" else solicitacao.solicitante,
-        status_novo=status_final, valor_novo=nova.valor
-    )
-    db.commit()
-    
-    return {"mensagem": "Criada", "solicitacao": montar_solicitacao(nova)}
-
-@app.get("/solicitacoes")
-def listar_solicitacoes(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    return [montar_solicitacao(s) for s in db.query(models.SolicitacaoCompra).order_by(models.SolicitacaoCompra.id.desc()).all()]
-
-@app.put("/solicitacoes/{id}")
-def atualizar_solicitacao(id: int, solicitacao: SolicitacaoCompraCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-
-    status_anterior, valor_anterior = sol.status, sol.valor
-    valor_total = solicitacao.valor_servico + solicitacao.valor_produto
-
-    sol.condominio, sol.categoria, sol.descricao = solicitacao.condominio, solicitacao.categoria, solicitacao.descricao
-    sol.fornecedor, sol.valor_servico, sol.valor_produto = solicitacao.fornecedor, solicitacao.valor_servico, solicitacao.valor_produto
-    sol.valor, sol.observacao, sol.motivo_ajuste = valor_total, solicitacao.observacao, None
-
-    status_final = "Aprovação pendente"
-    valor_aprovado_final = None
-    mensagem_historico = "Solicitação corrigida"
-
-    if solicitacao.categoria and solicitacao.condominio:
-        limite_obj = db.query(models.LimiteCategoriaCondominio).filter(
-            models.LimiteCategoriaCondominio.categoria_nome == solicitacao.categoria,
-            models.LimiteCategoriaCondominio.condominio_nome == solicitacao.condominio
-        ).first()
-        
-        if limite_obj and limite_obj.limite > 0:
-            sols_existentes = db.query(models.SolicitacaoCompra).filter(
-                models.SolicitacaoCompra.condominio == solicitacao.condominio,
-                models.SolicitacaoCompra.categoria == solicitacao.categoria,
-                models.SolicitacaoCompra.status.in_(["Aprovada", "Em execução", "Finalizada"]),
-                models.SolicitacaoCompra.id != id
-            ).all()
-            
-            soma_atual = sum((s.valor_aprovado if s.valor_aprovado is not None else s.valor) for s in sols_existentes)
-            
-            if (soma_atual + valor_total) <= limite_obj.limite:
-                status_final = "Aprovada"
-                valor_aprovado_final = valor_total
-                mensagem_historico = f"Aprovada automaticamente após correção (Teto acumulado respeitado)"
-
-    sol.status = status_final
-    sol.valor_aprovado = valor_aprovado_final
-
-    db.commit()
-    db.refresh(sol)
-
-    registrar_historico(
-        db, sol, acao=mensagem_historico, responsavel="Sistema" if status_final == "Aprovada" else solicitacao.solicitante,
-        status_anterior=status_anterior, status_novo=status_final, valor_anterior=valor_anterior, valor_novo=sol.valor
-    )
-    db.commit()
-    return {"mensagem": "Solicitação atualizada.", "solicitacao": montar_solicitacao(sol)}
-
-@app.delete("/solicitacoes/{id}")
-def deletar_solicitacao(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-    db.query(models.HistoricoSolicitacao).filter(models.HistoricoSolicitacao.solicitacao_id == id).delete()
-    db.query(models.Anexo).filter(models.Anexo.solicitacao_id == id).delete()
-    db.delete(sol)
-    db.commit()
-    return {"mensagem": "Excluída."}
-
-@app.get("/solicitacoes/{id}/historico")
-def listar_historico(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    return [montar_historico(i) for i in db.query(models.HistoricoSolicitacao).filter(models.HistoricoSolicitacao.solicitacao_id == id).order_by(models.HistoricoSolicitacao.data.asc()).all()]
-
-@app.put("/solicitacoes/{id}/status")
-def atualizar_status(id: int, dados: AtualizarStatus, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-
-    status_ant, v_aprov_ant = sol.status, sol.valor_aprovado
-
-    if dados.status in ["Aprovada", "Pagamento aprovado"]:
-        sol.valor_aprovado = dados.valor_aprovado if dados.valor_aprovado is not None else sol.valor
-        sol.status, acao, descricao = "Aprovada", "Aprovada", "Solicitação aprovada pela Controladoria."
-    elif dados.status == "Ajuste solicitado":
-        sol.motivo_ajuste, sol.status, acao, descricao = dados.motivo_ajuste, "Ajuste solicitado", "Ajuste solicitado", "Solicitação devolvida para correção."
-    elif dados.status == "Reprovada":
-        sol.valor_aprovado, sol.motivo_ajuste, sol.status, acao, descricao = 0, dados.motivo_ajuste, "Reprovada", "Reprovação", "Solicitação reprovada pela Controladoria."
-    else: raise HTTPException(status_code=400, detail=f"Status não suportado via esse endpoint.")
-
-    db.commit()
-    db.refresh(sol)
-    registrar_historico(db, sol, acao=acao, responsavel="Controladoria", status_anterior=status_ant, status_novo=sol.status, valor_anterior=v_aprov_ant, valor_novo=sol.valor_aprovado, observacao=dados.motivo_ajuste, descricao=descricao)
-    db.commit()
-    return {"solicitacao": montar_solicitacao(sol)}
-
-@app.put("/solicitacoes/{id}/iniciar-execucao")
-def iniciar_execucao(id: int, dados: IniciarExecucao, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-    if sol.status not in ["Pagamento aprovado", "Aprovada"]: raise HTTPException(status_code=400, detail="Somente uma solicitação aprovada pode entrar em execução.")
-
-    status_anterior = sol.status
-    sol.status, sol.data_inicio_execucao, sol.observacao_execucao = "Em execução", datetime.now(), dados.observacao_execucao
-    db.commit()
-    db.refresh(sol)
-    registrar_historico(db, sol, acao="Execução iniciada", responsavel="Controladoria", status_anterior=status_anterior, status_novo="Em execução", valor_anterior=sol.valor_aprovado, valor_novo=sol.valor_aprovado, observacao=dados.observacao_execucao)
-    db.commit()
-    return {"solicitacao": montar_solicitacao(sol)}
-
-@app.put("/solicitacoes/{id}/finalizar")
-def finalizar_compra(id: int, dados: FinalizarCompra, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-    if sol.status not in ["Em execução", "Pagamento aprovado", "Aprovada"]: raise HTTPException(status_code=400, detail="A solicitação precisa estar aprovada ou em execução para ser finalizada.")
-
-    status_anterior, valor_anterior = sol.status, sol.valor_realizado
-    sol.valor_realizado, sol.status, sol.data_finalizacao, sol.observacao_execucao = dados.valor_realizado, "Finalizada", datetime.now(), dados.observacao_execucao
-    db.commit()
-    db.refresh(sol)
-    registrar_historico(db, sol, acao="Compra finalizada", responsavel="Controladoria", status_anterior=status_anterior, status_novo="Finalizada", valor_anterior=valor_anterior, valor_novo=dados.valor_realizado, observacao=dados.observacao_execucao)
-    db.commit()
-    return {"solicitacao": montar_solicitacao(sol)}
-
-@app.post("/solicitacoes/{id}/anexos")
-def upload_anexo(id: int, arquivo: UploadFile = File(...), tipo: str = Form(...), responsavel: str = Form(...), db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    sol = db.query(models.SolicitacaoCompra).filter(models.SolicitacaoCompra.id == id).first()
-    if not sol: raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
-
-    nome_seguro = (arquivo.filename or "arquivo").replace(" ", "_").replace("/", "_").replace("\\", "_")
-    caminho = f"uploads/{id}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{nome_seguro}"
-    with open(caminho, "wb") as buffer: shutil.copyfileobj(arquivo.file, buffer)
-
-    db.add(models.Anexo(solicitacao_id=id, nome_arquivo=arquivo.filename, caminho_arquivo=caminho, tipo=tipo, data_upload=datetime.now()))
-    db.add(models.HistoricoSolicitacao(solicitacao_id=id, data=datetime.now(), acao=f"Anexo: {tipo}", responsavel=responsavel, descricao=f"Arquivo '{arquivo.filename}' anexado."))
-    db.commit()
-    return {"mensagem": "Arquivo anexado!"}
-
-@app.get("/solicitacoes/{id}/anexos")
-def listar_anexos(id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
-    return [{"id": a.id, "nome_arquivo": a.nome_arquivo, "tipo": a.tipo, "data_upload": a.data_upload} for a in db.query(models.Anexo).filter(models.Anexo.solicitacao_id == id).order_by(models.Anexo.data_upload.desc()).all()]
-
-@app.get("/anexos/{id}/download")
-def baixar_anexo(id: int, db: Session = Depends(get_db)):
-    anexo = db.query(models.Anexo).filter(models.Anexo.id == id).first()
-    if not anexo or not os.path.exists(anexo.caminho_arquivo): raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
-    return FileResponse(path=anexo.caminho_arquivo, filename=anexo.nome_arquivo)
+def criar_categoria(cat: CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_
