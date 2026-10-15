@@ -312,7 +312,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // ==========================================
-  // FUNÇÕES DE EXPORTAÇÃO (EXCEL & PDF)
+  // FUNÇÕES DE EXPORTAÇÃO PROFISSIONAL
   // ==========================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -322,39 +322,138 @@ function App() {
 
     const mesFormatado = filtroMesAnalise === 'todos' ? 'Todos os Meses' : formatarMesAno(filtroMesAnalise)
     const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
+    const dataEmissao = new Date().toLocaleString('pt-BR')
 
-    let csv = '\uFEFF' // BOM para garantir acentos corretos no Excel
-    csv += `RELATÓRIO DE FECHO - CONTROLADORIA HAIZE\n`
-    csv += `Filtro Condomínio:;${condFormatado}\n`
-    csv += `Filtro Período:;${mesFormatado}\n`
-    csv += `Emitido em:;${new Date().toLocaleString('pt-BR')}\n\n`
-
-    csv += `RESUMO ORÇAMENTAL POR CONDOMÍNIO\n`
-    csv += `Condomínio;Teto Aprovado (R$);Gasto Realizado (R$);Saldo (R$);Estado Orçamental\n`
-    listaOrcamentoCondominio.forEach(item => {
+    let tabelaResumoRows = ''
+    listaOrcamentoCondominio.forEach((item, index) => {
+      const corFundo = index % 2 === 0 ? '#ffffff' : '#f8fafc'
+      let badgeBg = '#f1f5f9'
+      let badgeCor = '#475569'
       let estado = 'No Limite'
-      if (item.saldo > 0) estado = 'Economia'
-      if (item.saldo < 0) estado = 'Estourado'
-      if (item.aprovado === 0) estado = 'Sem Orçamento'
-      csv += `"${item.nome}";"${item.aprovado.toFixed(2).replace('.', ',')}";"${item.realizado.toFixed(2).replace('.', ',')}";"${item.saldo.toFixed(2).replace('.', ',')}";"${estado}"\n`
+      if (item.saldo > 0) { badgeBg = '#d1fae5'; badgeCor = '#065f46'; estado = 'Economia' }
+      if (item.saldo < 0) { badgeBg = '#fee2e2'; badgeCor = '#991b1b'; estado = 'Estourado' }
+      if (item.aprovado === 0) { badgeBg = '#f1f5f9'; badgeCor = '#64748b'; estado = 'Sem Orçamento' }
+
+      tabelaResumoRows += `
+        <tr style="background-color: ${corFundo}; height: 26px;">
+          <td style="font-weight: 600; padding: 6px 10px; border: 1px solid #e2e8f0;">${item.nome}</td>
+          <td class="currency" style="padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.aprovado.toFixed(2)}</td>
+          <td class="currency" style="padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.realizado.toFixed(2)}</td>
+          <td class="currency" style="font-weight: bold; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; padding: 6px 10px; border: 1px solid #e2e8f0; text-align: right;">${item.saldo.toFixed(2)}</td>
+          <td style="background-color: ${badgeBg}; color: ${badgeCor}; font-weight: bold; text-align: center; border: 1px solid #e2e8f0; font-size: 11px;">${estado}</td>
+        </tr>
+      `
     })
 
-    csv += `\nEXTRATO DETALHADO DE SOLICITAÇÕES\n`
-    csv += `Número;Condomínio;Categoria;Descrição;Fornecedor;Valor Solicitado (R$);Valor Aprovado (R$);Valor Realizado (R$);Estado;Data\n`
-    solicitacoesAnaliseFiltradas.forEach(s => {
-      const vSol = solicitado(s).toFixed(2).replace('.', ',')
-      const vApr = aprovado(s) ? aprovado(s).toFixed(2).replace('.', ',') : '-'
-      const vReal = realizado(s) ? realizado(s).toFixed(2).replace('.', ',') : '-'
-      csv += `"${s.numero || ''}";"${s.condominio || ''}";"${s.categoria || ''}";"${(s.descricao || '').replace(/"/g, '""')}";"${s.fornecedor || ''}";"${vSol}";"${vApr}";"${vReal}";"${textoStatus(s.status)}";"${formatarDataHora(s.data)}"\n`
+    let tabelaSolicitacoesRows = ''
+    solicitacoesAnaliseFiltradas.forEach((s, index) => {
+      const corFundo = index % 2 === 0 ? '#ffffff' : '#f8fafc'
+      const st = textoStatus(s.status)
+      let badgeBg = '#fef3c7'
+      let badgeCor = '#d97706'
+      if (st === 'Aprovada') { badgeBg = '#dbeafe'; badgeCor = '#1d4ed8' }
+      if (st === 'Em execução') { badgeBg = '#e0e7ff'; badgeCor = '#4338ca' }
+      if (st === 'Finalizada') { badgeBg = '#d1fae5'; badgeCor = '#065f46' }
+      if (st === 'Reprovada') { badgeBg = '#fee2e2'; badgeCor = '#991b1b' }
+
+      tabelaSolicitacoesRows += `
+        <tr style="background-color: ${corFundo}; height: 24px;">
+          <td style="text-align: center; font-weight: bold; color: #2563eb; border: 1px solid #e2e8f0; padding: 6px;">${s.numero || ''}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.condominio || ''}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 6px 8px; color: #7e22ce; font-weight: 500;">${s.categoria || '-'}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.descricao || ''}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 6px 8px;">${s.fornecedor || '-'}</td>
+          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right;">${solicitado(s).toFixed(2)}</td>
+          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right;">${(aprovado(s) || solicitado(s)).toFixed(2)}</td>
+          <td class="currency" style="border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right; font-weight: bold;">${(realizado(s) || 0).toFixed(2)}</td>
+          <td style="background-color: ${badgeBg}; color: ${badgeCor}; font-weight: bold; text-align: center; border: 1px solid #e2e8f0; font-size: 11px;">${st}</td>
+          <td style="border: 1px solid #e2e8f0; padding: 6px; text-align: center; font-size: 11px; color: #64748b;">${formatarDataHora(s.data)}</td>
+        </tr>
+      `
     })
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const templateExcel = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <!--[if gte mso 9]>
+        <xml>
+          <x:ExcelWorkbook>
+            <x:ExcelWorksheets>
+              <x:ExcelWorksheet>
+                <x:Name>Relatorio de Fecho</x:Name>
+                <x:WorksheetOptions>
+                  <x:DisplayGridlines/>
+                </x:WorksheetOptions>
+              </x:ExcelWorksheet>
+            </x:ExcelWorksheets>
+          </x:ExcelWorkbook>
+        </xml>
+        <![endif]-->
+        <style>
+          body { font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 12px; }
+          .currency { mso-number-format:"\\R\\$\\ \\#\\,\\#\\#0\\.00"; }
+          th { font-size: 12px; font-weight: bold; text-align: center; vertical-align: middle; }
+          td { vertical-align: middle; }
+        </style>
+      </head>
+      <body>
+        <table>
+          <tr>
+            <td colspan="5" style="font-size: 18px; font-weight: bold; color: #0f172a; height: 35px; vertical-align: middle;">
+              HAIZE SÍNDICO PROFISSIONAL — RELATÓRIO EXECUTIVO DE CONTROLADORIA
+            </td>
+          </tr>
+          <tr>
+            <td colspan="5" style="color: #64748b; font-size: 11px; height: 20px;">
+              Filtro Condomínio: <b>${condFormatado}</b> | Período: <b>${mesFormatado}</b> | Emissão: <b>${dataEmissao}</b>
+            </td>
+          </tr>
+          <tr style="height: 15px;"></tr>
+          <tr>
+            <td colspan="5" style="background-color: #0f172a; color: #ffffff; font-weight: bold; font-size: 13px; padding: 8px;">
+              1. RESUMO ORÇAMENTAL POR CONDOMÍNIO
+            </td>
+          </tr>
+          <tr style="background-color: #1e293b; color: #ffffff; font-weight: bold; height: 28px;">
+            <th style="width: 250px; text-align: left; padding-left: 10px;">Condomínio</th>
+            <th style="width: 150px; text-align: right; padding-right: 10px;">Teto Aprovado</th>
+            <th style="width: 150px; text-align: right; padding-right: 10px;">Gasto Realizado</th>
+            <th style="width: 150px; text-align: right; padding-right: 10px;">Saldo</th>
+            <th style="width: 140px;">Estado Orçamental</th>
+          </tr>
+          ${tabelaResumoRows}
+          <tr style="height: 25px;"></tr>
+          <tr>
+            <td colspan="10" style="background-color: #0f172a; color: #ffffff; font-weight: bold; font-size: 13px; padding: 8px;">
+              2. EXTRATO DETALHADO DE SOLICITAÇÕES
+            </td>
+          </tr>
+          <tr style="background-color: #1e293b; color: #ffffff; font-weight: bold; height: 28px;">
+            <th style="width: 100px;">Código</th>
+            <th style="width: 220px; text-align: left; padding-left: 8px;">Condomínio</th>
+            <th style="width: 150px; text-align: left; padding-left: 8px;">Categoria</th>
+            <th style="width: 320px; text-align: left; padding-left: 8px;">Descrição do Pedido</th>
+            <th style="width: 200px; text-align: left; padding-left: 8px;">Fornecedor</th>
+            <th style="width: 130px; text-align: right; padding-right: 8px;">Solicitado</th>
+            <th style="width: 130px; text-align: right; padding-right: 8px;">Aprovado</th>
+            <th style="width: 130px; text-align: right; padding-right: 8px;">Realizado</th>
+            <th style="width: 130px;">Estado</th>
+            <th style="width: 140px;">Data/Hora</th>
+          </tr>
+          ${tabelaSolicitacoesRows}
+        </table>
+      </body>
+      </html>
+    `
+
+    const blob = new Blob([templateExcel], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
-    link.download = `Relatorio_Controladoria_${filtroCondominioAnalise}_${filtroMesAnalise}.csv`
+    link.download = `Relatorio_Controladoria_${filtroCondominioAnalise}_${filtroMesAnalise}.xls`
     link.click()
     URL.revokeObjectURL(link.href)
-    mostrarToast('Relatório Excel exportado com sucesso!', 'success')
+    mostrarToast('Planilha Excel profissional exportada com sucesso!', 'success')
   }
 
   function exportarRelatorioPDF() {
