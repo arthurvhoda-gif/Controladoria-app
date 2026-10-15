@@ -314,7 +314,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // ==========================================
-  // EXPORTAÇÃO EXCEL (.XLSX) COM CONTADOR E TOTAIS
+  // EXPORTAÇÃO EXCEL (.XLSX) COM FÓRMULAS REAIS E CONTADOR
   // ==========================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -324,122 +324,127 @@ function App() {
 
     const wb = XLSX.utils.book_new()
 
-    // 1. Aba: Resumo por Condomínio
-    const totalQtd = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
+    // ----------------------------------------------------
+    // ABA 1: RESUMO POR CONDOMÍNIO
+    // ----------------------------------------------------
+    const totalQtdResumo = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
     const totalSaldo = totalTeto - totalRealizado
 
-    const dadosResumo = listaOrcamentoCondominio.map(item => {
+    const linhasMatrizResumo = [
+      ['Condomínio', 'Qtd Solicitações', 'Teto Aprovado (R$)', 'Gasto Realizado (R$)', 'Saldo (R$)', 'Status Orçamentário']
+    ]
+
+    listaOrcamentoCondominio.forEach(item => {
       let estado = 'No Limite'
       if (item.saldo > 0) estado = 'Economia'
       if (item.saldo < 0) estado = 'Estourado'
       if (item.aprovado === 0) estado = 'Sem Orçamento'
-      return {
-        'Condomínio': item.nome,
-        'Qtd Solicitações': item.qtdSolicitacoes || 0,
-        'Teto Aprovado (R$)': Number(item.aprovado.toFixed(2)),
-        'Gasto Realizado (R$)': Number(item.realizado.toFixed(2)),
-        'Saldo (R$)': Number(item.saldo.toFixed(2)),
-        'Estado Orçamentário': estado
-      }
+
+      linhasMatrizResumo.push([
+        item.nome,
+        item.qtdSolicitacoes || 0,
+        Number(item.aprovado.toFixed(2)),
+        Number(item.realizado.toFixed(2)),
+        Number(item.saldo.toFixed(2)),
+        estado
+      ])
     })
 
-    // Linha em branco separadora
-    dadosResumo.push({
-      'Condomínio': '',
-      'Qtd Solicitações': '',
-      'Teto Aprovado (R$)': '',
-      'Gasto Realizado (R$)': '',
-      'Saldo (R$)': '',
-      'Estado Orçamentário': ''
-    })
+    // Primeira linha imediatamente sem digitação após os itens: entra a soma dinâmica
+    const ultimaLinhaDadosResumo = linhasMatrizResumo.length
+    linhasMatrizResumo.push([
+      'TOTAL GERAL',
+      { t: 'n', f: `SUM(B2:B${ultimaLinhaDadosResumo})`, v: totalQtdResumo },
+      { t: 'n', f: `SUM(C2:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)) },
+      { t: 'n', f: `SUM(D2:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)) },
+      { t: 'n', f: `SUM(E2:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)) },
+      totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO'
+    ])
 
-    // Linha de Total Consolidado com Contador
-    dadosResumo.push({
-      'Condomínio': 'TOTAL CONSOLIDADO',
-      'Qtd Solicitações': totalQtd,
-      'Teto Aprovado (R$)': Number(totalTeto.toFixed(2)),
-      'Gasto Realizado (R$)': Number(totalRealizado.toFixed(2)),
-      'Saldo (R$)': Number(totalSaldo.toFixed(2)),
-      'Estado Orçamentário': totalSaldo >= 0 ? 'Economia Geral' : 'Estourado Geral'
-    })
-
-    const wsResumo = XLSX.utils.json_to_sheet(dadosResumo)
+    const wsResumo = XLSX.utils.aoa_to_sheet(linhasMatrizResumo)
     wsResumo['!cols'] = [
-      { wch: 30 }, // Condomínio
-      { wch: 18 }, // Qtd Solicitações
-      { wch: 20 }, // Teto Aprovado
-      { wch: 20 }, // Gasto Realizado
-      { wch: 20 }, // Saldo
-      { wch: 22 }  // Estado
+      { wch: 28 }, // A: Condomínio
+      { wch: 18 }, // B: Qtd Solicitações
+      { wch: 20 }, // C: Teto Aprovado
+      { wch: 20 }, // D: Gasto Realizado
+      { wch: 20 }, // E: Saldo
+      { wch: 24 }  // F: Status
     ]
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
-    // 2. Aba: Extrato de Solicitações
+    // ----------------------------------------------------
+    // ABA 2: EXTRATO DE SOLICITAÇÕES
+    // ----------------------------------------------------
     const totalSol = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + solicitado(s), 0)
     const totalApr = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (aprovado(s) || solicitado(s)), 0)
     const totalReal = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (realizado(s) || 0), 0)
+    const qtdPedidos = solicitacoesAnaliseFiltradas.length
 
-    const dadosExtrato = solicitacoesAnaliseFiltradas.map(s => ({
-      'Código': s.numero || '',
-      'Condomínio': s.condominio || '',
-      'Categoria': s.categoria || '-',
-      'Descrição do Pedido': s.descricao || '',
-      'Fornecedor': s.fornecedor || '-',
-      'Valor Solicitado (R$)': Number(solicitado(s).toFixed(2)),
-      'Valor Aprovado (R$)': Number((aprovado(s) || solicitado(s)).toFixed(2)),
-      'Valor Realizado (R$)': Number((realizado(s) || 0).toFixed(2)),
-      'Status': textoStatus(s.status),
-      'Data de Abertura': formatarDataHora(s.data)
-    }))
+    const linhasMatrizExtrato = [
+      [
+        'Código',
+        'Condomínio',
+        'Categoria',
+        'Descrição do Pedido',
+        'Fornecedor',
+        'Valor Solicitado (R$)',
+        'Valor Aprovado (R$)',
+        'Valor Realizado (R$)',
+        'Status',
+        'Data de Abertura'
+      ]
+    ]
 
-    // Linha em branco separadora
-    dadosExtrato.push({
-      'Código': '',
-      'Condomínio': '',
-      'Categoria': '',
-      'Descrição do Pedido': '',
-      'Fornecedor': '',
-      'Valor Solicitado (R$)': '',
-      'Valor Aprovado (R$)': '',
-      'Valor Realizado (R$)': '',
-      'Status': '',
-      'Data de Abertura': ''
+    solicitacoesAnaliseFiltradas.forEach(s => {
+      linhasMatrizExtrato.push([
+        s.numero || '',
+        s.condominio || '',
+        s.categoria || '-',
+        s.descricao || '',
+        s.fornecedor || '-',
+        Number(solicitado(s).toFixed(2)),
+        Number((aprovado(s) || solicitado(s)).toFixed(2)),
+        Number((realizado(s) || 0).toFixed(2)),
+        textoStatus(s.status),
+        formatarDataHora(s.data)
+      ])
     })
 
-    // Linha de Total Geral com contador total de solicitações
-    dadosExtrato.push({
-      'Código': 'TOTAL GERAL',
-      'Condomínio': `Total: ${solicitacoesAnaliseFiltradas.length} solicitações`,
-      'Categoria': '-',
-      'Descrição do Pedido': `Soma de ${solicitacoesAnaliseFiltradas.length} itens do período`,
-      'Fornecedor': '-',
-      'Valor Solicitado (R$)': Number(totalSol.toFixed(2)),
-      'Valor Aprovado (R$)': Number(totalApr.toFixed(2)),
-      'Valor Realizado (R$)': Number(totalReal.toFixed(2)),
-      'Status': `${solicitacoesAnaliseFiltradas.length} itens`,
-      'Data de Abertura': '-'
-    })
+    // Primeira linha sem digitação logo abaixo da última solicitação: Total Gastos e Contador
+    const ultimaLinhaDadosExtrato = linhasMatrizExtrato.length
+    linhasMatrizExtrato.push([
+      'TOTAL GASTOS',
+      { t: 'n', f: `COUNTA(A2:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos },
+      'solicitações',
+      `Contador automático: ${qtdPedidos} pedidos`,
+      '-',
+      { t: 'n', f: `SUM(F2:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)) },
+      { t: 'n', f: `SUM(G2:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)) },
+      { t: 'n', f: `SUM(H2:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)) },
+      '-',
+      '-'
+    ])
 
-    const wsExtrato = XLSX.utils.json_to_sheet(dadosExtrato)
+    const wsExtrato = XLSX.utils.aoa_to_sheet(linhasMatrizExtrato)
     wsExtrato['!cols'] = [
-      { wch: 14 }, // Código
-      { wch: 28 }, // Condomínio
-      { wch: 20 }, // Categoria
-      { wch: 38 }, // Descrição
-      { wch: 24 }, // Fornecedor
-      { wch: 20 }, // Solicitado
-      { wch: 20 }, // Aprovado
-      { wch: 20 }, // Realizado
-      { wch: 18 }, // Status
-      { wch: 20 }  // Data
+      { wch: 16 }, // A: Código
+      { wch: 24 }, // B: Condomínio / Contador
+      { wch: 18 }, // C: Categoria
+      { wch: 36 }, // D: Descrição
+      { wch: 24 }, // E: Fornecedor
+      { wch: 22 }, // F: Solicitado
+      { wch: 22 }, // G: Aprovado
+      { wch: 22 }, // H: Realizado
+      { wch: 18 }, // I: Status
+      { wch: 20 }  // J: Data
     ]
     XLSX.utils.book_append_sheet(wb, wsExtrato, 'Extrato de Solicitações')
 
     const nomeArquivo = `Relatorio_Controladoria_${filtroCondominioAnalise !== 'todos' ? filtroCondominioAnalise : 'Geral'}_${filtroMesAnalise !== 'todos' ? filtroMesAnalise : 'Consolidado'}.xlsx`
     XLSX.writeFile(wb, nomeArquivo)
-    mostrarToast('Planilha Excel (.xlsx) atualizada com contadores e totais!', 'success')
+    mostrarToast('Planilha exportada com linha de Total Gastos e Fórmulas!', 'success')
   }
 
   function exportarRelatorioPDF() {
@@ -560,7 +565,7 @@ function App() {
           <tbody>${linhasSols}</tbody>
           <tfoot>
             <tr>
-              <td colspan="4">TOTAL GERAL (${solicitacoesAnaliseFiltradas.length} solicitações no período)</td>
+              <td colspan="4">TOTAL GASTOS (${solicitacoesAnaliseFiltradas.length} solicitações no período)</td>
               <td style="text-align: right;">${formatarValor(totalSol)}</td>
               <td style="text-align: right;">${formatarValor(totalReal)}</td>
               <td>-</td>
@@ -1250,21 +1255,21 @@ function App() {
               </div>
               <div className="company-grid">
                 {fornecedores.map(forn => {
-                  const nome = fornecedor.nome || 'Sem nome'
+                  const nome = forn.nome || 'Sem nome'
                   const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
                   return (
-                    <div className="company-card" key={fornecedor.id}>
+                    <div className="company-card" key={forn.id}>
                       <div className="company-card-top">
                         <div className="company-avatar" style={{ background: '#f1f5f9', color: '#475569' }}>{String(nome).charAt(0).toUpperCase()}</div>
                         <span className="badge neutral">Ativo</span>
                       </div>
                       <h4>{nome}</h4>
-                      {fornecedor.cnpj && (<span className="company-detail">CNPJ: {fornecedor.cnpj}</span>)}
+                      {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
                       <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
                         <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="text-button" onClick={() => editarFornecedor(fornecedor)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(fornecedor.id, nome)}>Excluir</button>
+                          <button className="text-button" onClick={() => editarFornecedor(forn)}>Editar</button>
+                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button>
                         </div>
                       </div>
                     </div>
@@ -1334,4 +1339,343 @@ function App() {
 
                   <div className="detail-card"><span>Valor Serviço</span><strong>{formatarValor(solicitacaoSelecionada.valor_servico)}</strong></div>
                   <div className="detail-card"><span>Valor Produto</span><strong>{formatarValor(solicitacaoSelecionada.valor_produto)}</strong></div>
-                  <div className="detail-card" style={{ background: '#eff6ff', borderColor: '#bfdbfe' }}><span>Total Solicitado</span><strong style={{ color: '#1d4ed8' }}>{formatarValor(solicitacaoSelecionada
+                  <div className="detail-card" style={{ background: '#eff6ff', borderColor: '#bfdbfe' }}><span>Total Solicitado</span><strong style={{ color: '#1d4ed8' }}>{formatarValor(solicitacaoSelecionada.valor)}</strong></div>
+
+                  {aprovado(solicitacaoSelecionada) > 0 && (<div className="detail-card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}><span>Valor Aprovado</span><strong style={{ color: '#15803d' }}>{formatarValor(solicitacaoSelecionada.valor_aprovado)}</strong></div>)}
+                  {realizado(solicitacaoSelecionada) > 0 && (<div className="detail-card" style={{ background: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#f0fdf4' : '#fef2f2', borderColor: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#bbf7d0' : '#fecaca' }}><span>Valor Realizado</span><strong style={{ color: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#15803d' : '#b91c1c' }}>{formatarValor(solicitacaoSelecionada.valor_realizado)}</strong></div>)}
+                </div>
+
+                <div className="detail-section" style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <div className="section-title-row"><div><span className="eyebrow">DOCUMENTAÇÃO</span><h4 style={{ margin: 0 }}>Arquivos e Comprovantes</h4></div></div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+                    {anexosSolicitacao.length === 0 ? (<div style={{ padding: '16px', background: 'white', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Nenhum arquivo anexado ainda.</div>) : (
+                      anexosSolicitacao.map(anexo => (
+                        <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'white', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '24px' }}>📄</span>
+                            <div>
+                              <strong style={{ display: 'block', fontSize: '14px', color: 'var(--text-primary)' }}>{anexo.nome_arquivo}</strong>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>{String(anexo.tipo || '').toUpperCase()} • Enviado em: {formatarDataHora(anexo.data_upload)}</span>
+                            </div>
+                          </div>
+                          <a href={`${API_URL}/anexos/${anexo.id}/download`} target="_blank" rel="noreferrer" className="button-secondary" style={{ padding: '8px 16px', fontSize: '12px' }}>Baixar Arquivo</a>
+                        </div>
+                      ))
+                    )}
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                      <label className="button-secondary" style={{ cursor: 'pointer', textAlign: 'center', flex: 1 }}>
+                        {fazendoUpload ? 'Enviando...' : '+ Anexar Orçamento'}
+                        <input type="file" style={{ display: 'none' }} onChange={e => fazerUploadAnexo(e, 'Orçamento')} disabled={fazendoUpload} accept=".pdf,.png,.jpg,.jpeg" />
+                      </label>
+                      <label className="button-primary" style={{ cursor: 'pointer', textAlign: 'center', flex: 1, backgroundColor: '#10b981', borderColor: '#10b981' }}>
+                        {fazendoUpload ? 'Enviando...' : '+ Anexar Nota Fiscal / Comprovante'}
+                        <input type="file" style={{ display: 'none' }} onChange={e => fazerUploadAnexo(e, 'Nota Fiscal / Comprovante')} disabled={fazendoUpload} accept=".pdf,.png,.jpg,.jpeg" />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="detail-section" style={{ marginTop: '24px' }}>
+                  <div className="section-title-row"><div><span className="eyebrow">RASTREABILIDADE</span><h4>Histórico</h4></div></div>
+                  <div className="timeline">
+                    {historicoSolicitacao.map(evento => (
+                      <div className="timeline-item" key={evento.id}>
+                        <div className="timeline-date">{formatarDataHora(evento.data)}</div>
+                        <div className="timeline-content"><strong>{evento.acao}</strong><span className="timeline-user">{evento.responsavel}</span></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-actions">
+                {!ehControladoria && ['Aprovação pendente', 'Ajuste solicitado'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <>
+                    <button className="button-primary" onClick={() => editarSolicitacao(solicitacaoSelecionada)}>Corrigir Pedido</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Pedido</button>
+                  </>
+                )}
+                {ehControladoria && ['Aprovação pendente', 'Ajuste solicitado'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <>
+                    <button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button>
+                    <button className="button-secondary" onClick={() => solicitarAjuste(solicitacaoSelecionada)}>Solicitar Ajuste</button>
+                    <button className="button-danger" onClick={() => reprovarSolicitacao(solicitacaoSelecionada)}>Reprovar</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                  </>
+                )}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
+                  <>
+                    <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </>
+                )}
+                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
+                  <>
+                    <button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </>
+                )}
+                {ehControladoria && ['Finalizada', 'Reprovada'].includes(textoStatus(solicitacaoSelecionada.status)) && (
+                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '600', color: textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '#059669' : '#dc2626' }}>
+                      {textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '✓ Solicitação finalizada' : '✕ Solicitação reprovada'}
+                    </span>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: NOVA SOLICITAÇÃO / EDIÇÃO */}
+        {mostrarFormulario && (
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div><span className="eyebrow">{solicitacaoEditando ? 'EDIÇÃO' : 'NOVA SOLICITAÇÃO'}</span><h3>{solicitacaoEditando ? 'Editar solicitação' : 'Criar Solicitação'}</h3></div>
+                <button type="button" className="modal-close" onClick={fecharFormulario}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarSolicitacao}>
+                  <div className="form-grid">
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Condomínio *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCondominio() }}>+ Novo</button></div>
+                      <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Categoria da Despesa *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCategoria() }}>+ Nova</button></div>
+                      <select value={formulario.categoria} onChange={e => atualizarCampoFormulario('categoria', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
+                      </select>
+                    </div>
+
+                    {orcamentoAtualFormulario && (() => {
+                      const teto = numero(orcamentoAtualFormulario.teto)
+                      const gasto = numero(orcamentoAtualFormulario.gasto_atual)
+                      const saldo = numero(orcamentoAtualFormulario.saldo)
+                      const valorDigitado = numero(formulario.valor_servico) + numero(formulario.valor_produto)
+                      const saldoAposPedido = saldo - valorDigitado
+                      const percentual = teto > 0 ? Math.min(100, Math.round((gasto / teto) * 100)) : 0
+                      const percentualComPedido = teto > 0 ? Math.min(100, Math.round(((gasto + valorDigitado) / teto) * 100)) : 0
+                      const vaiEstourar = teto > 0 && (saldo < 0 || (valorDigitado > 0 && saldoAposPedido < 0))
+
+                      if (teto === 0) {
+                        return (
+                          <div className="form-group full" style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Sem teto de aprovação automática definido para esta categoria neste condomínio.</span>
+                            <span className="badge neutral">Análise Manual</span>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div className="form-group full" style={{ background: '#ffffff', border: `1px solid ${vaiEstourar ? '#fecaca' : '#e2e8f0'}`, borderRadius: '12px', padding: '14px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: vaiEstourar ? '#ef4444' : '#10b981', display: 'inline-block' }}></span>
+                              <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#475569' }}>
+                                Resumo Orçamentário da Categoria
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '999px', backgroundColor: vaiEstourar ? '#fef2f2' : '#ecfdf5', color: vaiEstourar ? '#dc2626' : '#059669' }}>
+                              {vaiEstourar ? 'Exige Aprovação Manual' : `${percentual}% utilizado`}
+                            </span>
+                          </div>
+
+                          <div style={{ width: '100%', height: '6px', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
+                            <div style={{ width: `${valorDigitado > 0 ? percentualComPedido : percentual}%`, height: '100%', backgroundColor: vaiEstourar ? '#ef4444' : percentualComPedido > 80 ? '#f59e0b' : '#10b981', transition: 'width 0.3s ease, background-color 0.3s ease', borderRadius: '999px' }} />
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Teto Limite</span>
+                              <strong style={{ fontSize: '13px', color: '#0f172a', whiteSpace: 'nowrap' }}>{formatarValor(teto)}</strong>
+                            </div>
+                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Comprometido</span>
+                              <strong style={{ fontSize: '13px', color: '#475569', whiteSpace: 'nowrap' }}>{formatarValor(gasto)}</strong>
+                            </div>
+                            <div style={{ background: saldo < 0 ? '#fef2f2' : '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: `1px solid ${saldo < 0 ? '#fecaca' : '#bbf7d0'}`, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '700', color: saldo < 0 ? '#991b1b' : '#166534', textTransform: 'uppercase' }}>Saldo Livre</span>
+                              <strong style={{ fontSize: '13px', color: saldo < 0 ? '#dc2626' : '#059669', whiteSpace: 'nowrap' }}>{formatarValor(saldo)}</strong>
+                            </div>
+                          </div>
+
+                          {valorDigitado > 0 && (
+                            <div style={{ paddingTop: '8px', borderTop: '1px dashed #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                              <span style={{ color: '#475569' }}>
+                                {saldoAposPedido >= 0 ? '⚡ Este pedido será aprovado automaticamente' : '⏳ Valor excede o saldo (irá para análise)'}
+                              </span>
+                              <strong style={{ color: saldoAposPedido >= 0 ? '#059669' : '#dc2626', whiteSpace: 'nowrap' }}>
+                                Saldo final: {formatarValor(saldoAposPedido)}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    <div className="form-group full">
+                      <label>O que está sendo comprado? *</label>
+                      <input type="text" placeholder="Ex: Reforma da guarita..." value={formulario.descricao} onChange={e => atualizarCampoFormulario('descricao', e.target.value)} required />
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Valor de Serviço (R$)</label>
+                      <input type="text" placeholder="Ex: 500,00" value={formulario.valor_servico} onChange={e => atualizarCampoFormulario('valor_servico', e.target.value)} />
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Valor de Produto / Material (R$)</label>
+                      <input type="text" placeholder="Ex: 1200,00" value={formulario.valor_produto} onChange={e => atualizarCampoFormulario('valor_produto', e.target.value)} />
+                    </div>
+                    
+                    <div className="form-group full">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Fornecedor / Prestador de Serviço *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoFornecedor() }}>+ Novo</button></div>
+                      <select value={formulario.fornecedor} onChange={e => atualizarCampoFormulario('fornecedor', e.target.value)} required>
+                        <option value="">Selecione...</option>
+                        {fornecedores.map(forn => (<option key={forn.id || forn.nome} value={forn.nome}>{forn.nome}</option>))}
+                      </select>
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Observação adicional *</label>
+                      <textarea rows="3" placeholder="Informações úteis para a controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormulario}>Cancelar</button>
+                <button type="submit" className="button-primary" onClick={salvarSolicitacao} disabled={salvando}>{salvando ? 'Enviando...' : 'Enviar Solicitação'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: NOVO CONDOMÍNIO */}
+        {mostrarFormularioCondominio && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCondominio() }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div><span className="eyebrow">{condominioEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{condominioEditando ? 'Editar Condomínio' : 'Cadastrar Condomínio'}</h3></div>
+                <button type="button" className="modal-close" onClick={fecharFormularioCondominio}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarCondominio}>
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome do Condomínio *</label>
+                      <input type="text" value={formularioCondominio.nome} onChange={e => atualizarCampoCondominio('nome', e.target.value)} required autoFocus />
+                    </div>
+                    <div className="form-group">
+                      <label>CNPJ</label>
+                      <input type="text" value={formularioCondominio.cnpj} onChange={e => atualizarCampoCondominio('cnpj', e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label>Código Interno</label>
+                      <input type="text" value={formularioCondominio.codigo} onChange={e => atualizarCampoCondominio('codigo', e.target.value)} />
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioCondominio} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarCondominio} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: NOVA CATEGORIA */}
+        {mostrarFormularioCategoria && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCategoria() }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div><span className="eyebrow">{categoriaEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{categoriaEditando ? 'Editar Categoria' : 'Cadastrar Categoria'}</h3></div>
+                <button type="button" className="modal-close" onClick={fecharFormularioCategoria}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarCategoria}>
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome da Categoria *</label>
+                      <input type="text" value={formularioCategoria.nome} onChange={e => atualizarCampoCategoria('nome', e.target.value)} required autoFocus placeholder="Ex: Limpeza, Manutenção..." />
+                    </div>
+                    <div className="form-group full">
+                      <label>Descrição Breve</label>
+                      <input type="text" value={formularioCategoria.descricao} onChange={e => atualizarCampoCategoria('descricao', e.target.value)} />
+                    </div>
+
+                    <div className="form-group full" style={{ marginTop: '8px' }}>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Limites de Aprovação Automática por Condomínio</span>
+                      </label>
+                      
+                      {condominios.length === 0 ? (
+                        <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+                          Cadastre condomínios primeiro para definir limites de aprovação automática.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                          {condominios.map(c => (
+                            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#334155' }}>{c.nome}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '13px', color: '#64748b' }}>R$</span>
+                                <input 
+                                  type="text" 
+                                  style={{ width: '110px', padding: '8px', fontSize: '14px', textAlign: 'right', border: '1px solid #cbd5e1', borderRadius: '6px' }} 
+                                  placeholder="0,00"
+                                  value={formularioCategoria.limites[c.nome] || ''}
+                                  onChange={e => {
+                                    setFormularioCategoria(prev => ({
+                                      ...prev,
+                                      limites: {
+                                        ...prev.limites,
+                                        [c.nome]: e.target.value
+                                      }
+                                    }))
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={fecharFormularioCategoria} disabled={salvando}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarCategoria} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: NOVO FORNECEDOR */}
+        {mostrarFormularioFornecedor && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioFornecedor() }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div><span className="eyebrow">{fornecedorEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{fornecedorEditando ? 'Editar Fornecedor' : 'Cadastrar Fornecedor'}</h3></div>
+                <button type="button" className="modal-close" onClick={fecharFormularioFornecedor}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarFornecedor}>
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Nome / Razão Social *</label>
+                      <input type="text" placeholder="Nome do fornecedor..." value={formularioFornecedor.nome} onChange={e => atualizarCampoFornecedor('nome', e.target.value)} required autoFocus />
+                    </div>
+                    <div className="form-group">
+                      <label>CNPJ</label>
+                      <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('
