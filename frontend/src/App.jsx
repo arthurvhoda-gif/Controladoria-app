@@ -25,6 +25,10 @@ function App() {
   const [fornecedores, setFornecedores] = useState([])
   const [categorias, setCategorias] = useState([])
 
+  // ESTADO DA CENTRAL DE NOTIFICAÇÕES E PUSH
+  const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
+  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
+
   const [toasts, setToasts] = useState([])
   const [dialog, setDialog] = useState({
     isOpen: false, type: 'confirm', title: '', message: '', inputValue: '',
@@ -53,7 +57,6 @@ function App() {
   const [filtroCompra, setFiltroCompra] = useState('')
   const [salvando, setSalvando] = useState(false)
 
-  // NOVOS FILTROS DE PERÍODO PERSONALIZADO (Data Início e Data Fim)
   const [filtroDataInicio, setFiltroDataInicio] = useState('')
   const [filtroDataFim, setFiltroDataFim] = useState('')
   const [filtroCondominioAnalise, setFiltroCondominioAnalise] = useState('todos')
@@ -65,17 +68,9 @@ function App() {
     valor_servico: '', valor_produto: '', observacao: ''
   })
 
-  const [formularioCondominio, setFormularioCondominio] = useState({
-    nome: '', cnpj: '', codigo: ''
-  })
-
-  const [formularioFornecedor, setFormularioFornecedor] = useState({
-    nome: '', cnpj: '', categoria: ''
-  })
-
-  const [formularioCategoria, setFormularioCategoria] = useState({
-    nome: '', descricao: '', limites: {} 
-  })
+  const [formularioCondominio, setFormularioCondominio] = useState({ nome: '', cnpj: '', codigo: '' })
+  const [formularioFornecedor, setFormularioFornecedor] = useState({ nome: '', cnpj: '', categoria: '' })
+  const [formularioCategoria, setFormularioCategoria] = useState({ nome: '', descricao: '', limites: {} })
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -90,6 +85,32 @@ function App() {
       return data.detail || mensagemPadrao
     } catch {
       return mensagemPadrao
+    }
+  }
+
+  // SOLICITAR PERMISSÃO DE PUSH NOTIFICATION AO NAVEGADOR
+  useEffect(() => {
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        setNotificacoesPushAtivas(true)
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().permission.then(permission => {
+          if (permission === 'granted') setNotificacoesPushAtivas(true)
+        })
+      }
+    }
+  }, [])
+
+  function dispararNotificacaoNativa(titulo, corpo) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(titulo, {
+          body: corpo,
+          icon: '/logo.png'
+        })
+      } catch (e) {
+        // Fallback se o browser bloquear constructor em certas instâncias
+      }
     }
   }
 
@@ -144,6 +165,13 @@ function App() {
       if (resSol.ok) {
         let dados = await resSol.json()
         if (usuarioLogado.perfil === 'Solicitante') dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
+        
+        // Verifica se houve novos pedidos pendentes para disparar push
+        const qtdAntiga = solicitacoes.length
+        if (dados.length > qtdAntiga && qtdAntiga > 0) {
+          dispararNotificacaoNativa('Nova Solicitação Criada', 'Um novo pedido foi registado no sistema.')
+        }
+
         setSolicitacoes(dados)
         if (solicitacaoSelecionada) {
           const atual = dados.find(i => i.id === solicitacaoSelecionada.id)
@@ -268,14 +296,13 @@ function App() {
 
   const maioresSolicitacoes = [...solicitacoes].sort((a, b) => solicitado(b) - solicitado(a)).slice(0, 5)
 
-  // FILTRAGEM AVANÇADA POR PERÍODO PERSONALIZADO (Data Início / Data Fim)
   const solicitacoesAnaliseFiltradas = solicitacoes.filter(sol => {
     const nomeCondominio = sol.condominio || ''
     const matchCondominio = filtroCondominioAnalise === 'todos' || nomeCondominio === filtroCondominioAnalise
     
     let matchData = true
     if (sol.data && typeof sol.data === 'string') {
-      const dataSol = sol.data.substring(0, 10) // Formato YYYY-MM-DD
+      const dataSol = sol.data.substring(0, 10)
       if (filtroDataInicio && dataSol < filtroDataInicio) matchData = false
       if (filtroDataFim && dataSol > filtroDataFim) matchData = false
     } else if ((filtroDataInicio || filtroDataFim) && !sol.data) {
@@ -311,7 +338,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // =========================================================================
-  // EXPORTAÇÃO EXCEL (.XLSX) EXECUTIVA COM PERÍODO PERSONALIZADO
+  // EXPORTAÇÃO EXCEL (.XLSX) EXECUTIVA
   // =========================================================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -324,40 +351,12 @@ function App() {
     const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
     const dataEmissao = new Date().toLocaleString('pt-BR')
 
-    const bordaPadrao = {
-      top: { style: 'thin', color: { rgb: 'CBD5E1' } },
-      bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
-      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
-      right: { style: 'thin', color: { rgb: 'CBD5E1' } }
-    }
+    const bordaPadrao = { top: { style: 'thin', color: { rgb: 'CBD5E1' } }, bottom: { style: 'thin', color: { rgb: 'CBD5E1' } }, left: { style: 'thin', color: { rgb: 'CBD5E1' } }, right: { style: 'thin', color: { rgb: 'CBD5E1' } } }
+    const bordaTotal = { top: { style: 'medium', color: { rgb: '0F172A' } }, bottom: { style: 'double', color: { rgb: '0F172A' } }, left: { style: 'thin', color: { rgb: 'CBD5E1' } }, right: { style: 'thin', color: { rgb: 'CBD5E1' } } }
 
-    const bordaTotal = {
-      top: { style: 'medium', color: { rgb: '0F172A' } },
-      bottom: { style: 'double', color: { rgb: '0F172A' } },
-      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
-      right: { style: 'thin', color: { rgb: 'CBD5E1' } }
-    }
-
-    const estiloTitulo = {
-      font: { name: 'Calibri', sz: 14, bold: true, color: { rgb: 'FFFFFF' } },
-      fill: { fgColor: { rgb: '0F172A' } },
-      alignment: { vertical: 'center', horizontal: 'left' }
-    }
-
-    const estiloSubtitulo = {
-      font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '334155' } },
-      fill: { fgColor: { rgb: 'F1F5F9' } },
-      alignment: { vertical: 'center', horizontal: 'left' },
-      border: bordaPadrao
-    }
-
-    const estiloCabecalhoTabela = {
-      font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } },
-      fill: { fgColor: { rgb: '1E293B' } },
-      alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-      border: bordaPadrao
-    }
-
+    const estiloTitulo = { font: { name: 'Calibri', sz: 14, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '0F172A' } }, alignment: { vertical: 'center', horizontal: 'left' } }
+    const estiloSubtitulo = { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '334155' } }, fill: { fgColor: { rgb: 'F1F5F9' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaPadrao }
+    const estiloCabecalhoTabela = { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1E293B' } }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: bordaPadrao }
     const formatoMoeda = '"R$" #,##0.00'
 
     // ABA 1: RESUMO POR CONDOMÍNIO
@@ -382,14 +381,10 @@ function App() {
 
     listaOrcamentoCondominio.forEach((item, idx) => {
       const corZebra = idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC'
-      let estado = 'No Limite'
-      let bgStatus = 'F1F5F9'
-      let corStatus = '475569'
-
+      let estado = 'No Limite'; let bgStatus = 'F1F5F9'; let corStatus = '475569'
       if (item.saldo > 0) { estado = 'Economia'; bgStatus = 'D1FAE5'; corStatus = '065F46' }
       if (item.saldo < 0) { estado = 'Estourado'; bgStatus = 'FEE2E2'; corStatus = '991B1B' }
       if (item.aprovado === 0) { estado = 'Sem Orçamento'; bgStatus = 'F1F5F9'; corStatus = '64748B' }
-
       const corSaldo = item.saldo < 0 ? 'DC2626' : '059669'
 
       linhasResumo.push([
@@ -710,6 +705,7 @@ function App() {
           throw new Error(erroMsg)
         }
         await carregarDados()
+        dispararNotificacaoNativa('Solicitação Aprovada', `O pedido ${solicitacao.numero} foi aprovado.`)
         mostrarToast('Solicitação aprovada.', 'success')
         fecharSolicitacao()
       } catch (e) { mostrarToast(e.message, 'error') }
@@ -726,6 +722,7 @@ function App() {
           throw new Error(erroMsg)
         }
         await carregarDados()
+        dispararNotificacaoNativa('Ajuste Solicitado', `O pedido ${solicitacao.numero} requer correções.`)
         mostrarToast('Ajuste solicitado ao autor.', 'success')
         fecharSolicitacao()
       } catch (e) { mostrarToast(e.message, 'error') }
@@ -774,6 +771,7 @@ function App() {
           throw new Error(erroMsg)
         }
         await carregarDados()
+        dispararNotificacaoNativa('Solicitação Finalizada', `O pedido ${solicitacao.numero} foi concluído com sucesso.`)
         mostrarToast('Solicitação finalizada!', 'success')
         fecharSolicitacao()
       } catch (e) { mostrarToast(e.message, 'error') }
@@ -1031,7 +1029,55 @@ function App() {
               <h1>{pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? ehControladoria ? 'Aprovações' : 'Minhas Solicitações' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}</h1>
             </div>
           </div>
-          <div className="topbar-actions">
+          
+          <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* CENTRAL DE NOTIFICAÇÕES (SINO) */}
+            <div style={{ position: 'relative' }}>
+              <button 
+                className="icon-button" 
+                onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
+                style={{ position: 'relative', width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '18px' }}
+                title="Central de Alertas e Notificações"
+              >
+                🔔
+                {quantidadePendentes > 0 && (
+                  <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#ef4444', color: 'white', fontSize: '11px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {quantidadePendentes}
+                  </span>
+                )}
+              </button>
+
+              {/* MENU FLUTUANTE DE NOTIFICAÇÕES */}
+              {mostrarMenuNotificacoes && (
+                <div style={{ position: 'absolute', right: 0, top: '48px', width: '320px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 9999, overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: '14px' }}>Central de Alertas</strong>
+                    <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px' }}>{quantidadePendentes} pendentes</span>
+                  </div>
+                  <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                    {solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').length === 0 ? (
+                      <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
+                    ) : (
+                      solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').map(s => (
+                        <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <strong style={{ fontSize: '13px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
+                            <span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>{formatarValor(s.valor)}</span>
+                          </div>
+                          <span style={{ fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.descricao}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '600' }}>
+                      {notificacoesPushAtivas ? '✓ Notificações Push do navegador ativas' : '⚠️ Notificações do navegador desativadas'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button className="icon-button" onClick={() => carregarDados()}>↻</button>
             <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova solicitação</button>
           </div>
@@ -1080,14 +1126,13 @@ function App() {
                   {condominios?.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
                 </select>
 
-                {/* FILTROS DE DATA INÍCIO E FIM */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 10px' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600' }}>De:</span>
                   <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '13px', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }} />
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600', marginLeft: '4px' }}>Até:</span>
                   <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '13px', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }} />
                   {(filtroDataInicio || filtroDataFim) && (
-                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} style={{ border: 'none', background: '#f1f5f9', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer', color: '#64748b' }} title="Limpar datas">Limpar</button>
+                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} style={{ border: 'none', background: '#f1f5f9', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer', color: '#64748b' }}>Limpar</button>
                   )}
                 </div>
 
