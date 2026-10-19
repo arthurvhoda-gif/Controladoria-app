@@ -524,10 +524,10 @@ function App() {
     linhasResumo.push([
       { v: 'TOTAL CONSOLIDADO', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
       { t: 'n', f: `SUM(B5:B${ultimaLinhaDadosResumo})`, v: totalQtdResumo, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(C5:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(D5:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(E5:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { v: totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: bgTotalSaldoResumo } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } }
+      { t: 'n', f: `SUM(C5:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { t: 'n', f: `SUM(D5:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { t: 'n', f: `SUM(E5:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { v: totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: bgTotalSaldoResumo } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } }
     ])
 
     const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo)
@@ -585,16 +585,16 @@ function App() {
     const ultimaLinhaDadosExtrato = 4 + solicitacoesAnaliseFiltradas.length
 
     linhasExtrato.push([
-      { v: 'TOTAL GASTOS', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { t: 'n', f: `COUNTA(A5:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { v: 'solicitações no período', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
-      { v: `Soma consolidada automática (${qtdPedidos} pedidos)`, t: 's', s: { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
-      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 11, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(F5:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(G5:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(H5:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
-      { v: `${qtdPedidos} itens`, t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } }
+      { v: 'TOTAL GASTOS', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
+      { t: 'n', f: `COUNTA(A5:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
+      { v: 'solicitações no período', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: borderTotal } },
+      { v: `Soma consolidada automática (${qtdPedidos} pedidos)`, t: 's', s: { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: borderTotal } },
+      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 11, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
+      { t: 'n', f: `SUM(F5:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { t: 'n', f: `SUM(G5:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { t: 'n', f: `SUM(H5:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
+      { v: `${qtdPedidos} itens`, t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
+      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } }
     ])
 
     const wsExtrato = XLSX.utils.aoa_to_sheet(linhasExtrato)
@@ -1349,7 +1349,7 @@ function App() {
                     <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Calculando rateio de despesas...</div>
                   ) : !rateioDados || rateioDados.rateio_unidades.length === 0 ? (
                     <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
-                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>🏘️ Unidades</strong> para cadastrar.
+                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>Unidades</strong> para cadastrar.
                     </div>
                   ) : (
                     <div className="table">
@@ -1534,12 +1534,36 @@ function App() {
                       {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
                       {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
                       
-                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="text-button" style={{ color: '#2563eb', fontWeight: 'bold' }} onClick={() => abrirGerenciadorUnidades(condominio)}>🏘️ Unidades</button>
-                          <button className="text-button" onClick={() => editarCondominio(condominio)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button>
+                      {/* RODAPÉ DO CARD ALINHADO COM SEPARADORES SUAVES */}
+                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span>
+                          <strong style={{ fontSize: '13px' }}>{qtd}</strong>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button 
+                            className="text-button" 
+                            style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px', padding: '2px 4px' }} 
+                            onClick={() => abrirGerenciadorUnidades(condominio)}
+                          >
+                            Unidades
+                          </button>
+                          <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
+                          <button 
+                            className="text-button" 
+                            style={{ fontSize: '12px', padding: '2px 4px' }} 
+                            onClick={() => editarCondominio(condominio)}
+                          >
+                            Editar
+                          </button>
+                          <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
+                          <button 
+                            className="text-button" 
+                            style={{ color: 'var(--danger)', fontSize: '12px', padding: '2px 4px' }} 
+                            onClick={() => excluirCondominio(condominio.id, nome)}
+                          >
+                            Excluir
+                          </button>
                         </div>
                       </div>
                     </div>
