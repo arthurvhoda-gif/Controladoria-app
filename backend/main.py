@@ -9,11 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from database import engine, Base, get_db, SessionLocal
+from database import engine, Base, SessionLocal
 import models
 import schemas
 
 Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 app = FastAPI(title="Controladoria API - Haize")
 

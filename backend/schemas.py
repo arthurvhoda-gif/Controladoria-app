@@ -83,3 +83,15 @@ class FinalizarUpdate(BaseModel):
 
 class IniciarExecucaoUpdate(BaseModel):
     observacao_execucao: Optional[str] = ""
+
+class ChecklistItemCreate(BaseModel):
+    condominio: str
+    titulo: str
+    descricao_orientacao: Optional[str] = None
+    frequencia: str
+
+class ChecklistItemResponse(ChecklistItemCreate):
+    id: int
+    criado_em: str
+    class Config:
+        from_attributes = True
