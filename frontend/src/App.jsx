@@ -1313,9 +1313,9 @@ function App() {
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
           {ehChecklist ? (
-            /* PERFIL CHECKLIST: VÊ APENAS A ABA DE CHECKLIST */
+            /* PERFIL CHECKLIST: VÊ APENAS A ABA DE CHECKLIST COM ÍCONE PADRÃO ⊡ */
             <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-              <span className="nav-icon">☑️</span><span>Checklist</span>
+              <span className="nav-icon">⊡</span><span>Checklist</span>
             </button>
           ) : (
             /* DEMAIS PERFIS */
@@ -1327,7 +1327,7 @@ function App() {
               
               {ehControladoria && (
                 <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">☑️</span><span>Checklist</span>
+                  <span className="nav-icon">⊡</span><span>Checklist</span>
                 </button>
               )}
 
