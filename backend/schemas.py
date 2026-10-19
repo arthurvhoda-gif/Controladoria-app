@@ -1,74 +1,85 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 
-# ==========================================
-# USUÁRIOS E AUTENTICAÇÃO
-# ==========================================
+class LoginRequest(BaseModel):
+    email: str
+    senha: str
+
 class UsuarioCreate(BaseModel):
     nome: str
     email: str
     senha: str
-    perfil: str
+    perfil: str = "Solicitante"
 
-class UsuarioLogin(BaseModel):
+class UsuarioResponse(BaseModel):
+    id: int
+    nome: str
     email: str
-    senha: str
+    perfil: str
+    class Config:
+        from_attributes = True
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    usuario: dict
+class UnidadeCreate(BaseModel):
+    identificacao: str
+    fracao_ideal: float
 
-class TokenData(BaseModel):
-    email: Optional[str] = None
+class UnidadeResponse(UnidadeCreate):
+    id: int
+    condominio_id: int
+    class Config:
+        from_attributes = True
 
-# ==========================================
-# CONDOMÍNIOS, FORNECEDORES E CATEGORIAS
-# ==========================================
 class CondominioCreate(BaseModel):
     nome: str
     cnpj: Optional[str] = None
     codigo: Optional[str] = None
+
+class CondominioResponse(CondominioCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+class CategoriaCreate(BaseModel):
+    nome: str
+    descricao: Optional[str] = None
+    limites: Optional[Any] = None
+
+class CategoriaResponse(BaseModel):
+    id: int
+    nome: str
+    descricao: Optional[str] = None
+    limites: Optional[Any] = None
+    class Config:
+        from_attributes = True
 
 class FornecedorCreate(BaseModel):
     nome: str
     cnpj: Optional[str] = None
     categoria: Optional[str] = None
 
-class LimiteCategoria(BaseModel):
-    condominio: str
-    limite: float
+class FornecedorResponse(FornecedorCreate):
+    id: int
+    class Config:
+        from_attributes = True
 
-class CategoriaCreate(BaseModel):
-    nome: str
-    descricao: Optional[str] = None
-    limites: Optional[List[LimiteCategoria]] = []
-
-# ==========================================
-# SOLICITAÇÕES DE COMPRA
-# ==========================================
-class SolicitacaoCompraCreate(BaseModel):
-    solicitante: str
+class SolicitacaoCreate(BaseModel):
     condominio: str
+    condominio_id: Optional[int] = None
+    categoria: str
+    fornecedor: str
     descricao: str
-    categoria: Optional[str] = None
-    fornecedor: Optional[str] = None
-    valor_servico: float = 0.0
-    valor_produto: float = 0.0
+    valor_servico: Optional[float] = 0.0
+    valor_produto: Optional[float] = 0.0
     observacao: Optional[str] = None
-    prioridade: Optional[str] = "Normal"
+    solicitante: Optional[str] = None
 
-# ==========================================
-# AÇÕES DE STATUS
-# ==========================================
-class AtualizarStatus(BaseModel):
+class StatusUpdate(BaseModel):
     status: str
     valor_aprovado: Optional[float] = None
     motivo_ajuste: Optional[str] = None
 
-class IniciarExecucao(BaseModel):
-    observacao_execucao: Optional[str] = None
-
-class FinalizarCompra(BaseModel):
+class FinalizarUpdate(BaseModel):
     valor_realizado: float
-    observacao_execucao: Optional[str] = None
+
+class IniciarExecucaoUpdate(BaseModel):
+    observacao_execucao: Optional[str] = ""

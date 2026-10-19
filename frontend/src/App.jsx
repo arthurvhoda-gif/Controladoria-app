@@ -25,7 +25,15 @@ function App() {
   const [fornecedores, setFornecedores] = useState([])
   const [categorias, setCategorias] = useState([])
 
-  // ESTADO DA CENTRAL DE NOTIFICAÇÕES E PUSH
+  // GESTÃO DE UNIDADES E RATEIO POR FRAÇÃO
+  const [condominioUnidades, setCondominioUnidades] = useState(null)
+  const [listaUnidades, setListaUnidades] = useState([])
+  const [carregandoUnidades, setCarregandoUnidades] = useState(false)
+  const [novaUnidade, setNovaUnidade] = useState({ identificacao: '', fracao_ideal: '' })
+  const [rateioDados, setRateioDados] = useState(null)
+  const [carregandoRateio, setCarregandoRateio] = useState(false)
+
+  // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
   const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
 
@@ -61,8 +69,6 @@ function App() {
   const [filtroDataFim, setFiltroDataFim] = useState('')
   const [filtroCondominioAnalise, setFiltroCondominioAnalise] = useState('todos')
 
-  const [orcamentoAtualFormulario, setOrcamentoAtualFormulario] = useState(null)
-
   const [formulario, setFormulario] = useState({
     condominio: '', categoria: '', fornecedor: '', descricao: '',
     valor_servico: '', valor_produto: '', observacao: ''
@@ -88,13 +94,12 @@ function App() {
     }
   }
 
-  // SOLICITAR PERMISSÃO DE PUSH NOTIFICATION AO NAVEGADOR
   useEffect(() => {
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
         setNotificacoesPushAtivas(true)
       } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().permission.then(permission => {
+        Notification.requestPermission().then(permission => {
           if (permission === 'granted') setNotificacoesPushAtivas(true)
         })
       }
@@ -104,13 +109,8 @@ function App() {
   function dispararNotificacaoNativa(titulo, corpo) {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        new Notification(titulo, {
-          body: corpo,
-          icon: '/logo.png'
-        })
-      } catch (e) {
-        // Fallback se o browser bloquear constructor em certas instâncias
-      }
+        new Notification(titulo, { body: corpo, icon: '/logo.png' })
+      } catch (e) { }
     }
   }
 
@@ -118,7 +118,11 @@ function App() {
     e.preventDefault()
     setCarregandoLogin(true)
     try {
-      const res = await fetch(`${API_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailLogin, senha: senhaLogin }) })
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailLogin.trim().toLowerCase(), senha: senhaLogin })
+      })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao entrar')
         throw new Error(erroMsg)
@@ -129,7 +133,11 @@ function App() {
       localStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
       setPagina(dadosUsuario.perfil === 'Solicitante' ? 'solicitacoes' : 'dashboard')
-    } catch (err) { mostrarToast(err.message, 'error') } finally { setCarregandoLogin(false) }
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally {
+      setCarregandoLogin(false)
+    }
   }
 
   function fazerLogout() {
@@ -145,12 +153,33 @@ function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
-  function confirmarAcao(titulo, mensagem, onConfirm, isDanger = false) { setDialog({ isOpen: true, type: 'confirm', title: titulo, message: mensagem, inputValue: '', confirmText: 'Sim, confirmar', cancelText: 'Cancelar', isDanger, onConfirm }) }
-  function pedirInput(titulo, mensagem, valorPadrao, onConfirm, isDanger = false) { setDialog({ isOpen: true, type: 'prompt', title: titulo, message: mensagem, inputValue: valorPadrao || '', confirmText: 'Salvar', cancelText: 'Cancelar', isDanger, onConfirm }) }
-  function fecharDialog() { setDialog(prev => ({ ...prev, isOpen: false, inputValue: '' })) }
-  function handleConfirmDialog() { if (dialog.onConfirm) { dialog.type === 'prompt' ? dialog.onConfirm(dialog.inputValue) : dialog.onConfirm() } fecharDialog() }
+  function confirmarAcao(titulo, mensagem, onConfirm, isDanger = false) {
+    setDialog({ isOpen: true, type: 'confirm', title: titulo, message: mensagem, inputValue: '', confirmText: 'Sim, confirmar', cancelText: 'Cancelar', isDanger, onConfirm })
+  }
 
-  async function verificarBackend() { try { const resposta = await fetch(`${API_URL}/status`); setBackendOnline(resposta.ok) } catch { setBackendOnline(false) } }
+  function pedirInput(titulo, mensagem, valorPadrao, onConfirm, isDanger = false) {
+    setDialog({ isOpen: true, type: 'prompt', title: titulo, message: mensagem, inputValue: valorPadrao || '', confirmText: 'Salvar', cancelText: 'Cancelar', isDanger, onConfirm })
+  }
+
+  function fecharDialog() {
+    setDialog(prev => ({ ...prev, isOpen: false, inputValue: '' }))
+  }
+
+  function handleConfirmDialog() {
+    if (dialog.onConfirm) {
+      dialog.type === 'prompt' ? dialog.onConfirm(dialog.inputValue) : dialog.onConfirm()
+    }
+    fecharDialog()
+  }
+
+  async function verificarBackend() {
+    try {
+      const resposta = await fetch(`${API_URL}/status`)
+      setBackendOnline(resposta.ok)
+    } catch {
+      setBackendOnline(false)
+    }
+  }
 
   async function carregarDados() {
     if (!usuarioLogado) return
@@ -164,12 +193,13 @@ function App() {
 
       if (resSol.ok) {
         let dados = await resSol.json()
-        if (usuarioLogado.perfil === 'Solicitante') dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
+        if (usuarioLogado.perfil === 'Solicitante') {
+          dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
+        }
         
-        // Verifica se houve novos pedidos pendentes para disparar push
         const qtdAntiga = solicitacoes.length
         if (dados.length > qtdAntiga && qtdAntiga > 0) {
-          dispararNotificacaoNativa('Nova Solicitação Criada', 'Um novo pedido foi registado no sistema.')
+          dispararNotificacaoNativa('Nova Solicitação', 'Um novo pedido foi registrado no sistema.')
         }
 
         setSolicitacoes(dados)
@@ -193,28 +223,6 @@ function App() {
     }
   }, [usuarioLogado])
 
-  useEffect(() => {
-    async function consultarOrcamento() {
-      if (formulario.condominio && formulario.categoria) {
-        try {
-          const ignorarParam = solicitacaoEditando?.id ? `&ignorar_id=${solicitacaoEditando.id}` : ''
-          const res = await fetch(`${API_URL}/orcamento-categoria?condominio=${encodeURIComponent(formulario.condominio)}&categoria=${encodeURIComponent(formulario.categoria)}${ignorarParam}`, { headers: getAuthHeaders() })
-          if (res.ok) {
-            const dados = await res.json()
-            setOrcamentoAtualFormulario(dados)
-          } else {
-            setOrcamentoAtualFormulario(null)
-          }
-        } catch {
-          setOrcamentoAtualFormulario(null)
-        }
-      } else {
-        setOrcamentoAtualFormulario(null)
-      }
-    }
-    consultarOrcamento()
-  }, [formulario.condominio, formulario.categoria, solicitacaoEditando])
-
   function numero(v) {
     if (v === null || v === undefined || v === '') return 0
     let normalizado = String(v).replace(/[^0-9.,-]/g, '')
@@ -229,18 +237,28 @@ function App() {
   function realizado(item) { return numero(item?.valor_realizado) }
   function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
   function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
-  function formatarDataHora(dataStr) { if (!dataStr) return '-'; try { const d = new Date(dataStr); return isNaN(d.getTime()) ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return dataStr } }
+  function formatarDataHora(dataStr) {
+    if (!dataStr) return '-'
+    try {
+      const d = new Date(dataStr)
+      return isNaN(d.getTime()) ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return dataStr
+    }
+  }
 
-  function normalizarTexto(v) { return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() }
+  function normalizarTexto(v) {
+    return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  }
 
   function textoStatus(status) {
     const n = normalizarTexto(status)
-    if (n === 'finalizada' || n === 'finalizado' || n.includes('finalizada') || n.includes('finalizado')) return 'Finalizada'
-    if (n === 'em execucao' || n.includes('em execucao') || n === 'execucao') return 'Em execução'
-    if (n === 'ajuste solicitado' || n.includes('ajuste')) return 'Ajuste solicitado'
-    if (n === 'reprovada' || n === 'reprovado') return 'Reprovada'
-    if (n === 'aprovada' || n === 'aprovado' || n === 'pagamento aprovado' || n.includes('pagamento aprovado')) return 'Aprovada'
-    if (n === 'em analise' || n.includes('em analise')) return 'Em análise'
+    if (n.includes('finalizada') || n.includes('finalizado')) return 'Finalizada'
+    if (n.includes('em execucao') || n === 'execucao') return 'Em execução'
+    if (n.includes('ajuste')) return 'Ajuste solicitado'
+    if (n.includes('reprovada') || n.includes('reprovado')) return 'Reprovada'
+    if (n.includes('aprovada') || n.includes('aprovado')) return 'Aprovada'
+    if (n.includes('em analise')) return 'Em análise'
     return 'Aprovação pendente'
   }
 
@@ -263,7 +281,11 @@ function App() {
     if (txt === 'Reprovada') { backgroundColor = '#FEE2E2'; color = '#DC2626' }
     if (txt === 'Em análise') { backgroundColor = '#E0F2FE'; color = '#0284C7' }
 
-    return (<span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', backgroundColor, color, display: 'inline-block' }}>{txt}</span>)
+    return (
+      <span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', backgroundColor, color, display: 'inline-block' }}>
+        {txt}
+      </span>
+    )
   }
 
   function classeVariacao(valor) { return numero(valor) > 0 ? 'positive' : numero(valor) < 0 ? 'negative' : 'neutral' }
@@ -338,7 +360,105 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // =========================================================================
-  // EXPORTAÇÃO EXCEL (.XLSX) EXECUTIVA
+  // GESTÃO DE UNIDADES E RATEIO
+  // =========================================================================
+  async function abrirGerenciadorUnidades(cond) {
+    setCondominioUnidades(cond)
+    setCarregandoUnidades(true)
+    setNovaUnidade({ identificacao: '', fracao_ideal: '' })
+    try {
+      const res = await fetch(`${API_URL}/condominios/${cond.id}/unidades`, { headers: getAuthHeaders() })
+      if (res.ok) {
+        setListaUnidades(await res.json())
+      } else {
+        setListaUnidades([])
+      }
+    } catch {
+      setListaUnidades([])
+    } finally {
+      setCarregandoUnidades(false)
+    }
+  }
+
+  async function salvarNovaUnidade(e) {
+    e.preventDefault()
+    if (!novaUnidade.identificacao.trim()) {
+      mostrarToast('Informe o número ou identificação da unidade.', 'error')
+      return
+    }
+    const fracao = numero(novaUnidade.fracao_ideal)
+    if (fracao <= 0) {
+      mostrarToast('A fração ideal deve ser maior que zero.', 'error')
+      return
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/condominios/${condominioUnidades.id}/unidades`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ identificacao: novaUnidade.identificacao.trim(), fracao_ideal: fracao })
+      })
+      if (!res.ok) {
+        const err = await extrairErro(res, 'Erro ao cadastrar unidade.')
+        throw new Error(err)
+      }
+      const criada = await res.json()
+      setListaUnidades(prev => [...prev, criada])
+      setNovaUnidade({ identificacao: '', fracao_ideal: '' })
+      mostrarToast('Unidade cadastrada!', 'success')
+    } catch (e) {
+      mostrarToast(e.message, 'error')
+    }
+  }
+
+  async function excluirUnidade(unidadeId) {
+    confirmarAcao('Excluir Unidade', 'Deseja excluir esta unidade e sua respectiva fração?', async () => {
+      try {
+        const res = await fetch(`${API_URL}/unidades/${unidadeId}`, { method: 'DELETE', headers: getAuthHeaders() })
+        if (!res.ok) throw new Error('Erro ao excluir unidade.')
+        setListaUnidades(prev => prev.filter(u => u.id !== unidadeId))
+        mostrarToast('Unidade removida com sucesso.', 'success')
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+      }
+    }, true)
+  }
+
+  async function calcularRateioCondominio(condominioNome) {
+    const condObj = condominios.find(c => c.nome === condominioNome)
+    if (!condObj) {
+      setRateioDados(null)
+      return
+    }
+    setCarregandoRateio(true)
+    try {
+      const mesParam = filtroDataInicio ? `?mes=${filtroDataInicio.substring(0, 7)}` : ''
+      const res = await fetch(`${API_URL}/condominios/${condObj.id}/rateio${mesParam}`, { headers: getAuthHeaders() })
+      if (res.ok) {
+        const dados = await res.json()
+        setRateioDados(dados)
+      } else {
+        setRateioDados(null)
+      }
+    } catch {
+      setRateioDados(null)
+    } finally {
+      setCarregandoRateio(false)
+    }
+  }
+
+  useEffect(() => {
+    if (pagina === 'analises' && filtroCondominioAnalise !== 'todos') {
+      calcularRateioCondominio(filtroCondominioAnalise)
+    } else {
+      setRateioDados(null)
+    }
+  }, [filtroCondominioAnalise, filtroDataInicio, pagina, condominios])
+
+  const somaFracaoTotal = listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
+
+  // =========================================================================
+  // EXPORTAÇÃO EXCEL (.XLSX)
   // =========================================================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -557,7 +677,7 @@ function App() {
         <div class="header">
           <div>
             <div class="title">HAIZE SÍNDICO PROFISSIONAL</div>
-            <div class="subtitle">Relatório Consolidado de Fecho Orçamental e Compras</div>
+            <div class="subtitle">Relatório Consolidado de Fecho Orçamentário e Compras</div>
           </div>
           <div class="meta" style="text-align: right;">
             <div><strong>Filtro:</strong> ${condFormatado}</div>
@@ -623,7 +743,7 @@ function App() {
   }
 
   function atualizarCampoFormulario(campo, valor) { setFormulario(atual => ({ ...atual, [campo]: valor })) }
-  function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null); setOrcamentoAtualFormulario(null) }
+  function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null) }
   function fecharFormulario() { setMostrarFormulario(false); limparFormulario() }
 
   function editarSolicitacao(solicitacao) {
@@ -638,16 +758,34 @@ function App() {
 
   async function salvarSolicitacao(e) {
     e.preventDefault()
-    if (!formulario.condominio || !formulario.categoria || !formulario.fornecedor || !formulario.descricao || !formulario.observacao) { mostrarToast('Por favor, preencha todos os campos obrigatórios (*).', 'error'); return }
+    if (!formulario.condominio || !formulario.categoria || !formulario.fornecedor || !formulario.descricao || !formulario.observacao) {
+      mostrarToast('Por favor, preencha todos os campos obrigatórios (*).', 'error')
+      return
+    }
     const vServ = numero(formulario.valor_servico)
     const vProd = numero(formulario.valor_produto)
-    if (vServ <= 0 && vProd <= 0) { mostrarToast('O valor total (Serviço ou Produto) deve ser maior que zero.', 'error'); return }
+    if (vServ <= 0 && vProd <= 0) {
+      mostrarToast('O valor total (Serviço ou Produto) deve ser maior que zero.', 'error')
+      return
+    }
 
-    const payload = { ...formulario, valor_servico: vServ, valor_produto: vProd, solicitante: usuarioLogado.nome, status: 'Aprovação pendente' }
+    const condObj = condominios.find(c => c.nome === formulario.condominio)
+    const payload = {
+      ...formulario,
+      condominio_id: condObj?.id || null,
+      valor_servico: vServ,
+      valor_produto: vProd,
+      solicitante: usuarioLogado.nome,
+      status: 'Aprovação pendente'
+    }
 
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/solicitacoes${solicitacaoEditando ? `/${solicitacaoEditando.id}` : ''}`, { method: solicitacaoEditando ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) })
+      const res = await fetch(`${API_URL}/solicitacoes${solicitacaoEditando ? `/${solicitacaoEditando.id}` : ''}`, {
+        method: solicitacaoEditando ? 'PUT' : 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload)
+      })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao salvar solicitação.')
         throw new Error(erroMsg)
@@ -655,7 +793,11 @@ function App() {
       await carregarDados()
       fecharFormulario()
       mostrarToast(solicitacaoEditando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
-    } catch (erro) { mostrarToast(erro.message, 'error') } finally { setSalvando(false) }
+    } catch (erro) {
+      mostrarToast(erro.message, 'error')
+    } finally {
+      setSalvando(false)
+    }
   }
 
   async function abrirSolicitacao(solicitacao) {
@@ -675,7 +817,10 @@ function App() {
   async function fazerUploadAnexo(evento, tipoDocumento) {
     const arquivo = evento.target.files[0]
     if (!arquivo) return
-    if (arquivo.size > 10 * 1024 * 1024) { mostrarToast('O arquivo deve ter no máximo 10MB', 'error'); return }
+    if (arquivo.size > 10 * 1024 * 1024) {
+      mostrarToast('O arquivo deve ter no máximo 10MB', 'error')
+      return
+    }
 
     const formData = new FormData()
     formData.append('arquivo', arquivo)
@@ -684,14 +829,22 @@ function App() {
 
     setFazendoUpload(true)
     try {
-      const res = await fetch(`${API_URL}/solicitacoes/${solicitacaoSelecionada.id}/anexos`, { method: 'POST', headers: getAuthHeaders(true), body: formData })
+      const res = await fetch(`${API_URL}/solicitacoes/${solicitacaoSelecionada.id}/anexos`, {
+        method: 'POST',
+        headers: getAuthHeaders(true),
+        body: formData
+      })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao anexar arquivo.')
         throw new Error(erroMsg)
       }
-      mostrarToast('Arquivo anexado!', 'success')
+      mostrarToast('Arquivo anexado com sucesso!', 'success')
       await abrirSolicitacao(solicitacaoSelecionada)
-    } catch (e) { mostrarToast(e.message, 'error') } finally { setFazendoUpload(false) }
+    } catch (e) {
+      mostrarToast(e.message, 'error')
+    } finally {
+      setFazendoUpload(false)
+    }
   }
 
   function aprovarSolicitacao(solicitacao) {
@@ -699,14 +852,18 @@ function App() {
       const vNum = numero(v)
       if (vNum <= 0) { mostrarToast('O valor aprovado deve ser maior que zero.', 'error'); return }
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'Aprovada', valor_aprovado: vNum }) })
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ status: 'Aprovada', valor_aprovado: vNum })
+        })
         if (!res.ok) {
           const erroMsg = await extrairErro(res, 'Erro ao aprovar solicitação.')
           throw new Error(erroMsg)
         }
         await carregarDados()
         dispararNotificacaoNativa('Solicitação Aprovada', `O pedido ${solicitacao.numero} foi aprovado.`)
-        mostrarToast('Solicitação aprovada.', 'success')
+        mostrarToast('Solicitação aprovada com sucesso.', 'success')
         fecharSolicitacao()
       } catch (e) { mostrarToast(e.message, 'error') }
     })
@@ -716,7 +873,11 @@ function App() {
     pedirInput('Solicitar Ajuste', 'Informe o motivo ou o que precisa ser corrigido pelo solicitante:', solicitacao.motivo_ajuste || '', async motivo => {
       if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo do ajuste.', 'error'); return }
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'Ajuste solicitado', motivo_ajuste: motivo.trim() }) })
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ status: 'Ajuste solicitado', motivo_ajuste: motivo.trim() })
+        })
         if (!res.ok) {
           const erroMsg = await extrairErro(res, 'Erro ao solicitar ajuste.')
           throw new Error(erroMsg)
@@ -733,7 +894,11 @@ function App() {
     pedirInput('Reprovar Solicitação', 'Informe o motivo da reprovação:', '', async motivo => {
       if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo da reprovação.', 'error'); return }
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ status: 'Reprovada', motivo_ajuste: motivo.trim() }) })
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ status: 'Reprovada', motivo_ajuste: motivo.trim() })
+        })
         if (!res.ok) {
           const erroMsg = await extrairErro(res, 'Erro ao reprovar solicitação.')
           throw new Error(erroMsg)
@@ -748,7 +913,11 @@ function App() {
   function iniciarExecucao(solicitacao) {
     confirmarAcao('Executar solicitação', `Deseja executar a solicitação ${solicitacao.numero || ''}?`, async () => {
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/iniciar-execucao`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ observacao_execucao: '' }) })
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/iniciar-execucao`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ observacao_execucao: '' })
+        })
         if (!res.ok) {
           const erroMsg = await extrairErro(res, 'Erro ao executar a solicitação.')
           throw new Error(erroMsg)
@@ -765,7 +934,11 @@ function App() {
       const vNum = numero(v)
       if (vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/finalizar`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ valor_realizado: vNum }) })
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/finalizar`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ valor_realizado: vNum })
+        })
         if (!res.ok) {
           const erroMsg = await extrairErro(res, 'Erro ao finalizar solicitação.')
           throw new Error(erroMsg)
@@ -788,7 +961,7 @@ function App() {
         }
         if (solicitacaoSelecionada?.id === solicitacao.id) fecharSolicitacao()
         await carregarDados()
-        mostrarToast('Excluída.', 'success')
+        mostrarToast('Excluída com sucesso.', 'success')
       } catch (e) { mostrarToast(e.message, 'error') }
     }, true)
   }
@@ -802,7 +975,11 @@ function App() {
     if (!formularioCondominio.nome) return
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/condominios${condominioEditando ? `/${condominioEditando.id}` : ''}`, { method: condominioEditando ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(formularioCondominio) })
+      const res = await fetch(`${API_URL}/condominios${condominioEditando ? `/${condominioEditando.id}` : ''}`, {
+        method: condominioEditando ? 'PUT' : 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(formularioCondominio)
+      })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao salvar condomínio.')
         throw new Error(erroMsg)
@@ -855,7 +1032,9 @@ function App() {
     try {
       setSalvando(true)
       const res = await fetch(`${API_URL}/categorias${categoriaEditando ? `/${categoriaEditando.id}` : ''}`, {
-        method: categoriaEditando ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload)
+        method: categoriaEditando ? 'PUT' : 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload)
       })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao salvar categoria.')
@@ -865,7 +1044,7 @@ function App() {
       await carregarDados()
       fecharFormularioCategoria()
       if (mostrarFormulario && !categoriaEditando) atualizarCampoFormulario('categoria', salvo.nome)
-      mostrarToast('Categoria Salva!', 'success')
+      mostrarToast('Categoria salva!', 'success')
     } catch (err) { 
       mostrarToast(err.message, 'error') 
     } finally { 
@@ -896,7 +1075,11 @@ function App() {
     if (!formularioFornecedor.nome) return
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/fornecedores${fornecedorEditando ? `/${fornecedorEditando.id}` : ''}`, { method: fornecedorEditando ? 'PUT' : 'POST', headers: getAuthHeaders(), body: JSON.stringify(formularioFornecedor) })
+      const res = await fetch(`${API_URL}/fornecedores${fornecedorEditando ? `/${fornecedorEditando.id}` : ''}`, {
+        method: fornecedorEditando ? 'PUT' : 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(formularioFornecedor)
+      })
       if (!res.ok) {
         const erroMsg = await extrairErro(res, 'Erro ao salvar fornecedor.')
         throw new Error(erroMsg)
@@ -905,7 +1088,7 @@ function App() {
       await carregarDados()
       fecharFormularioFornecedor()
       if (mostrarFormulario && !fornecedorEditando) atualizarCampoFormulario('fornecedor', salvo.nome)
-      mostrarToast('Salvo!', 'success')
+      mostrarToast('Fornecedor salvo com sucesso!', 'success')
     } catch (err) { mostrarToast(err.message, 'error') } finally { setSalvando(false) }
   }
 
@@ -1031,7 +1214,7 @@ function App() {
           </div>
           
           <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* CENTRAL DE NOTIFICAÇÕES (SINO) */}
+            {/* CENTRAL DE NOTIFICAÇÕES */}
             <div style={{ position: 'relative' }}>
               <button 
                 className="icon-button" 
@@ -1047,7 +1230,6 @@ function App() {
                 )}
               </button>
 
-              {/* MENU FLUTUANTE DE NOTIFICAÇÕES */}
               {mostrarMenuNotificacoes && (
                 <div style={{ position: 'absolute', right: 0, top: '48px', width: '320px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 9999, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1071,7 +1253,7 @@ function App() {
                   </div>
                   <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
                     <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '600' }}>
-                      {notificacoesPushAtivas ? '✓ Notificações Push do navegador ativas' : '⚠️ Notificações do navegador desativadas'}
+                      {notificacoesPushAtivas ? '✓ Notificações Push ativas' : '⚠️ Notificações do navegador desativadas'}
                     </span>
                   </div>
                 </div>
@@ -1146,6 +1328,48 @@ function App() {
                 </div>
               </div>
             </section>
+
+            {/* PAINEL DE RATEIO POR FRAÇÃO IDEAL */}
+            {filtroCondominioAnalise !== 'todos' && (
+              <section className="dashboard-grid" style={{ marginTop: '24px' }}>
+                <div className="panel" style={{ gridColumn: '1 / -1' }}>
+                  <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span className="eyebrow">RATEIO AUTOMÁTICO</span>
+                      <h3>Distribuição por Fração Ideal — {filtroCondominioAnalise}</h3>
+                    </div>
+                    {rateioDados && (
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#1d4ed8', background: '#eff6ff', padding: '6px 12px', borderRadius: '8px' }}>
+                        Total das Despesas: {formatarValor(rateioDados.total_gasto_condominio)} ({rateioDados.quantidade_solicitacoes} despesas)
+                      </span>
+                    )}
+                  </div>
+
+                  {carregandoRateio ? (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Calculando rateio de despesas...</div>
+                  ) : !rateioDados || rateioDados.rateio_unidades.length === 0 ? (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
+                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>🏘️ Unidades</strong> para cadastrar.
+                    </div>
+                  ) : (
+                    <div className="table">
+                      <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
+                        <span>Unidade / Apartamento</span>
+                        <span>Fração Ideal (%)</span>
+                        <span style={{ textAlign: 'right' }}>Valor a Pagar (R$)</span>
+                      </div>
+                      {rateioDados.rateio_unidades.map((u, i) => (
+                        <div className="table-row" key={i} style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
+                          <strong>{u.unidade}</strong>
+                          <span style={{ color: '#475569', fontWeight: '600' }}>{formatarNumero(u.fracao_ideal)}%</span>
+                          <strong style={{ textAlign: 'right', color: '#059669' }}>{formatarValor(u.valor_devido)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="dashboard-grid" style={{ marginTop: '24px' }}>
               <div className="panel" style={{ gridColumn: '1 / -1' }}>
@@ -1310,9 +1534,10 @@ function App() {
                       {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
                       {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
                       
-                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
                         <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="text-button" style={{ color: '#2563eb', fontWeight: 'bold' }} onClick={() => abrirGerenciadorUnidades(condominio)}>🏘️ Unidades</button>
                           <button className="text-button" onClick={() => editarCondominio(condominio)}>Editar</button>
                           <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button>
                         </div>
@@ -1356,6 +1581,69 @@ function App() {
                 })}
               </div>
             </section>
+          </div>
+        )}
+
+        {/* MODAL DE GERENCIAMENTO DE UNIDADES E FRAÇÕES */}
+        {condominioUnidades && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setCondominioUnidades(null) }}>
+            <div className="modal modal-large">
+              <div className="modal-header">
+                <div>
+                  <span className="eyebrow">CONFIGURAÇÃO DE RATEIO</span>
+                  <h3>Unidades & Frações Ideais — {condominioUnidades.nome}</h3>
+                </div>
+                <button className="modal-close" onClick={() => setCondominioUnidades(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <form onSubmit={salvarNovaUnidade} style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 2, minWidth: '180px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>Identificação da Unidade *</label>
+                    <input type="text" placeholder="Ex: Ap 101, Apto 202, Cobertura 01" value={novaUnidade.identificacao} onChange={e => setNovaUnidade(p => ({ ...p, identificacao: e.target.value }))} required style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: '140px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>Fração Ideal (%) *</label>
+                    <input type="text" placeholder="Ex: 2,5 ou 5,0" value={novaUnidade.fracao_ideal} onChange={e => setNovaUnidade(p => ({ ...p, fracao_ideal: e.target.value }))} required style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  </div>
+                  <button type="submit" className="button-primary" style={{ padding: '10px 20px', height: '42px' }}>+ Adicionar Unidade</button>
+                </form>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '20px 0 10px 0' }}>
+                  <h4 style={{ margin: 0, fontSize: '14px', textTransform: 'uppercase', color: '#334155' }}>Unidades Cadastradas ({listaUnidades.length})</h4>
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: Math.round(somaFracaoTotal) === 100 ? '#059669' : '#d97706' }}>
+                    Soma das Frações: {formatarNumero(somaFracaoTotal)}% {Math.round(somaFracaoTotal) === 100 ? '✓ (100% Completo)' : '(Diferente de 100%)'}
+                  </span>
+                </div>
+
+                <div style={{ maxHeight: '280px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                  {carregandoUnidades ? (
+                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>Carregando unidades...</div>
+                  ) : listaUnidades.length === 0 ? (
+                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>Nenhuma unidade cadastrada para este condomínio. Cadastre acima!</div>
+                  ) : (
+                    <div className="table" style={{ margin: 0 }}>
+                      <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
+                        <span>Identificação</span>
+                        <span>Fração Ideal (%)</span>
+                        <span style={{ textAlign: 'center' }}>Ação</span>
+                      </div>
+                      {listaUnidades.map(u => (
+                        <div className="table-row" key={u.id} style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
+                          <strong>{u.identificacao}</strong>
+                          <span style={{ fontWeight: '600', color: '#1d4ed8' }}>{formatarNumero(u.fracao_ideal)}%</span>
+                          <div style={{ textAlign: 'center' }}>
+                            <button className="text-button" style={{ color: 'var(--danger)', fontSize: '12px' }} onClick={() => excluirUnidade(u.id)}>Excluir</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setCondominioUnidades(null)}>Fechar</button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1515,7 +1803,6 @@ function App() {
               <div className="modal-body">
                 <form className="form" onSubmit={salvarSolicitacao}>
                   <div className="form-grid">
-                    
                     <div className="form-group full">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Condomínio *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCondominio() }}>+ Novo</button></div>
                       <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
@@ -1531,72 +1818,6 @@ function App() {
                         {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
                       </select>
                     </div>
-
-                    {orcamentoAtualFormulario && (() => {
-                      const teto = numero(orcamentoAtualFormulario.teto)
-                      const gasto = numero(orcamentoAtualFormulario.gasto_atual)
-                      const saldo = numero(orcamentoAtualFormulario.saldo)
-                      const valorDigitado = numero(formulario.valor_servico) + numero(formulario.valor_produto)
-                      const saldoAposPedido = saldo - valorDigitado
-                      const percentual = teto > 0 ? Math.min(100, Math.round((gasto / teto) * 100)) : 0
-                      const percentualComPedido = teto > 0 ? Math.min(100, Math.round(((gasto + valorDigitado) / teto) * 100)) : 0
-                      const vaiEstourar = teto > 0 && (saldo < 0 || (valorDigitado > 0 && saldoAposPedido < 0))
-
-                      if (teto === 0) {
-                        return (
-                          <div className="form-group full" style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Sem teto de aprovação automática definido para esta categoria neste condomínio.</span>
-                            <span className="badge neutral">Análise Manual</span>
-                          </div>
-                        )
-                      }
-
-                      return (
-                        <div className="form-group full" style={{ background: '#ffffff', border: `1px solid ${vaiEstourar ? '#fecaca' : '#e2e8f0'}`, borderRadius: '12px', padding: '14px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: vaiEstourar ? '#ef4444' : '#10b981', display: 'inline-block' }}></span>
-                              <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#475569' }}>
-                                Resumo Orçamentário da Categoria
-                              </span>
-                            </div>
-                            <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '999px', backgroundColor: vaiEstourar ? '#fef2f2' : '#ecfdf5', color: vaiEstourar ? '#dc2626' : '#059669' }}>
-                              {vaiEstourar ? 'Exige Aprovação Manual' : `${percentual}% utilizado`}
-                            </span>
-                          </div>
-
-                          <div style={{ width: '100%', height: '6px', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
-                            <div style={{ width: `${valorDigitado > 0 ? percentualComPedido : percentual}%`, height: '100%', backgroundColor: vaiEstourar ? '#ef4444' : percentualComPedido > 80 ? '#f59e0b' : '#10b981', transition: 'width 0.3s ease, background-color 0.3s ease', borderRadius: '999px' }} />
-                          </div>
-
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Teto Limite</span>
-                              <strong style={{ fontSize: '13px', color: '#0f172a', whiteSpace: 'nowrap' }}>{formatarValor(teto)}</strong>
-                            </div>
-                            <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: '8px', border: '1px solid #f1f5f9', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Comprometido</span>
-                              <strong style={{ fontSize: '13px', color: '#475569', whiteSpace: 'nowrap' }}>{formatarValor(gasto)}</strong>
-                            </div>
-                            <div style={{ background: saldo < 0 ? '#fef2f2' : '#f0fdf4', padding: '8px 10px', borderRadius: '8px', border: `1px solid ${saldo < 0 ? '#fecaca' : '#bbf7d0'}`, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span style={{ fontSize: '10px', fontWeight: '700', color: saldo < 0 ? '#991b1b' : '#166534', textTransform: 'uppercase' }}>Saldo Livre</span>
-                              <strong style={{ fontSize: '13px', color: saldo < 0 ? '#dc2626' : '#059669', whiteSpace: 'nowrap' }}>{formatarValor(saldo)}</strong>
-                            </div>
-                          </div>
-
-                          {valorDigitado > 0 && (
-                            <div style={{ paddingTop: '8px', borderTop: '1px dashed #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                              <span style={{ color: '#475569' }}>
-                                {saldoAposPedido >= 0 ? '⚡ Este pedido será aprovado automaticamente' : '⏳ Valor excede o saldo (irá para análise)'}
-                              </span>
-                              <strong style={{ color: saldoAposPedido >= 0 ? '#059669' : '#dc2626', whiteSpace: 'nowrap' }}>
-                                Saldo final: {formatarValor(saldoAposPedido)}
-                              </strong>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
 
                     <div className="form-group full">
                       <label>O que está sendo comprado? *</label>
