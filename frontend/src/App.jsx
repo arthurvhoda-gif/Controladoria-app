@@ -13,10 +13,16 @@ function App() {
     return salvo ? JSON.parse(salvo) : null
   })
 
+  function paginaInicialPorPerfil(perfil) {
+    if (perfil === 'Checklist') return 'checklist'
+    if (perfil === 'Solicitante') return 'solicitacoes'
+    return 'dashboard'
+  }
+
   const [emailLogin, setEmailLogin] = useState('')
   const [senhaLogin, setSenhaLogin] = useState('')
   const [carregandoLogin, setCarregandoLogin] = useState(false)
-  const [pagina, setPagina] = useState(usuarioLogado?.perfil === 'Solicitante' ? 'solicitacoes' : 'dashboard')
+  const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
   const [backendOnline, setBackendOnline] = useState(false)
@@ -32,6 +38,25 @@ function App() {
   const [novaUnidade, setNovaUnidade] = useState({ identificacao: '', fracao_ideal: '' })
   const [rateioDados, setRateioDados] = useState(null)
   const [carregandoRateio, setCarregandoRateio] = useState(false)
+
+  // GESTÃO DE CHECKLIST E VISTORIAS
+  const [checklists, setChecklists] = useState([])
+  const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
+  const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
+  const [mostrarModalNovoChecklist, setMostrarModalNovoChecklist] = useState(false)
+  const [formNovoChecklist, setFormNovoChecklist] = useState({
+    condominio: '',
+    titulo: '',
+    descricao_orientacao: '',
+    frequencia: 'Diária'
+  })
+  const [itemChecklistExecutando, setItemChecklistExecutando] = useState(null)
+  const [formExecucaoChecklist, setFormExecucaoChecklist] = useState({
+    status_conformidade: 'Conforme',
+    observacao: '',
+    foto: null
+  })
+  const [itemChecklistHistorico, setItemChecklistHistorico] = useState(null)
 
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
@@ -132,7 +157,7 @@ function App() {
       setUsuarioLogado(dadosUsuario)
       localStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
-      setPagina(dadosUsuario.perfil === 'Solicitante' ? 'solicitacoes' : 'dashboard')
+      setPagina(paginaInicialPorPerfil(dadosUsuario.perfil))
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -184,11 +209,12 @@ function App() {
   async function carregarDados() {
     if (!usuarioLogado) return
     try {
-      const [resSol, resCond, resForn, resCat] = await Promise.all([
+      const [resSol, resCond, resForn, resCat, resChk] = await Promise.all([
         fetch(`${API_URL}/solicitacoes`, { headers: getAuthHeaders() }),
         fetch(`${API_URL}/condominios`, { headers: getAuthHeaders() }),
         fetch(`${API_URL}/fornecedores`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/categorias`, { headers: getAuthHeaders() })
+        fetch(`${API_URL}/categorias`, { headers: getAuthHeaders() }),
+        fetch(`${API_URL}/checklists`, { headers: getAuthHeaders() })
       ])
 
       if (resSol.ok) {
@@ -198,7 +224,7 @@ function App() {
         }
         
         const qtdAntiga = solicitacoes.length
-        if (dados.length > qtdAntiga && qtdAntiga > 0) {
+        if (dados.length > qtdAntiga && qtdAntiga > 0 && usuarioLogado.perfil !== 'Checklist') {
           dispararNotificacaoNativa('Nova Solicitação', 'Um novo pedido foi registrado no sistema.')
         }
 
@@ -211,11 +237,22 @@ function App() {
       if (resCond.ok) setCondominios(await resCond.json())
       if (resForn.ok) setFornecedores(await resForn.json())
       if (resCat.ok) setCategorias(await resCat.json())
+      if (resChk.ok) {
+        const dadosChk = await resChk.json()
+        setChecklists(dadosChk)
+        if (itemChecklistHistorico) {
+          const itemAtualizado = dadosChk.find(c => c.id === itemChecklistHistorico.id)
+          setItemChecklistHistorico(itemAtualizado || null)
+        }
+      }
     } catch (e) { }
   }
 
   useEffect(() => {
     if (usuarioLogado) {
+      if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
+        setPagina('checklist')
+      }
       verificarBackend()
       carregarDados()
       const int = setInterval(() => { verificarBackend(); carregarDados() }, 5000)
@@ -360,6 +397,104 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // =========================================================================
+  // FUNÇÕES DE CHECKLIST E VISTORIA
+  // =========================================================================
+  async function salvarNovoChecklist(e) {
+    e.preventDefault()
+    if (!formNovoChecklist.condominio || !formNovoChecklist.titulo.trim()) {
+      mostrarToast('Selecione o condomínio e informe o título da atividade.', 'error')
+      return
+    }
+    setSalvando(true)
+    try {
+      const res = await fetch(`${API_URL}/checklists`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(formNovoChecklist)
+      })
+      if (!res.ok) {
+        const err = await extrairErro(res, 'Erro ao criar item de checklist.')
+        throw new Error(err)
+      }
+      await carregarDados()
+      setMostrarModalNovoChecklist(false)
+      setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária' })
+      mostrarToast('Atividade adicionada ao checklist!', 'success')
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  function excluirItemChecklist(item) {
+    confirmarAcao('Excluir Atividade', `Deseja realmente excluir "${item.titulo}" do condomínio ${item.condominio}?`, async () => {
+      try {
+        const res = await fetch(`${API_URL}/checklists/${item.id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        })
+        if (!res.ok) throw new Error('Erro ao excluir atividade.')
+        await carregarDados()
+        mostrarToast('Atividade removida do checklist.', 'success')
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+      }
+    }, true)
+  }
+
+  function abrirModalExecutarChecklist(item) {
+    setItemChecklistExecutando(item)
+    setFormExecucaoChecklist({
+      status_conformidade: 'Conforme',
+      observacao: '',
+      foto: null
+    })
+  }
+
+  async function confirmarExecucaoChecklist(e) {
+    e.preventDefault()
+    if (formExecucaoChecklist.status_conformidade === 'Não Conforme' && !formExecucaoChecklist.observacao.trim()) {
+      mostrarToast('Para itens fora dos conformes, descreva o problema nas observações.', 'error')
+      return
+    }
+
+    const formData = new FormData()
+    formData.append('responsavel', usuarioLogado.nome)
+    formData.append('status_conformidade', formExecucaoChecklist.status_conformidade)
+    formData.append('observacao', formExecucaoChecklist.observacao)
+    if (formExecucaoChecklist.foto) {
+      formData.append('foto', formExecucaoChecklist.foto)
+    }
+
+    setSalvando(true)
+    try {
+      const res = await fetch(`${API_URL}/checklists/${itemChecklistExecutando.id}/executar`, {
+        method: 'POST',
+        headers: getAuthHeaders(true),
+        body: formData
+      })
+      if (!res.ok) {
+        const err = await extrairErro(res, 'Erro ao registrar vistoria.')
+        throw new Error(err)
+      }
+      await carregarDados()
+      setItemChecklistExecutando(null)
+      mostrarToast('Checklist registrado com sucesso!', 'success')
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  const checklistsFiltrados = checklists.filter(item => {
+    const matchCond = filtroCondominioChecklist === 'todos' || item.condominio === filtroCondominioChecklist
+    const matchFreq = filtroFrequenciaChecklist === 'todas' || item.frequencia === filtroFrequenciaChecklist
+    return matchCond && matchFreq
+  })
+
+  // =========================================================================
   // GESTÃO DE UNIDADES E RATEIO
   // =========================================================================
   async function abrirGerenciadorUnidades(cond) {
@@ -479,7 +614,6 @@ function App() {
     const estiloCabecalhoTabela = { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1E293B' } }, alignment: { vertical: 'center', horizontal: 'center', wrapText: true }, border: bordaPadrao }
     const formatoMoeda = '"R$" #,##0.00'
 
-    // ABA 1: RESUMO POR CONDOMÍNIO
     const totalQtdResumo = listaOrcamentoCondominio.reduce((acc, i) => acc + (i.qtdSolicitacoes || 0), 0)
     const totalTeto = listaOrcamentoCondominio.reduce((acc, i) => acc + i.aprovado, 0)
     const totalRealizado = listaOrcamentoCondominio.reduce((acc, i) => acc + i.realizado, 0)
@@ -524,10 +658,10 @@ function App() {
     linhasResumo.push([
       { v: 'TOTAL CONSOLIDADO', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
       { t: 'n', f: `SUM(B5:B${ultimaLinhaDadosResumo})`, v: totalQtdResumo, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
-      { t: 'n', f: `SUM(C5:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { t: 'n', f: `SUM(D5:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { t: 'n', f: `SUM(E5:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { v: totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: bgTotalSaldoResumo } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } }
+      { t: 'n', f: `SUM(C5:C${ultimaLinhaDadosResumo})`, v: Number(totalTeto.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { t: 'n', f: `SUM(D5:D${ultimaLinhaDadosResumo})`, v: Number(totalRealizado.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { t: 'n', f: `SUM(E5:E${ultimaLinhaDadosResumo})`, v: Number(totalSaldo.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { v: totalSaldo >= 0 ? 'SALDO POSITIVO' : 'ORÇAMENTO ESTOURADO', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: corTotalSaldoResumo } }, fill: { fgColor: { rgb: bgTotalSaldoResumo } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } }
     ])
 
     const wsResumo = XLSX.utils.aoa_to_sheet(linhasResumo)
@@ -535,7 +669,6 @@ function App() {
     wsResumo['!cols'] = [{ wch: 32 }, { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 24 }, { wch: 22 }]
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Condomínio')
 
-    // ABA 2: EXTRATO DE SOLICITAÇÕES
     const totalSol = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + solicitado(s), 0)
     const totalApr = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (aprovado(s) || solicitado(s)), 0)
     const totalReal = solicitacoesAnaliseFiltradas.reduce((acc, s) => acc + (realizado(s) || 0), 0)
@@ -585,16 +718,16 @@ function App() {
     const ultimaLinhaDadosExtrato = 4 + solicitacoesAnaliseFiltradas.length
 
     linhasExtrato.push([
-      { v: 'TOTAL GASTOS', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
-      { t: 'n', f: `COUNTA(A5:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
-      { v: 'solicitações no período', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: borderTotal } },
-      { v: `Soma consolidada automática (${qtdPedidos} pedidos)`, t: 's', s: { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: borderTotal } },
-      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 11, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
-      { t: 'n', f: `SUM(F5:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { t: 'n', f: `SUM(G5:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { t: 'n', f: `SUM(H5:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: borderTotal } },
-      { v: `${qtdPedidos} itens`, t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } },
-      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: borderTotal } }
+      { v: 'TOTAL GASTOS', t: 's', s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
+      { t: 'n', f: `COUNTA(A5:A${ultimaLinhaDadosExtrato})`, v: qtdPedidos, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
+      { v: 'solicitações no período', t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
+      { v: `Soma consolidada automática (${qtdPedidos} pedidos)`, t: 's', s: { font: { name: 'Calibri', sz: 10, italic: true, color: { rgb: '475569' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'left' }, border: bordaTotal } },
+      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 11, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
+      { t: 'n', f: `SUM(F5:F${ultimaLinhaDadosExtrato})`, v: Number(totalSol.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { t: 'n', f: `SUM(G5:G${ultimaLinhaDadosExtrato})`, v: Number(totalApr.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1D4ED8' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { t: 'n', f: `SUM(H5:H${ultimaLinhaDadosExtrato})`, v: Number(totalReal.toFixed(2)), z: formatoMoeda, s: { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '059669' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'right' }, border: bordaTotal } },
+      { v: `${qtdPedidos} itens`, t: 's', s: { font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } },
+      { v: '-', t: 's', s: { font: { name: 'Calibri', sz: 10, color: { rgb: '64748B' } }, fill: { fgColor: { rgb: 'E2E8F0' } }, alignment: { vertical: 'center', horizontal: 'center' }, border: bordaTotal } }
     ])
 
     const wsExtrato = XLSX.utils.aoa_to_sheet(linhasExtrato)
@@ -1138,6 +1271,7 @@ function App() {
   }
 
   const ehControladoria = usuarioLogado.perfil === 'Controladoria'
+  const ehChecklist = usuarioLogado.perfil === 'Checklist'
 
   return (
     <div className="app">
@@ -1178,16 +1312,32 @@ function App() {
         </div>
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
-          <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}><span className="nav-icon">◈</span><span>Dashboard</span></button>
-          <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}><span className="nav-icon">◠</span><span>Análises</span></button>
-          <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}><span className="nav-icon">▣</span><span>Solicitações</span>{ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}</button>
-          <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}><span className="nav-icon">◫</span><span>Compras</span></button>
-          
-          <div style={{ margin: '16px 0 8px 0', borderTop: '1px solid rgba(255,255,255,0.1)' }}></div>
-          
-          <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}><span className="nav-icon">🏢</span><span>Condomínios</span></button>
-          <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}><span className="nav-icon">🏷️</span><span>Categorias</span></button>
-          <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}><span className="nav-icon">🤝</span><span>Fornecedores</span></button>
+          {ehChecklist ? (
+            /* PERFIL CHECKLIST: VÊ APENAS A ABA DE CHECKLIST */
+            <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+              <span className="nav-icon">☑️</span><span>Checklist</span>
+            </button>
+          ) : (
+            /* DEMAIS PERFIS */
+            <>
+              <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}><span className="nav-icon">◈</span><span>Dashboard</span></button>
+              <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}><span className="nav-icon">◠</span><span>Análises</span></button>
+              <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}><span className="nav-icon">▣</span><span>Solicitações</span>{ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}</button>
+              <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}><span className="nav-icon">◫</span><span>Compras</span></button>
+              
+              {ehControladoria && (
+                <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">☑️</span><span>Checklist</span>
+                </button>
+              )}
+
+              <div style={{ margin: '16px 0 8px 0', borderTop: '1px solid rgba(255,255,255,0.1)' }}></div>
+              
+              <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}><span className="nav-icon">🏢</span><span>Condomínios</span></button>
+              <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}><span className="nav-icon">🏷️</span><span>Categorias</span></button>
+              <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}><span className="nav-icon">🤝</span><span>Fornecedores</span></button>
+            </>
+          )}
         </nav>
 
         <div style={{ flexShrink: 0, marginTop: 'auto', paddingBottom: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '12px', background: '#0f172a' }}>
@@ -1207,65 +1357,211 @@ function App() {
             <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)}>☰</button>
             <div>
               <span className="breadcrumb">
-                Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina}
+                Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
               </span>
-              <h1>{pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? ehControladoria ? 'Aprovações' : 'Minhas Solicitações' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}</h1>
+              <h1>
+                {pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+              </h1>
             </div>
           </div>
           
           <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {/* CENTRAL DE NOTIFICAÇÕES */}
-            <div style={{ position: 'relative' }}>
-              <button 
-                className="icon-button" 
-                onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
-                style={{ position: 'relative', width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '18px' }}
-                title="Central de Alertas e Notificações"
-              >
-                🔔
-                {quantidadePendentes > 0 && (
-                  <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#ef4444', color: 'white', fontSize: '11px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {quantidadePendentes}
-                  </span>
-                )}
-              </button>
-
-              {mostrarMenuNotificacoes && (
-                <div style={{ position: 'absolute', right: 0, top: '48px', width: '320px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 9999, overflow: 'hidden' }}>
-                  <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <strong style={{ fontSize: '14px' }}>Central de Alertas</strong>
-                    <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px' }}>{quantidadePendentes} pendentes</span>
-                  </div>
-                  <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                    {solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').length === 0 ? (
-                      <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
-                    ) : (
-                      solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').map(s => (
-                        <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <strong style={{ fontSize: '13px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
-                            <span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>{formatarValor(s.valor)}</span>
-                          </div>
-                          <span style={{ fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.descricao}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
-                    <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '600' }}>
-                      {notificacoesPushAtivas ? '✓ Notificações Push ativas' : '⚠️ Notificações do navegador desativadas'}
+            {!ehChecklist && (
+              <div style={{ position: 'relative' }}>
+                <button 
+                  className="icon-button" 
+                  onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
+                  style={{ position: 'relative', width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '18px' }}
+                  title="Central de Alertas e Notificações"
+                >
+                  🔔
+                  {quantidadePendentes > 0 && (
+                    <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#ef4444', color: 'white', fontSize: '11px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {quantidadePendentes}
                     </span>
-                  </div>
-                </div>
-              )}
-            </div>
+                  )}
+                </button>
 
-            <button className="icon-button" onClick={() => carregarDados()}>↻</button>
-            <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova solicitação</button>
+                {mostrarMenuNotificacoes && (
+                  <div style={{ position: 'absolute', right: 0, top: '48px', width: '320px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 9999, overflow: 'hidden' }}>
+                    <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <strong style={{ fontSize: '14px' }}>Central de Alertas</strong>
+                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px' }}>{quantidadePendentes} pendentes</span>
+                    </div>
+                    <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
+                      {solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').length === 0 ? (
+                        <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
+                      ) : (
+                        solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').map(s => (
+                          <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <strong style={{ fontSize: '13px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
+                              <span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>{formatarValor(s.valor)}</span>
+                            </div>
+                            <span style={{ fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.descricao}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
+                      <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '600' }}>
+                        {notificacoesPushAtivas ? '✓ Notificações Push ativas' : '⚠️ Notificações do navegador desativadas'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button className="icon-button" onClick={() => carregarDados()} title="Atualizar dados">↻</button>
+            {!ehChecklist && (
+              <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova solicitação</button>
+            )}
           </div>
         </header>
 
-        {pagina === 'dashboard' && (
+        {/* =========================================================================
+            ABA DE CHECKLIST OPERACIONAL E VISTORIAS
+           ========================================================================= */}
+        {pagina === 'checklist' && (
+          <div className="page">
+            <section className="panel">
+              <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <span className="eyebrow">ROTINAS E MANUTENÇÃO PREVENTIVA</span>
+                  <h3>Atividades do Checklist</h3>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select
+                    value={filtroCondominioChecklist}
+                    onChange={e => setFiltroCondominioChecklist(e.target.value)}
+                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
+                  >
+                    <option value="todos">Todos os Condomínios</option>
+                    {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                  </select>
+
+                  <select
+                    value={filtroFrequenciaChecklist}
+                    onChange={e => setFiltroFrequenciaChecklist(e.target.value)}
+                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
+                  >
+                    <option value="todas">Todas as Frequências</option>
+                    <option value="Diária">Diária</option>
+                    <option value="Semanal">Semanal</option>
+                    <option value="Quinzenal">Quinzenal</option>
+                    <option value="Mensal">Mensal</option>
+                  </select>
+
+                  {ehControladoria && (
+                    <button className="button-primary" onClick={() => setMostrarModalNovoChecklist(true)}>
+                      + Nova Atividade
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {checklistsFiltrados.length === 0 ? (
+                <div style={{ padding: '48px 24px', textAlign: 'center', color: '#64748b' }}>
+                  Nenhuma atividade cadastrada para o filtro selecionado.
+                  {ehControladoria && ' Clique em "+ Nova Atividade" para adicionar tarefas ao checklist.'}
+                </div>
+              ) : (
+                <div className="company-grid" style={{ marginTop: '16px' }}>
+                  {checklistsFiltrados.map(item => {
+                    const ult = item.ultima_execucao
+                    const naoConforme = ult && ult.status_conformidade === 'Não Conforme'
+                    return (
+                      <div className="company-card" key={item.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', borderLeft: ult ? (naoConforme ? '4px solid #dc2626' : '4px solid #10b981') : '4px solid #cbd5e1' }}>
+                        <div>
+                          <div className="company-card-top" style={{ marginBottom: '10px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', background: '#eff6ff', color: '#1d4ed8', padding: '4px 10px', borderRadius: '999px' }}>
+                              🏢 {item.condominio}
+                            </span>
+                            <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
+                              ⏱️ {item.frequencia}
+                            </span>
+                          </div>
+
+                          <h4 style={{ fontSize: '16px', margin: '8px 0 6px 0', color: '#0f172a' }}>{item.titulo}</h4>
+                          {item.descricao_orientacao && (
+                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 14px 0', lineHeight: '1.4' }}>
+                              {item.descricao_orientacao}
+                            </p>
+                          )}
+
+                          {/* RESUMO DA ÚLTIMA EXECUÇÃO */}
+                          <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', marginTop: '12px' }}>
+                            {!ult ? (
+                              <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Ainda não realizado nenhuma vez.</span>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <strong style={{ color: naoConforme ? '#dc2626' : '#059669' }}>
+                                    {naoConforme ? '⚠️ Fora dos Conformes' : '✅ Conforme (OK)'}
+                                  </strong>
+                                  <span style={{ fontSize: '11px', color: '#64748b' }}>{formatarDataHora(ult.data_execucao)}</span>
+                                </div>
+                                <span style={{ color: '#475569' }}>Feito por: <strong>{ult.responsavel}</strong></span>
+                                {ult.observacao && (
+                                  <span style={{ color: '#334155', fontStyle: 'italic', marginTop: '2px' }}>"{ult.observacao}"</span>
+                                )}
+                                {ult.tem_foto && (
+                                  <a
+                                    href={`${API_URL}/checklists/execucoes/${ult.id}/foto`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: '#2563eb', fontWeight: '600', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}
+                                  >
+                                    📷 Ver foto anexada
+                                  </a>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                          <button
+                            className="button-primary"
+                            style={{ flex: 1, padding: '8px 12px', fontSize: '13px', backgroundColor: '#10b981', borderColor: '#10b981' }}
+                            onClick={() => abrirModalExecutarChecklist(item)}
+                          >
+                            ✓ Registrar Vistoria
+                          </button>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              className="text-button"
+                              style={{ fontSize: '12px', padding: '4px 6px' }}
+                              onClick={() => setItemChecklistHistorico(item)}
+                            >
+                              Histórico ({item.historico_execucoes?.length || 0})
+                            </button>
+                            {ehControladoria && (
+                              <>
+                                <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
+                                <button
+                                  className="text-button"
+                                  style={{ color: 'var(--danger)', fontSize: '12px', padding: '4px 6px' }}
+                                  onClick={() => excluirItemChecklist(item)}
+                                >
+                                  Excluir
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {pagina === 'dashboard' && !ehChecklist && (
           <div className="page">
             <section className="kpi-grid">
               <div className="kpi-card"><div className="kpi-top"><span>Solicitado</span><span className="kpi-icon">$</span></div><strong>{formatarValor(valorTotalSolicitado)}</strong></div>
@@ -1298,7 +1594,7 @@ function App() {
           </div>
         )}
 
-        {pagina === 'analises' && (
+        {pagina === 'analises' && !ehChecklist && (
           <div className="page">
             <section className="welcome" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
               <div><span className="eyebrow">ANÁLISES E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
@@ -1329,7 +1625,6 @@ function App() {
               </div>
             </section>
 
-            {/* PAINEL DE RATEIO POR FRAÇÃO IDEAL */}
             {filtroCondominioAnalise !== 'todos' && (
               <section className="dashboard-grid" style={{ marginTop: '24px' }}>
                 <div className="panel" style={{ gridColumn: '1 / -1' }}>
@@ -1425,7 +1720,7 @@ function App() {
           </div>
         )}
 
-        {(pagina === 'solicitacoes' || pagina === 'compras') && (
+        {(pagina === 'solicitacoes' || pagina === 'compras') && !ehChecklist && (
           <div className="page">
             <section className="panel">
               <div className="panel-header" style={{ display: 'flex', alignItems: 'center' }}>
@@ -1470,7 +1765,7 @@ function App() {
           </div>
         )}
 
-        {pagina === 'categorias' && (
+        {pagina === 'categorias' && !ehChecklist && (
           <div className="page">
             <section className="panel">
               <div className="panel-header">
@@ -1513,7 +1808,7 @@ function App() {
           </div>
         )}
 
-        {pagina === 'condominios' && (
+        {pagina === 'condominios' && !ehChecklist && (
           <div className="page">
             <section className="panel">
               <div className="panel-header">
@@ -1534,7 +1829,6 @@ function App() {
                       {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
                       {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
                       
-                      {/* RODAPÉ DO CARD ALINHADO COM SEPARADORES SUAVES */}
                       <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span>
@@ -1574,7 +1868,7 @@ function App() {
           </div>
         )}
 
-        {pagina === 'fornecedores' && (
+        {pagina === 'fornecedores' && !ehChecklist && (
           <div className="page">
             <section className="panel">
               <div className="panel-header">
@@ -1605,6 +1899,222 @@ function App() {
                 })}
               </div>
             </section>
+          </div>
+        )}
+
+        {/* MODAL: CRIAR NOVA ATIVIDADE DE CHECKLIST (CONTROLADORIA) */}
+        {mostrarModalNovoChecklist && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarModalNovoChecklist(false) }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div>
+                  <span className="eyebrow">PLANEJAMENTO OPERACIONAL</span>
+                  <h3>Nova Atividade de Checklist</h3>
+                </div>
+                <button className="modal-close" onClick={() => setMostrarModalNovoChecklist(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={salvarNovoChecklist}>
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Condomínio *</label>
+                      <select
+                        value={formNovoChecklist.condominio}
+                        onChange={e => setFormNovoChecklist(p => ({ ...p, condominio: e.target.value }))}
+                        required
+                      >
+                        <option value="">Selecione o condomínio...</option>
+                        {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                      </select>
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Atividade / O que deve ser verificado? *</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Verificar bombas de recalque, Limpeza da caixa de gordura..."
+                        value={formNovoChecklist.titulo}
+                        onChange={e => setFormNovoChecklist(p => ({ ...p, titulo: e.target.value }))}
+                        required
+                      />
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Frequência Exigida *</label>
+                      <select
+                        value={formNovoChecklist.frequencia}
+                        onChange={e => setFormNovoChecklist(p => ({ ...p, frequencia: e.target.value }))}
+                        required
+                      >
+                        <option value="Diária">Diária</option>
+                        <option value="Semanal">Semanal</option>
+                        <option value="Quinzenal">Quinzenal</option>
+                        <option value="Mensal">Mensal</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Instruções / O que observar na vistoria</label>
+                      <textarea
+                        rows="3"
+                        placeholder="Ex: Checar se há vazamentos no selo mecânico, ruído anormal ou lâmpadas queimadas..."
+                        value={formNovoChecklist.descricao_orientacao}
+                        onChange={e => setFormNovoChecklist(p => ({ ...p, descricao_orientacao: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setMostrarModalNovoChecklist(false)}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={salvarNovoChecklist} disabled={salvando}>
+                  {salvando ? 'Salvando...' : 'Criar Atividade'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: REGISTRAR EXECUÇÃO DO CHECKLIST (Zelador / Responsável) */}
+        {itemChecklistExecutando && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setItemChecklistExecutando(null) }}>
+            <div className="modal">
+              <div className="modal-header">
+                <div>
+                  <span className="eyebrow">{itemChecklistExecutando.condominio} • {itemChecklistExecutando.frequencia}</span>
+                  <h3>{itemChecklistExecutando.titulo}</h3>
+                </div>
+                <button className="modal-close" onClick={() => setItemChecklistExecutando(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <form className="form" onSubmit={confirmarExecucaoChecklist}>
+                  <div className="form-grid">
+                    <div className="form-group full">
+                      <label>Resultado da Vistoria *</label>
+                      <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Conforme' }))}
+                          style={{
+                            flex: 1, padding: '12px', borderRadius: '8px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                            border: formExecucaoChecklist.status_conformidade === 'Conforme' ? '2px solid #059669' : '1px solid #cbd5e1',
+                            background: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#ecfdf5' : '#ffffff',
+                            color: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#059669' : '#475569'
+                          }}
+                        >
+                          ✅ Conforme (Tudo OK)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Não Conforme' }))}
+                          style={{
+                            flex: 1, padding: '12px', borderRadius: '8px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                            border: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '2px solid #dc2626' : '1px solid #cbd5e1',
+                            background: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#fef2f2' : '#ffffff',
+                            color: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#dc2626' : '#475569'
+                          }}
+                        >
+                          ⚠️ Fora dos Conformes
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="form-group full">
+                      <label>
+                        Observações / Descrição {formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '* (Obrigatório informar o problema)' : '(Opcional)'}
+                      </label>
+                      <textarea
+                        rows="3"
+                        placeholder="Descreva detalhes da vistoria ou relate qualquer irregularidade encontrada..."
+                        value={formExecucaoChecklist.observacao}
+                        onChange={e => setFormExecucaoChecklist(p => ({ ...p, observacao: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Foto / Evidência (Câmera ou Galeria)</label>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={e => setFormExecucaoChecklist(p => ({ ...p, foto: e.target.files[0] || null }))}
+                        style={{ padding: '10px', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '8px' }}
+                      />
+                      {formExecucaoChecklist.foto && (
+                        <span style={{ fontSize: '12px', color: '#059669', fontWeight: '600', marginTop: '4px' }}>
+                          📎 Foto selecionada: {formExecucaoChecklist.foto.name}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setItemChecklistExecutando(null)}>Cancelar</button>
+                <button type="button" className="button-primary" onClick={confirmarExecucaoChecklist} disabled={salvando}>
+                  {salvando ? 'Registrando...' : 'Confirmar Vistoria'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: HISTÓRICO DE EXECUÇÕES DA ATIVIDADE */}
+        {itemChecklistHistorico && (
+          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setItemChecklistHistorico(null) }}>
+            <div className="modal modal-large">
+              <div className="modal-header">
+                <div>
+                  <span className="eyebrow">HISTÓRICO DE VISTORIAS • {itemChecklistHistorico.condominio}</span>
+                  <h3>{itemChecklistHistorico.titulo}</h3>
+                </div>
+                <button className="modal-close" onClick={() => setItemChecklistHistorico(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                {!itemChecklistHistorico.historico_execucoes || itemChecklistHistorico.historico_execucoes.length === 0 ? (
+                  <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
+                    Nenhuma execução registrada para esta atividade até o momento.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto' }}>
+                    {itemChecklistHistorico.historico_execucoes.map(ex => {
+                      const ehProblema = ex.status_conformidade === 'Não Conforme'
+                      return (
+                        <div key={ex.id} style={{ padding: '14px 16px', borderRadius: '10px', border: `1px solid ${ehProblema ? '#fecaca' : '#e2e8f0'}`, background: ehProblema ? '#fef2f2' : '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <strong style={{ fontSize: '13px', color: ehProblema ? '#dc2626' : '#059669' }}>
+                                {ehProblema ? '⚠️ Não Conforme' : '✅ Conforme'}
+                              </strong>
+                              <span style={{ fontSize: '12px', color: '#64748b' }}>• {formatarDataHora(ex.data_execucao)}</span>
+                              <span style={{ fontSize: '12px', color: '#334155', fontWeight: '600' }}>• Responsável: {ex.responsavel}</span>
+                            </div>
+                            {ex.observacao && (
+                              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#1e293b' }}>
+                                <strong>Relato:</strong> {ex.observacao}
+                              </p>
+                            )}
+                          </div>
+                          {ex.tem_foto && (
+                            <a
+                              href={`${API_URL}/checklists/execucoes/${ex.id}/foto`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="button-secondary"
+                              style={{ padding: '6px 12px', fontSize: '12px', textDecoration: 'none' }}
+                            >
+                              📷 Ver Foto / Evidência
+                            </a>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="button-secondary" onClick={() => setItemChecklistHistorico(null)}>Fechar</button>
+              </div>
+            </div>
           </div>
         )}
 

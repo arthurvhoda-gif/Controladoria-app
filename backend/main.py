@@ -39,7 +39,6 @@ def verify_password(senha_plana: str, senha_hash: str) -> bool:
     except Exception:
         return False
 
-# Inicialização do administrador padrão se o banco estiver vazio
 def inicializar_admin():
     db = SessionLocal()
     try:
@@ -58,7 +57,6 @@ def inicializar_admin():
 inicializar_admin()
 
 def get_usuario_atual():
-    # Validador de sessão básico
     return {"nome": "Sessão Ativa"}
 
 @app.get("/")
@@ -411,7 +409,7 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db), usua
     return {"mensagem": "Solicitação excluída com sucesso."}
 
 # ==========================================
-# HISTÓRICO E ANEXOS
+# HISTÓRICO E ANEXOS DE SOLICITAÇÕES
 # ==========================================
 @app.get("/solicitacoes/{solicitacao_id}/historico")
 def obter_historico(solicitacao_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
@@ -460,3 +458,118 @@ def baixar_anexo(anexo_id: int, db: Session = Depends(get_db)):
     if not anexo or not os.path.exists(anexo.caminho):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
     return FileResponse(anexo.caminho, filename=anexo.nome_arquivo)
+
+# ==========================================
+# MÓDULO DE CHECKLIST OPERACIONAL
+# ==========================================
+@app.get("/checklists")
+def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+    query = db.query(models.ChecklistItem)
+    if condominio and condominio != "todos":
+        query = query.filter(models.ChecklistItem.condominio == condominio)
+    itens = query.order_by(models.ChecklistItem.id.desc()).all()
+    
+    resultado = []
+    for item in itens:
+        execucoes = db.query(models.ChecklistExecucao).filter(
+            models.ChecklistExecucao.item_id == item.id
+        ).order_by(models.ChecklistExecucao.id.desc()).all()
+        
+        ultima = execucoes[0] if execucoes else None
+        resultado.append({
+            "id": item.id,
+            "condominio": item.condominio,
+            "titulo": item.titulo,
+            "descricao_orientacao": item.descricao_orientacao,
+            "frequencia": item.frequencia,
+            "criado_em": item.criado_em,
+            "ultima_execucao": {
+                "id": ultima.id,
+                "responsavel": ultima.responsavel,
+                "status_conformidade": ultima.status_conformidade,
+                "observacao": ultima.observacao,
+                "nome_foto": ultima.nome_foto,
+                "data_execucao": ultima.data_execucao,
+                "tem_foto": bool(ultima.caminho_foto)
+            } if ultima else None,
+            "historico_execucoes": [
+                {
+                    "id": ex.id,
+                    "responsavel": ex.responsavel,
+                    "status_conformidade": ex.status_conformidade,
+                    "observacao": ex.observacao,
+                    "nome_foto": ex.nome_foto,
+                    "data_execucao": ex.data_execucao,
+                    "tem_foto": bool(ex.caminho_foto)
+                } for ex in execucoes
+            ]
+        })
+    return resultado
+
+@app.post("/checklists")
+def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+    novo = models.ChecklistItem(
+        condominio=dados.condominio.strip(),
+        titulo=dados.titulo.strip(),
+        descricao_orientacao=dados.descricao_orientacao.strip() if dados.descricao_orientacao else None,
+        frequencia=dados.frequencia
+    )
+    db.add(novo)
+    db.commit()
+    db.refresh(novo)
+    return novo
+
+@app.delete("/checklists/{item_id}")
+def excluir_item_checklist(item_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+    item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
+    db.query(models.ChecklistExecucao).filter(models.ChecklistExecucao.item_id == item_id).delete()
+    db.delete(item)
+    db.commit()
+    return {"mensagem": "Atividade de checklist excluída com sucesso."}
+
+@app.post("/checklists/{item_id}/executar")
+async def executar_checklist(
+    item_id: int,
+    responsavel: str = Form(...),
+    status_conformidade: str = Form("Conforme"),
+    observacao: Optional[str] = Form(None),
+    foto: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    usuario=Depends(get_usuario_atual)
+):
+    item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
+        
+    nome_foto_original = None
+    caminho_completo = None
+    
+    if foto and foto.filename:
+        extensao = os.path.splitext(foto.filename)[1]
+        nome_seguro = f"chk_{uuid.uuid4().hex}{extensao}"
+        caminho_completo = os.path.join(UPLOAD_DIR, nome_seguro)
+        with open(caminho_completo, "wb") as buffer:
+            buffer.write(await foto.read())
+        nome_foto_original = foto.filename
+        
+    execucao = models.ChecklistExecucao(
+        item_id=item_id,
+        responsavel=responsavel,
+        status_conformidade=status_conformidade,
+        observacao=observacao.strip() if observacao else None,
+        nome_foto=nome_foto_original,
+        caminho_foto=caminho_completo
+    )
+    db.add(execucao)
+    db.commit()
+    db.refresh(execucao)
+    return {"mensagem": "Checklist registrado com sucesso!", "id": execucao.id}
+
+@app.get("/checklists/execucoes/{execucao_id}/foto")
+def baixar_foto_checklist(execucao_id: int, db: Session = Depends(get_db)):
+    ex = db.query(models.ChecklistExecucao).filter(models.ChecklistExecucao.id == execucao_id).first()
+    if not ex or not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
+        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    return FileResponse(ex.caminho_foto, filename=ex.nome_foto or "evidencia.jpg")
