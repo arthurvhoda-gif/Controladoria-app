@@ -19,6 +19,10 @@ class UsuarioResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# CLASSE ADICIONADA PARA SUPORTAR A TROCA DE SENHA NO PASSO 4
+class SenhaUpdate(BaseModel):
+    nova_senha: str
+
 class UnidadeCreate(BaseModel):
     identificacao: str
     fracao_ideal: float
@@ -44,7 +48,7 @@ class CategoriaCreate(BaseModel):
     descricao: Optional[str] = None
     limites: Optional[Any] = None
 
-class CategoriaResponse(BaseModel):
+class CategoriaResponse(CategoriaCreate):
     id: int
     nome: str
     descricao: Optional[str] = None
