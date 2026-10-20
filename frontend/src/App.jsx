@@ -451,17 +451,28 @@ function App() {
       }
 
       const linhasDivergencias = dados.divergencias.length === 0 ? `
-        <tr><td colspan="3" style="padding: 16px; text-align: center; color: #059669; font-weight: bold;">Nenhuma divergência registrada neste condomínio! Tudo conforme.</td></tr>
-      ` : dados.divergencias.map(d => `
         <tr>
-          <td style="padding: 10px; border: 1px solid #cbd5e1;">
-            <strong>${d.atividade}</strong><br>
-            <span style="font-size: 11px; color: #64748b;">Frequência: ${d.frequencia} • Ocorrência: ${formatarDataHora(d.data_ocorrencia)} • Por: ${d.responsavel}</span>
+          <td colspan="3" style="padding: 24px; text-align: center; color: #059669; font-weight: 700; background: #f0fdf4;">
+            ✓ Nenhuma irregularidade identificada nas rotinas operacionais deste condomínio. Todas as verificações estão em conformidade.
           </td>
-          <td style="padding: 10px; border: 1px solid #cbd5e1; color: #dc2626; font-weight: 500;">
+        </tr>
+      ` : dados.divergencias.map((d, index) => `
+        <tr style="background: ${index % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
+          <td style="padding: 12px 14px; border: 1px solid #cbd5e1; vertical-align: top;">
+            <div style="font-weight: 700; color: #0f172a; font-size: 13px;">${d.atividade}</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px;">
+              <span><strong>Frequência:</strong> ${d.frequencia}</span> | 
+              <span><strong>Data:</strong> ${formatarDataHora(d.data_ocorrencia)}</span>
+            </div>
+            <div style="font-size: 11px; color: #334155; margin-top: 2px;">
+              <strong>Vistoriador:</strong> ${d.responsavel}
+            </div>
+          </td>
+          <td style="padding: 12px 14px; border: 1px solid #cbd5e1; vertical-align: top; color: #b91c1c; font-size: 12.5px; line-height: 1.45;">
             ${d.relato}
+            ${d.tem_foto ? '<div style="margin-top: 6px; font-size: 11px; color: #2563eb; font-weight: 600;">[Evidência fotográfica anexada no sistema]</div>' : ''}
           </td>
-          <td style="padding: 10px; border: 1px solid #cbd5e1; background: #f8fafc; color: #1e293b; font-weight: 600;">
+          <td style="padding: 12px 14px; border: 1px solid #cbd5e1; vertical-align: top; background: #fffbeb; color: #92400e; font-size: 12.5px; line-height: 1.45; font-weight: 600;">
             ${d.plano_acao}
           </td>
         </tr>
@@ -469,43 +480,92 @@ function App() {
 
       janela.document.write(`
         <!DOCTYPE html>
-        <html>
+        <html lang="pt-BR">
         <head>
-          <title>Relatório de Divergências e Plano de Ação - ${dados.condominio}</title>
+          <meta charset="utf-8">
+          <title>Relatório de Divergências - ${dados.condominio}</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 30px; color: #0f172a; margin: 0; }
-            .header { border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
-            .title { font-size: 20px; font-weight: 800; text-transform: uppercase; }
-            .subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
-            .badge-total { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 14px; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
-            th { background-color: #1e293b; color: white; padding: 10px; border: 1px solid #cbd5e1; text-align: left; }
-            @media print { body { padding: 15px; } button { display: none; } }
+            @page { size: A4 portrait; margin: 15mm; }
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+              color: #0f172a; 
+              margin: 0; 
+              padding: 0;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .header { 
+              display: flex; 
+              justify-content: space-between; 
+              align-items: center; 
+              border-bottom: 2px solid #0f172a; 
+              padding-bottom: 14px; 
+              margin-bottom: 20px; 
+            }
+            .title-area h1 { font-size: 18px; font-weight: 800; margin: 0; color: #0f172a; letter-spacing: -0.5px; }
+            .title-area p { font-size: 12px; color: #475569; margin: 3px 0 0 0; }
+            .kpi-badge { 
+              background: #fef2f2; 
+              color: #991b1b; 
+              border: 1px solid #fecaca; 
+              padding: 8px 16px; 
+              border-radius: 8px; 
+              text-align: right;
+            }
+            .kpi-badge .num { font-size: 18px; font-weight: 800; }
+            .kpi-badge .label { font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; display: block; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            th { 
+              background-color: #0f172a; 
+              color: #ffffff; 
+              padding: 10px 14px; 
+              font-size: 11px; 
+              text-transform: uppercase; 
+              letter-spacing: 0.5px; 
+              text-align: left; 
+              border: 1px solid #0f172a; 
+            }
+            .footer-sign { 
+              margin-top: 40px; 
+              display: flex; 
+              justify-content: space-between; 
+              page-break-inside: avoid;
+              padding-top: 20px;
+            }
+            .sign-box { width: 45%; border-top: 1px solid #94a3b8; text-align: center; padding-top: 6px; font-size: 11px; color: #475569; }
+            @media print { button { display: none; } }
           </style>
         </head>
         <body>
           <div class="header">
-            <div>
-              <div class="title">HAIZE SÍNDICO PROFISSIONAL — RELATÓRIO DE VISTORIAS</div>
-              <div class="subtitle">Condomínio: <strong>${dados.condominio}</strong> | Emitido em: ${new Date().toLocaleDateString('pt-BR')}</div>
+            <div class="title-area">
+              <h1>HAIZE SÍNDICO PROFISSIONAL</h1>
+              <p>Relatório de Auditoria e Divergências de Vistoria</p>
+              <p style="margin-top: 6px;"><strong>Condomínio:</strong> ${dados.condominio} | <strong>Emissão:</strong> ${new Date().toLocaleDateString('pt-BR')}</p>
             </div>
-            <div class="badge-total">
-              ⚠️ Total de Divergências: ${dados.total_divergencias}
+            <div class="kpi-badge">
+              <span class="label">Total de Divergências</span>
+              <span class="num">${dados.total_divergencias}</span>
             </div>
           </div>
 
           <table>
             <thead>
               <tr>
-                <th style="width: 32%;">Atividade Verificada</th>
-                <th style="width: 34%;">Relato da Irregularidade</th>
-                <th style="width: 34%;">Plano de Ação (Diretriz Controladoria)</th>
+                <th style="width: 32%;">Item Vistoriado</th>
+                <th style="width: 34%;">Apontamento / Não Conformidade</th>
+                <th style="width: 34%;">Diretriz / Plano de Ação</th>
               </tr>
             </thead>
             <tbody>
               ${linhasDivergencias}
             </tbody>
           </table>
+
+          <div class="footer-sign">
+            <div class="sign-box">Responsável pela Vistoria Operacional</div>
+            <div class="sign-box">Controladoria / Gestão Haize</div>
+          </div>
 
           <script>window.onload = function() { window.print(); }</script>
         </body>
@@ -853,54 +913,67 @@ function App() {
       return
     }
 
-    const linhasResumo = listaOrcamentoCondominio.map(item => `
-      <tr>
-        <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">${item.nome}</td>
-        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: center; font-weight: 600;">${item.qtdSolicitacoes || 0}</td>
-        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
-        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
-        <td style="padding: 8px; border: 1px solid #cbd5e1; text-align: right; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; font-weight: bold;">${formatarValor(item.saldo)}</td>
+    const linhasResumo = listaOrcamentoCondominio.map((item, idx) => `
+      <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${item.nome}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; font-weight: 600;">${item.qtdSolicitacoes || 0}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right; color: ${item.saldo < 0 ? '#dc2626' : '#059669'}; font-weight: 700;">${formatarValor(item.saldo)}</td>
       </tr>
     `).join('')
 
-    const linhasSols = solicitacoesAnaliseFiltradas.map(s => `
-      <tr>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace;">${s.numero || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.condominio || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.categoria || '-'}</td>
+    const linhasSols = solicitacoesAnaliseFiltradas.map((s, idx) => `
+      <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${s.numero || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${s.condominio || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; color: #475569;">${s.categoria || '-'}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.descricao || ''}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor)}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor_realizado || s.valor_aprovado || s.valor)}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${textoStatus(s.status)}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600;">${formatarValor(s.valor_realizado || s.valor_aprovado || s.valor)}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600; font-size: 11px;">${textoStatus(s.status)}</td>
       </tr>
     `).join('')
 
     janela.document.write(`
       <!DOCTYPE html>
-      <html>
+      <html lang="pt-BR">
       <head>
-        <title>Relatório de Fecho - Controladoria Haize</title>
+        <meta charset="utf-8">
+        <title>Fecho Orçamentário - Controladoria Haize</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 30px; color: #0f172a; margin: 0; }
-          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
-          .title { font-size: 22px; font-weight: 800; }
-          .subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
-          .meta { font-size: 12px; color: #334155; }
-          h3 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; margin: 24px 0 10px 0; color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
-          th { background-color: #f1f5f9; padding: 8px; border: 1px solid #cbd5e1; text-align: left; font-weight: 700; }
-          tfoot td { background-color: #f8fafc; font-weight: 800; border: 1px solid #cbd5e1; padding: 8px; }
-          @media print {
-            body { padding: 15px; }
-            button { display: none; }
+          @page { size: A4 portrait; margin: 12mm; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            padding: 0; 
+            color: #0f172a; 
+            margin: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
+          .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 2px solid #0f172a; 
+            padding-bottom: 14px; 
+            margin-bottom: 20px; 
+          }
+          .title { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+          .subtitle { font-size: 12px; color: #64748b; margin-top: 2px; }
+          .meta { font-size: 11px; color: #334155; }
+          h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; margin: 20px 0 8px 0; color: #1e293b; font-weight: 800; }
+          table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-bottom: 16px; }
+          th { background-color: #0f172a; color: #ffffff; padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-size: 10.5px; text-transform: uppercase; }
+          tfoot td { background-color: #f1f5f9; font-weight: 800; border: 1px solid #cbd5e1; padding: 8px 10px; }
+          @media print { button { display: none; } }
         </style>
       </head>
       <body>
         <div class="header">
           <div>
             <div class="title">HAIZE SÍNDICO PROFISSIONAL</div>
-            <div class="subtitle">Relatório Consolidado de Fecho Orçamentário e Compras</div>
+            <div class="subtitle">Relatório Consolidado de Fecho Orçamentário</div>
           </div>
           <div class="meta" style="text-align: right;">
             <div><strong>Filtro:</strong> ${condFormatado}</div>
@@ -909,7 +982,7 @@ function App() {
           </div>
         </div>
 
-        <h3>Resumo por Condomínio</h3>
+        <h3>Resumo Executivo por Condomínio</h3>
         <table>
           <thead>
             <tr>
@@ -932,23 +1005,23 @@ function App() {
           </tfoot>
         </table>
 
-        <h3>Extrato de Solicitações</h3>
+        <h3>Extrato Analítico de Solicitações</h3>
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Condomínio</th>
-              <th>Categoria</th>
-              <th>Descrição</th>
-              <th style="text-align: right;">Solicitado</th>
-              <th style="text-align: right;">Final/Realizado</th>
-              <th>Estado</th>
+              <th style="width: 12%;">Código</th>
+              <th style="width: 18%;">Condomínio</th>
+              <th style="width: 14%;">Categoria</th>
+              <th style="width: 26%;">Descrição</th>
+              <th style="text-align: right; width: 10%;">Solicitado</th>
+              <th style="text-align: right; width: 10%;">Realizado</th>
+              <th style="text-align: center; width: 10%;">Status</th>
             </tr>
           </thead>
           <tbody>${linhasSols}</tbody>
           <tfoot>
             <tr>
-              <td colspan="4">TOTAL GASTOS (${solicitacoesAnaliseFiltradas.length} solicitações no período)</td>
+              <td colspan="4">TOTAL CONSOLIDADO (${solicitacoesAnaliseFiltradas.length} pedidos)</td>
               <td style="text-align: right;">${formatarValor(totalSol)}</td>
               <td style="text-align: right;">${formatarValor(totalReal)}</td>
               <td>-</td>
@@ -956,9 +1029,7 @@ function App() {
           </tfoot>
         </table>
 
-        <script>
-          window.onload = function() { window.print(); }
-        </script>
+        <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
     `)
@@ -1403,12 +1474,10 @@ function App() {
 
         <nav className="sidebar-nav" style={{ flex: 1 }}>
           {ehChecklist ? (
-            /* PERFIL CHECKLIST: VÊ APENAS A ABA DE CHECKLIST COM ÍCONE PADRÃO ⊡ */
             <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
               <span className="nav-icon">⊡</span><span>Checklist</span>
             </button>
           ) : (
-            /* DEMAIS PERFIS */
             <>
               <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}><span className="nav-icon">◈</span><span>Dashboard</span></button>
               <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}><span className="nav-icon">◠</span><span>Análises</span></button>
@@ -1596,7 +1665,6 @@ function App() {
                             </div>
                           )}
 
-                          {/* RESUMO DA ÚLTIMA EXECUÇÃO */}
                           <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', marginTop: '12px' }}>
                             {!ult ? (
                               <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Ainda não realizado nenhuma vez.</span>
