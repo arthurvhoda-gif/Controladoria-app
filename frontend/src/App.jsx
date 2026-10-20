@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
@@ -6,6 +6,22 @@ import XLSX from 'xlsx-js-style'
 import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
+
+// Utilitários de Cache Instantâneo (0ms no carregamento)
+function lerCache(chave, padrao = []) {
+  try {
+    const item = localStorage.getItem(`haize_cache_${chave}`)
+    return item ? JSON.parse(item) : padrao
+  } catch {
+    return padrao
+  }
+}
+
+function salvarCache(chave, dados) {
+  try {
+    localStorage.setItem(`haize_cache_${chave}`, JSON.stringify(dados))
+  } catch { }
+}
 
 function parseDataSegura(dataStr) {
   if (!dataStr) return null
@@ -74,6 +90,43 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
   }
 }
 
+function numero(v) {
+  if (v === null || v === undefined || v === '') return 0
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  let normalizado = String(v).replace(/[^0-9.,-]/g, '')
+  if (normalizado.includes('.') && normalizado.includes(',')) normalizado = normalizado.replace(/\./g, '').replace(',', '.')
+  else normalizado = normalizado.replace(',', '.')
+  const resultado = parseFloat(normalizado)
+  return Number.isFinite(resultado) ? resultado : 0
+}
+
+function solicitado(item) { return numero(item?.valor) }
+function aprovado(item) { return numero(item?.valor_aprovado) }
+function realizado(item) { return numero(item?.valor_realizado) }
+function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
+function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
+
+function formatarDataHora(dataStr) {
+  if (!dataStr) return '-'
+  const d = parseDataSegura(dataStr)
+  return !d ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function normalizarTexto(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+}
+
+function textoStatus(status) {
+  const n = normalizarTexto(status)
+  if (n.includes('finalizada') || n.includes('finalizado')) return 'Finalizada'
+  if (n.includes('em execucao') || n === 'execucao') return 'Em execução'
+  if (n.includes('ajuste')) return 'Ajuste solicitado'
+  if (n.includes('reprovada') || n.includes('reprovado')) return 'Reprovada'
+  if (n.includes('aprovada') || n.includes('aprovado')) return 'Aprovada'
+  if (n.includes('em analise')) return 'Em análise'
+  return 'Aprovação pendente'
+}
+
 function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(() => {
     const salvo = localStorage.getItem('usuarioControladoria')
@@ -93,10 +146,14 @@ function App() {
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
   const [backendOnline, setBackendOnline] = useState(true)
-  const [solicitacoes, setSolicitacoes] = useState([])
-  const [condominios, setCondominios] = useState([])
-  const [fornecedores, setFornecedores] = useState([])
-  const [categorias, setCategorias] = useState([])
+  const [sincronizando, setSincronizando] = useState(false)
+
+  // Estados inicializados direto do Cache Local para abertura em 0ms
+  const [solicitacoes, setSolicitacoes] = useState(() => lerCache('solicitacoes', []))
+  const [condominios, setCondominios] = useState(() => lerCache('condominios', []))
+  const [fornecedores, setFornecedores] = useState(() => lerCache('fornecedores', []))
+  const [categorias, setCategorias] = useState(() => lerCache('categorias', []))
+  const [checklists, setChecklists] = useState(() => lerCache('checklists', []))
 
   // GESTÃO DE UNIDADES E RATEIO POR FRAÇÃO
   const [condominioUnidades, setCondominioUnidades] = useState(null)
@@ -107,7 +164,6 @@ function App() {
   const [carregandoRateio, setCarregandoRateio] = useState(false)
 
   // GESTÃO DE CHECKLIST E VISTORIAS
-  const [checklists, setChecklists] = useState([])
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
   const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
   const [filtroSLAChecklist, setFiltroSLAChecklist] = useState('todos')
@@ -176,7 +232,10 @@ function App() {
   const [formularioFornecedor, setFormularioFornecedor] = useState({ nome: '', cnpj: '', categoria: '' })
   const [formularioCategoria, setFormularioCategoria] = useState({ nome: '', descricao: '', limites: {} })
 
-  const qtdSolicitacoesRef = useRef(0)
+  const qtdSolicitacoesRef = useRef(solicitacoes.length)
+  const hashCacheRef = useRef({
+    sol: '', cond: '', forn: '', cat: '', chk: ''
+  })
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -194,7 +253,7 @@ function App() {
     }
   }
 
-  // Atalho global ESC para fechar janelas com fluidez
+  // Atalho global ESC para fechar janelas instantaneamente
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === 'Escape') {
@@ -277,7 +336,7 @@ function App() {
   function mostrarToast(mensagem, tipo = 'success') {
     const id = Date.now() + Math.random()
     setToasts(prev => [...prev, { id, mensagem, tipo }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
   }
 
   function confirmarAcao(titulo, mensagem, onConfirm, isDanger = false) {
@@ -293,23 +352,19 @@ function App() {
   }
 
   function handleConfirmDialog() {
-    if (dialog.onConfirm) {
-      dialog.type === 'prompt' ? dialog.onConfirm(dialog.inputValue) : dialog.onConfirm()
-    }
+    const callback = dialog.onConfirm
+    const val = dialog.inputValue
+    const tipo = dialog.type
     fecharDialog()
-  }
-
-  async function verificarBackend() {
-    try {
-      const resposta = await fetch(`${API_URL}/status`)
-      setBackendOnline(resposta.ok)
-    } catch {
-      setBackendOnline(false)
+    if (callback) {
+      tipo === 'prompt' ? callback(val) : callback()
     }
   }
 
-  async function carregarDados() {
+  // Sincronização inteligente: só atualiza o estado do React se o JSON realmente mudou
+  async function carregarDados(forcarIndicador = false) {
     if (!usuarioLogado) return
+    if (forcarIndicador) setSincronizando(true)
     try {
       const [resSol, resCond, resForn, resCat, resChk] = await Promise.all([
         fetch(`${API_URL}/solicitacoes`, { headers: getAuthHeaders() }),
@@ -319,30 +374,72 @@ function App() {
         fetch(`${API_URL}/checklists`, { headers: getAuthHeaders() })
       ])
 
+      setBackendOnline(true)
+
       if (resSol.ok) {
         let dados = await resSol.json()
         if (usuarioLogado.perfil === 'Solicitante') {
           dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
         }
-
-        const qtdAntiga = qtdSolicitacoesRef.current
-        if (dados.length > qtdAntiga && qtdAntiga > 0 && usuarioLogado.perfil !== 'Checklist') {
-          dispararNotificacaoNativa('Nova Solicitação', 'Um novo pedido foi registrado no sistema.')
+        const strSol = JSON.stringify(dados)
+        if (strSol !== hashCacheRef.current.sol) {
+          hashCacheRef.current.sol = strSol
+          const qtdAntiga = qtdSolicitacoesRef.current
+          if (dados.length > qtdAntiga && qtdAntiga > 0 && usuarioLogado.perfil !== 'Checklist') {
+            dispararNotificacaoNativa('Nova Solicitação', 'Um novo pedido foi registrado no sistema.')
+          }
+          qtdSolicitacoesRef.current = dados.length
+          setSolicitacoes(dados)
+          salvarCache('solicitacoes', dados)
+          setSolicitacaoSelecionada(prev => prev ? (dados.find(i => i.id === prev.id) || null) : null)
         }
-        qtdSolicitacoesRef.current = dados.length
-
-        setSolicitacoes(dados)
-        setSolicitacaoSelecionada(prev => prev ? (dados.find(i => i.id === prev.id) || null) : null)
       }
-      if (resCond.ok) setCondominios(await resCond.json())
-      if (resForn.ok) setFornecedores(await resForn.json())
-      if (resCat.ok) setCategorias(await resCat.json())
+
+      if (resCond.ok) {
+        const dadosCond = await resCond.json()
+        const strCond = JSON.stringify(dadosCond)
+        if (strCond !== hashCacheRef.current.cond) {
+          hashCacheRef.current.cond = strCond
+          setCondominios(dadosCond)
+          salvarCache('condominios', dadosCond)
+        }
+      }
+
+      if (resForn.ok) {
+        const dadosForn = await resForn.json()
+        const strForn = JSON.stringify(dadosForn)
+        if (strForn !== hashCacheRef.current.forn) {
+          hashCacheRef.current.forn = strForn
+          setFornecedores(dadosForn)
+          salvarCache('fornecedores', dadosForn)
+        }
+      }
+
+      if (resCat.ok) {
+        const dadosCat = await resCat.json()
+        const strCat = JSON.stringify(dadosCat)
+        if (strCat !== hashCacheRef.current.cat) {
+          hashCacheRef.current.cat = strCat
+          setCategorias(dadosCat)
+          salvarCache('categorias', dadosCat)
+        }
+      }
+
       if (resChk.ok) {
         const dadosChk = await resChk.json()
-        setChecklists(dadosChk)
-        setItemChecklistHistorico(prev => prev ? (dadosChk.find(c => c.id === prev.id) || null) : null)
+        const strChk = JSON.stringify(dadosChk)
+        if (strChk !== hashCacheRef.current.chk) {
+          hashCacheRef.current.chk = strChk
+          setChecklists(dadosChk)
+          salvarCache('checklists', dadosChk)
+          setItemChecklistHistorico(prev => prev ? (dadosChk.find(c => c.id === prev.id) || null) : null)
+        }
       }
-    } catch { }
+    } catch {
+      setBackendOnline(false)
+    } finally {
+      if (forcarIndicador) setSincronizando(false)
+    }
   }
 
   useEffect(() => {
@@ -350,47 +447,15 @@ function App() {
       if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
         setPagina('checklist')
       }
-      verificarBackend()
-      carregarDados()
-      const int = setInterval(() => { verificarBackend(); carregarDados() }, 6000)
+      carregarDados(false)
+      const int = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          carregarDados(false)
+        }
+      }, 12000)
       return () => clearInterval(int)
     }
   }, [usuarioLogado])
-
-  function numero(v) {
-    if (v === null || v === undefined || v === '') return 0
-    let normalizado = String(v).replace(/[^0-9.,-]/g, '')
-    if (normalizado.includes('.') && normalizado.includes(',')) normalizado = normalizado.replace(/\./g, '').replace(',', '.')
-    else normalizado = normalizado.replace(',', '.')
-    const resultado = parseFloat(normalizado)
-    return Number.isFinite(resultado) ? resultado : 0
-  }
-
-  function solicitado(item) { return numero(item?.valor) }
-  function aprovado(item) { return numero(item?.valor_aprovado) }
-  function realizado(item) { return numero(item?.valor_realizado) }
-  function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
-  function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
-  function formatarDataHora(dataStr) {
-    if (!dataStr) return '-'
-    const d = parseDataSegura(dataStr)
-    return !d ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  }
-
-  function normalizarTexto(v) {
-    return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
-  }
-
-  function textoStatus(status) {
-    const n = normalizarTexto(status)
-    if (n.includes('finalizada') || n.includes('finalizado')) return 'Finalizada'
-    if (n.includes('em execucao') || n === 'execucao') return 'Em execução'
-    if (n.includes('ajuste')) return 'Ajuste solicitado'
-    if (n.includes('reprovada') || n.includes('reprovado')) return 'Reprovada'
-    if (n.includes('aprovada') || n.includes('aprovado')) return 'Aprovada'
-    if (n.includes('em analise')) return 'Em análise'
-    return 'Aprovação pendente'
-  }
 
   function renderBadge(sol) {
     if (!sol) return null
@@ -419,77 +484,150 @@ function App() {
 
   function classeVariacao(valor) { return numero(valor) > 0 ? 'positive' : numero(valor) < 0 ? 'negative' : 'neutral' }
 
-  const quantidadePendentes = solicitacoes.filter(item => textoStatus(item.status) === 'Aprovação pendente').length
-  const valorTotalSolicitado = solicitacoes.reduce((total, item) => total + solicitado(item), 0)
-  const valorTotalAprovado = solicitacoes.reduce((total, item) => ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(item.status)) ? total + (aprovado(item) || solicitado(item)) : total, 0)
-  const valorTotalRealizado = solicitacoes.reduce((total, item) => textoStatus(item.status) === 'Finalizada' ? total + (realizado(item) || aprovado(item) || solicitado(item)) : total, 0)
+  // =========================================================================
+  // CÁLCULOS MEMOIZADOS (EVITA TRAVAMENTOS AO DIGITAR OU TROCAR DE ABA)
+  // =========================================================================
+  const {
+    quantidadePendentes,
+    valorTotalSolicitado,
+    valorTotalAprovado,
+    valorTotalRealizado,
+    economiaTotal,
+    maioresSolicitacoes,
+    solicitacoesPendentesLista
+  } = useMemo(() => {
+    let pendentes = 0
+    let totSol = 0
+    let totApr = 0
+    let totReal = 0
+    let econ = 0
+    const listaPend = []
 
-  const economiaTotal = solicitacoes.reduce((total, item) => {
-    if (textoStatus(item.status) === 'Finalizada') {
+    for (const item of solicitacoes) {
+      const st = textoStatus(item.status)
       const vSol = solicitado(item)
-      const vReal = realizado(item) || aprovado(item) || vSol
-      return total + (vSol - vReal)
-    }
-    return total
-  }, 0)
+      const vApr = aprovado(item)
+      const vReal = realizado(item)
 
-  const solicitacoesFiltradas = solicitacoes.filter(sol => {
-    const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''} ${textoStatus(sol.status) || ''}`)
-    const matchBusca = !filtroSolicitacao || t.includes(normalizarTexto(filtroSolicitacao))
-    const matchStatus = filtroStatus === 'todos' || textoStatus(sol.status) === filtroStatus
-    return matchBusca && matchStatus
-  })
-
-  const comprasFiltradas = solicitacoes.filter(sol => {
-    const st = textoStatus(sol.status)
-    const emCompra = ['Aprovada', 'Em execução', 'Finalizada'].includes(st)
-    const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''}`)
-    return emCompra && (!filtroCompra || t.includes(normalizarTexto(filtroCompra)))
-  })
-
-  const maioresSolicitacoes = [...solicitacoes].sort((a, b) => solicitado(b) - solicitado(a)).slice(0, 6)
-
-  const solicitacoesAnaliseFiltradas = solicitacoes.filter(sol => {
-    const nomeCondominio = sol.condominio || ''
-    const matchCondominio = filtroCondominioAnalise === 'todos' || nomeCondominio === filtroCondominioAnalise
-
-    let matchData = true
-    if (sol.data && typeof sol.data === 'string') {
-      const dataSol = sol.data.substring(0, 10)
-      if (filtroDataInicio && dataSol < filtroDataInicio) matchData = false
-      if (filtroDataFim && dataSol > filtroDataFim) matchData = false
-    } else if ((filtroDataInicio || filtroDataFim) && !sol.data) {
-      matchData = false
+      totSol += vSol
+      if (st === 'Aprovação pendente') {
+        pendentes++
+        listaPend.push(item)
+      }
+      if (['Aprovada', 'Em execução', 'Finalizada'].includes(st)) {
+        totApr += (vApr || vSol)
+      }
+      if (st === 'Finalizada') {
+        const finalReal = vReal || vApr || vSol
+        totReal += finalReal
+        econ += (vSol - finalReal)
+      }
     }
 
-    return matchCondominio && matchData
-  })
+    const maiores = [...solicitacoes].sort((a, b) => solicitado(b) - solicitado(a)).slice(0, 6)
 
-  const gastosPorCondominio = solicitacoesAnaliseFiltradas.reduce((acc, sol) => {
-    const c = sol.condominio || 'Sem condomínio'; acc[c] = (acc[c] || 0) + solicitado(sol); return acc
-  }, {})
-
-  const dadosGraficoCondominios = Object.keys(gastosPorCondominio).map(nome => {
-    const sols = solicitacoesAnaliseFiltradas.filter(s => (s.condominio || 'Sem condomínio') === nome)
     return {
-      name: nome,
-      Solicitado: sols.reduce((a, s) => a + solicitado(s), 0),
-      Aprovado: sols.reduce((a, s) => ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(s.status)) ? a + (aprovado(s) || solicitado(s)) : a, 0),
-      Realizado: sols.reduce((a, s) => textoStatus(s.status) === 'Finalizada' ? a + (realizado(s) || aprovado(s) || solicitado(s)) : a, 0)
+      quantidadePendentes: pendentes,
+      valorTotalSolicitado: totSol,
+      valorTotalAprovado: totApr,
+      valorTotalRealizado: totReal,
+      economiaTotal: econ,
+      maioresSolicitacoes: maiores,
+      solicitacoesPendentesLista: listaPend
     }
-  }).sort((a, b) => b.Solicitado - a.Solicitado).slice(0, 10)
+  }, [solicitacoes])
 
-  const orcamentoPorCondominio = solicitacoesAnaliseFiltradas.reduce((acc, sol) => {
-    const cond = sol.condominio || 'Sem condomínio'
-    if (!acc[cond]) acc[cond] = { aprovado: 0, realizado: 0, qtdSolicitacoes: 0 }
-    acc[cond].qtdSolicitacoes += 1
-    const statusAtual = textoStatus(sol.status)
-    if (['Aprovada', 'Em execução', 'Finalizada'].includes(statusAtual)) acc[cond].aprovado += aprovado(sol) || solicitado(sol)
-    if (statusAtual === 'Finalizada') acc[cond].realizado += realizado(sol) || aprovado(sol) || solicitado(sol)
-    return acc
-  }, {})
+  const solicitacoesFiltradas = useMemo(() => {
+    const buscaNorm = normalizarTexto(filtroSolicitacao)
+    return solicitacoes.filter(sol => {
+      const st = textoStatus(sol.status)
+      const matchStatus = filtroStatus === 'todos' || st === filtroStatus
+      if (!matchStatus) return false
+      if (!buscaNorm) return true
+      const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''} ${st}`)
+      return t.includes(buscaNorm)
+    })
+  }, [solicitacoes, filtroSolicitacao, filtroStatus])
 
-  const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
+  const comprasFiltradas = useMemo(() => {
+    const buscaNorm = normalizarTexto(filtroCompra)
+    return solicitacoes.filter(sol => {
+      const st = textoStatus(sol.status)
+      if (!['Aprovada', 'Em execução', 'Finalizada'].includes(st)) return false
+      if (!buscaNorm) return true
+      const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''}`)
+      return t.includes(buscaNorm)
+    })
+  }, [solicitacoes, filtroCompra])
+
+  const {
+    solicitacoesAnaliseFiltradas,
+    dadosGraficoCondominios,
+    listaOrcamentoCondominio
+  } = useMemo(() => {
+    const filtradas = solicitacoes.filter(sol => {
+      const nomeCondominio = sol.condominio || ''
+      const matchCondominio = filtroCondominioAnalise === 'todos' || nomeCondominio === filtroCondominioAnalise
+      if (!matchCondominio) return false
+
+      if (sol.data && typeof sol.data === 'string') {
+        const dataSol = sol.data.substring(0, 10)
+        if (filtroDataInicio && dataSol < filtroDataInicio) return false
+        if (filtroDataFim && dataSol > filtroDataFim) return false
+      } else if (filtroDataInicio || filtroDataFim) {
+        return false
+      }
+      return true
+    })
+
+    const mapaGrafico = {}
+    const mapaOrcamento = {}
+
+    for (const sol of filtradas) {
+      const cond = sol.condominio || 'Sem condomínio'
+      const st = textoStatus(sol.status)
+      const vSol = solicitado(sol)
+      const vApr = ['Aprovada', 'Em execução', 'Finalizada'].includes(st) ? (aprovado(sol) || vSol) : 0
+      const vReal = st === 'Finalizada' ? (realizado(sol) || aprovado(sol) || vSol) : 0
+
+      if (!mapaGrafico[cond]) mapaGrafico[cond] = { name: cond, Solicitado: 0, Aprovado: 0, Realizado: 0 }
+      mapaGrafico[cond].Solicitado += vSol
+      mapaGrafico[cond].Aprovado += vApr
+      mapaGrafico[cond].Realizado += vReal
+
+      if (!mapaOrcamento[cond]) mapaOrcamento[cond] = { aprovado: 0, realizado: 0, qtdSolicitacoes: 0 }
+      mapaOrcamento[cond].qtdSolicitacoes += 1
+      mapaOrcamento[cond].aprovado += vApr
+      mapaOrcamento[cond].realizado += vReal
+    }
+
+    const grafico = Object.values(mapaGrafico).sort((a, b) => b.Solicitado - a.Solicitado).slice(0, 10)
+    const orcamento = Object.entries(mapaOrcamento)
+      .map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado }))
+      .sort((a, b) => b.aprovado - a.aprovado)
+
+    return {
+      solicitacoesAnaliseFiltradas: filtradas,
+      dadosGraficoCondominios: grafico,
+      listaOrcamentoCondominio: orcamento
+    }
+  }, [solicitacoes, filtroCondominioAnalise, filtroDataInicio, filtroDataFim])
+
+  const checklistsFiltrados = useMemo(() => {
+    return checklists.filter(item => {
+      const matchCond = filtroCondominioChecklist === 'todos' || item.condominio === filtroCondominioChecklist
+      const matchFreq = filtroFrequenciaChecklist === 'todas' || item.frequencia === filtroFrequenciaChecklist
+      if (!matchCond || !matchFreq) return false
+      if (filtroSLAChecklist === 'atrasados') {
+        const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
+        return sla.status === 'atrasado'
+      }
+      if (filtroSLAChecklist === 'divergencias') {
+        return item.ultima_execucao?.status_conformidade === 'Não Conforme'
+      }
+      return true
+    })
+  }, [checklists, filtroCondominioChecklist, filtroFrequenciaChecklist, filtroSLAChecklist])
 
   // =========================================================================
   // FUNÇÕES DE CHECKLIST, EDIÇÃO, PLANO DE AÇÃO E PDF
@@ -526,8 +664,9 @@ function App() {
     }
     setSalvando(true)
     try {
-      const url = checklistEditando ? `${API_URL}/checklists/${checklistEditando.id}` : `${API_URL}/checklists`
-      const metodo = checklistEditando ? 'PUT' : 'POST'
+      const editando = checklistEditando
+      const url = editando ? `${API_URL}/checklists/${editando.id}` : `${API_URL}/checklists`
+      const metodo = editando ? 'PUT' : 'POST'
       const res = await fetch(url, {
         method: metodo,
         headers: getAuthHeaders(),
@@ -537,11 +676,11 @@ function App() {
         const err = await extrairErro(res, 'Erro ao salvar item de checklist.')
         throw new Error(err)
       }
-      await carregarDados()
       setMostrarModalNovoChecklist(false)
       setChecklistEditando(null)
       setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária', plano_acao_padrao: '' })
-      mostrarToast(checklistEditando ? 'Atividade atualizada com sucesso!' : 'Atividade adicionada ao checklist!', 'success')
+      mostrarToast(editando ? 'Atividade atualizada com sucesso!' : 'Atividade adicionada ao checklist!', 'success')
+      carregarDados(false)
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -658,16 +797,19 @@ function App() {
 
   function excluirItemChecklist(item) {
     confirmarAcao('Excluir Atividade', `Deseja realmente excluir "${item.titulo}" do condomínio ${item.condominio}?`, async () => {
+      // Atualização otimista imediata na tela
+      setChecklists(prev => prev.filter(c => c.id !== item.id))
+      mostrarToast('Atividade removida do checklist.', 'success')
       try {
         const res = await fetch(`${API_URL}/checklists/${item.id}`, {
           method: 'DELETE',
           headers: getAuthHeaders()
         })
         if (!res.ok) throw new Error('Erro ao excluir atividade.')
-        await carregarDados()
-        mostrarToast('Atividade removida do checklist.', 'success')
+        carregarDados(false)
       } catch (e) {
         mostrarToast(e.message, 'error')
+        carregarDados(false)
       }
     }, true)
   }
@@ -691,6 +833,7 @@ function App() {
     const itemAtual = itemChecklistExecutando
     const statusEscolhido = formExecucaoChecklist.status_conformidade
     const relatoDigitado = formExecucaoChecklist.observacao.trim()
+    const temFoto = Boolean(formExecucaoChecklist.foto)
 
     const formData = new FormData()
     formData.append('responsavel', usuarioLogado.nome)
@@ -700,7 +843,35 @@ function App() {
       formData.append('foto', formExecucaoChecklist.foto)
     }
 
-    setSalvando(true)
+    // Atualização Otimista Instantânea: fecha o modal e já exibe na tela antes mesmo da rede terminar
+    const novaExecOtimista = {
+      id: Date.now(),
+      responsavel: usuarioLogado.nome,
+      status_conformidade: statusEscolhido,
+      observacao: relatoDigitado,
+      data_execucao: new Date().toISOString(),
+      tem_foto: temFoto
+    }
+
+    setChecklists(prev => prev.map(c => c.id === itemAtual.id ? {
+      ...c,
+      ultima_execucao: novaExecOtimista,
+      historico_execucoes: [novaExecOtimista, ...(c.historico_execucoes || [])]
+    } : c))
+
+    setItemChecklistExecutando(null)
+
+    if (statusEscolhido === 'Não Conforme') {
+      setAlertaPlanoAcao({
+        condominio: itemAtual.condominio,
+        titulo: itemAtual.titulo,
+        relato: relatoDigitado,
+        plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
+      })
+    } else {
+      mostrarToast('Checklist registrado com sucesso!', 'success')
+    }
+
     try {
       const res = await fetch(`${API_URL}/checklists/${itemAtual.id}/executar`, {
         method: 'POST',
@@ -708,41 +879,15 @@ function App() {
         body: formData
       })
       if (!res.ok) {
-        const err = await extrairErro(res, 'Erro ao registrar vistoria.')
+        const err = await extrairErro(res, 'Erro ao registrar vistoria no servidor.')
         throw new Error(err)
       }
-      await carregarDados()
-      setItemChecklistExecutando(null)
-
-      if (statusEscolhido === 'Não Conforme') {
-        setAlertaPlanoAcao({
-          condominio: itemAtual.condominio,
-          titulo: itemAtual.titulo,
-          relato: relatoDigitado,
-          plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
-        })
-      } else {
-        mostrarToast('Checklist registrado com sucesso!', 'success')
-      }
+      carregarDados(false)
     } catch (err) {
       mostrarToast(err.message, 'error')
-    } finally {
-      setSalvando(false)
+      carregarDados(false)
     }
   }
-
-  const checklistsFiltrados = checklists.filter(item => {
-    const matchCond = filtroCondominioChecklist === 'todos' || item.condominio === filtroCondominioChecklist
-    const matchFreq = filtroFrequenciaChecklist === 'todas' || item.frequencia === filtroFrequenciaChecklist
-    if (filtroSLAChecklist === 'atrasados') {
-      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
-      return matchCond && matchFreq && sla.status === 'atrasado'
-    }
-    if (filtroSLAChecklist === 'divergencias') {
-      return matchCond && matchFreq && item.ultima_execucao?.status_conformidade === 'Não Conforme'
-    }
-    return matchCond && matchFreq
-  })
 
   // =========================================================================
   // GESTÃO DE UNIDADES E RATEIO
@@ -798,11 +943,11 @@ function App() {
 
   async function excluirUnidade(unidadeId) {
     confirmarAcao('Excluir Unidade', 'Deseja excluir esta unidade e sua respectiva fração?', async () => {
+      setListaUnidades(prev => prev.filter(u => u.id !== unidadeId))
+      mostrarToast('Unidade removida com sucesso.', 'success')
       try {
         const res = await fetch(`${API_URL}/unidades/${unidadeId}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error('Erro ao excluir unidade.')
-        setListaUnidades(prev => prev.filter(u => u.id !== unidadeId))
-        mostrarToast('Unidade removida com sucesso.', 'success')
       } catch (e) {
         mostrarToast(e.message, 'error')
       }
@@ -840,7 +985,9 @@ function App() {
     }
   }, [filtroCondominioAnalise, filtroDataInicio, pagina, condominios])
 
-  const somaFracaoTotal = listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
+  const somaFracaoTotal = useMemo(() => {
+    return listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
+  }, [listaUnidades])
 
   // =========================================================================
   // EXPORTAÇÃO EXCEL (.XLSX) E PDF FINANCEIRO
@@ -1155,10 +1302,11 @@ function App() {
       status: 'Aprovação pendente'
     }
 
+    const editando = solicitacaoEditando
+    setSalvando(true)
     try {
-      setSalvando(true)
-      const res = await fetch(`${API_URL}/solicitacoes${solicitacaoEditando ? `/${solicitacaoEditando.id}` : ''}`, {
-        method: solicitacaoEditando ? 'PUT' : 'POST',
+      const res = await fetch(`${API_URL}/solicitacoes${editando ? `/${editando.id}` : ''}`, {
+        method: editando ? 'PUT' : 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(payload)
       })
@@ -1167,13 +1315,23 @@ function App() {
         throw new Error(erroMsg)
       }
       const criadaOuAtualizada = await res.json()
-      await carregarDados()
+
+      // Atualiza a lista na tela instantaneamente sem esperar carregarDados()
+      setSolicitacoes(prev => {
+        const novaLista = editando
+          ? prev.map(s => s.id === editando.id ? criadaOuAtualizada : s)
+          : [criadaOuAtualizada, ...prev]
+        salvarCache('solicitacoes', novaLista)
+        return novaLista
+      })
+
       fecharFormulario()
       if (criadaOuAtualizada?.status === 'Aprovada') {
         mostrarToast('Solicitação criada e aprovada automaticamente pela alçada!', 'success')
       } else {
-        mostrarToast(solicitacaoEditando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
+        mostrarToast(editando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
       }
+      carregarDados(false)
     } catch (erro) {
       mostrarToast(erro.message, 'error')
     } finally {
@@ -1186,9 +1344,11 @@ function App() {
     setHistoricoSolicitacao([])
     setAnexosSolicitacao([])
     try {
-      const resHist = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/historico`, { headers: getAuthHeaders() })
+      const [resHist, resAnexos] = await Promise.all([
+        fetch(`${API_URL}/solicitacoes/${solicitacao.id}/historico`, { headers: getAuthHeaders() }),
+        fetch(`${API_URL}/solicitacoes/${solicitacao.id}/anexos`, { headers: getAuthHeaders() })
+      ])
       if (resHist.ok) setHistoricoSolicitacao(await resHist.json())
-      const resAnexos = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/anexos`, { headers: getAuthHeaders() })
       if (resAnexos.ok) setAnexosSolicitacao(await resAnexos.json())
     } catch { }
   }
@@ -1219,8 +1379,9 @@ function App() {
         const erroMsg = await extrairErro(res, 'Erro ao anexar arquivo.')
         throw new Error(erroMsg)
       }
+      const novoAnexo = await res.json()
+      setAnexosSolicitacao(prev => [...prev, novoAnexo])
       mostrarToast('Arquivo anexado com sucesso!', 'success')
-      await abrirSolicitacao(solicitacaoSelecionada)
     } catch (e) {
       mostrarToast(e.message, 'error')
     } finally {
@@ -1228,85 +1389,96 @@ function App() {
     }
   }
 
+  // Ações com Atualização Otimista Instantânea (0ms para fechar modal e atualizar linha)
   function aprovarSolicitacao(solicitacao) {
     pedirInput('Aprovar solicitação', 'Informe o valor aprovado para essa compra:', String(aprovado(solicitacao) || solicitado(solicitacao) || ''), async v => {
       const vNum = numero(v)
       if (vNum <= 0) { mostrarToast('O valor aprovado deve ser maior que zero.', 'error'); return }
+
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Aprovada', valor_aprovado: vNum } : s))
+      mostrarToast('Solicitação aprovada com sucesso.', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
           method: 'PUT',
           headers: getAuthHeaders(),
           body: JSON.stringify({ status: 'Aprovada', valor_aprovado: vNum })
         })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao aprovar solicitação.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao aprovar solicitação.'))
         dispararNotificacaoNativa('Solicitação Aprovada', `O pedido ${solicitacao.numero} foi aprovado.`)
-        mostrarToast('Solicitação aprovada com sucesso.', 'success')
-        fecharSolicitacao()
-      } catch (e) { mostrarToast(e.message, 'error') }
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     })
   }
 
   function solicitarAjuste(solicitacao) {
     pedirInput('Solicitar Ajuste', 'Informe o motivo ou o que precisa ser corrigido pelo solicitante:', solicitacao.motivo_ajuste || '', async motivo => {
       if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo do ajuste.', 'error'); return }
+
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Ajuste solicitado', motivo_ajuste: motivo.trim() } : s))
+      mostrarToast('Ajuste solicitado ao autor.', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
           method: 'PUT',
           headers: getAuthHeaders(),
           body: JSON.stringify({ status: 'Ajuste solicitado', motivo_ajuste: motivo.trim() })
         })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao solicitar ajuste.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        dispararNotificacaoNativa('Ajuste Solicitado', `O pedido ${solicitacao.numero} requer correções.`)
-        mostrarToast('Ajuste solicitado ao autor.', 'success')
-        fecharSolicitacao()
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao solicitar ajuste.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     })
   }
 
   function reprovarSolicitacao(solicitacao) {
     pedirInput('Reprovar Solicitação', 'Informe o motivo da reprovação:', '', async motivo => {
       if (!motivo || !motivo.trim()) { mostrarToast('Informe o motivo da reprovação.', 'error'); return }
+
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Reprovada', motivo_ajuste: motivo.trim() } : s))
+      mostrarToast('Solicitação reprovada.', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/status`, {
           method: 'PUT',
           headers: getAuthHeaders(),
           body: JSON.stringify({ status: 'Reprovada', motivo_ajuste: motivo.trim() })
         })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao reprovar solicitação.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        mostrarToast('Solicitação reprovada.', 'success')
-        fecharSolicitacao()
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao reprovar solicitação.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     }, true)
   }
 
   function iniciarExecucao(solicitacao) {
-    confirmarAcao('Executar solicitação', `Deseja executar a solicitação ${solicitacao.numero || ''}?`, async () => {
+    confirmarAcao('Executar solicitação', `Deseja iniciar a execução da compra ${solicitacao.numero || ''}?`, async () => {
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Em execução' } : s))
+      mostrarToast('Solicitação enviada para execução!', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/iniciar-execucao`, {
           method: 'PUT',
           headers: getAuthHeaders(),
           body: JSON.stringify({ observacao_execucao: '' })
         })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao executar a solicitação.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        mostrarToast('Solicitação enviada para execução!', 'success')
-        fecharSolicitacao()
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao executar a solicitação.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     })
   }
 
@@ -1314,36 +1486,41 @@ function App() {
     pedirInput('Finalizar solicitação', 'Informe o valor realmente realizado/pago:', String(realizado(solicitacao) || aprovado(solicitacao) || solicitado(solicitacao) || ''), async v => {
       const vNum = numero(v)
       if (vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
+
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Finalizada', valor_realizado: vNum } : s))
+      mostrarToast('Solicitação finalizada!', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/finalizar`, {
           method: 'PUT',
           headers: getAuthHeaders(),
           body: JSON.stringify({ valor_realizado: vNum })
         })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao finalizar solicitação.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao finalizar solicitação.'))
         dispararNotificacaoNativa('Solicitação Finalizada', `O pedido ${solicitacao.numero} foi concluído com sucesso.`)
-        mostrarToast('Solicitação finalizada!', 'success')
-        fecharSolicitacao()
-      } catch (e) { mostrarToast(e.message, 'error') }
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     })
   }
 
   function excluirSolicitacao(solicitacao) {
     confirmarAcao('Excluir', `Apagar ${solicitacao.numero || ''}?`, async () => {
+      fecharSolicitacao()
+      setSolicitacoes(prev => prev.filter(s => s.id !== solicitacao.id))
+      mostrarToast('Excluída com sucesso.', 'success')
+
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}`, { method: 'DELETE', headers: getAuthHeaders() })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao excluir solicitação.')
-          throw new Error(erroMsg)
-        }
-        if (solicitacaoSelecionada?.id === solicitacao.id) fecharSolicitacao()
-        await carregarDados()
-        mostrarToast('Excluída com sucesso.', 'success')
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir solicitação.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     }, true)
   }
 
@@ -1354,36 +1531,36 @@ function App() {
   async function salvarCondominio(e) {
     e.preventDefault()
     if (!formularioCondominio.nome) return
+    const editando = condominioEditando
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/condominios${condominioEditando ? `/${condominioEditando.id}` : ''}`, {
-        method: condominioEditando ? 'PUT' : 'POST',
+      const res = await fetch(`${API_URL}/condominios${editando ? `/${editando.id}` : ''}`, {
+        method: editando ? 'PUT' : 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(formularioCondominio)
       })
-      if (!res.ok) {
-        const erroMsg = await extrairErro(res, 'Erro ao salvar condomínio.')
-        throw new Error(erroMsg)
-      }
+      if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao salvar condomínio.'))
       const salvo = await res.json()
-      await carregarDados()
+      setCondominios(prev => editando ? prev.map(c => c.id === editando.id ? salvo : c) : [...prev, salvo])
       fecharFormularioCondominio()
-      if (mostrarFormulario && !condominioEditando) atualizarCampoFormulario('condominio', salvo.nome)
+      if (mostrarFormulario && !editando) atualizarCampoFormulario('condominio', salvo.nome)
       mostrarToast('Condomínio salvo com sucesso!', 'success')
+      carregarDados(false)
     } catch (err) { mostrarToast(err.message, 'error') } finally { setSalvando(false) }
   }
 
   function excluirCondominio(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
+      setCondominios(prev => prev.filter(c => c.id !== id))
+      mostrarToast('Condomínio excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/condominios/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao excluir condomínio.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        mostrarToast('Excluído.', 'success')
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir condomínio.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     }, true)
   }
 
@@ -1409,23 +1586,23 @@ function App() {
     })).filter(l => l.limite > 0)
 
     const payload = { nome: formularioCategoria.nome, descricao: formularioCategoria.descricao, limites: limitesArray }
+    const editando = categoriaEditando
 
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/categorias${categoriaEditando ? `/${categoriaEditando.id}` : ''}`, {
-        method: categoriaEditando ? 'PUT' : 'POST',
+      const res = await fetch(`${API_URL}/categorias${editando ? `/${editando.id}` : ''}`, {
+        method: editando ? 'PUT' : 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(payload)
       })
-      if (!res.ok) {
-        const erroMsg = await extrairErro(res, 'Erro ao salvar categoria.')
-        throw new Error(erroMsg)
-      }
+      if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao salvar categoria.'))
       const salvo = await res.json()
-      await carregarDados()
+      const catFormatada = { ...salvo, limites: limitesArray }
+      setCategorias(prev => editando ? prev.map(c => c.id === editando.id ? catFormatada : c) : [...prev, catFormatada])
       fecharFormularioCategoria()
-      if (mostrarFormulario && !categoriaEditando) atualizarCampoFormulario('categoria', salvo.nome)
+      if (mostrarFormulario && !editando) atualizarCampoFormulario('categoria', salvo.nome)
       mostrarToast('Categoria salva!', 'success')
+      carregarDados(false)
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -1435,15 +1612,16 @@ function App() {
 
   function excluirCategoria(id, nome) {
     confirmarAcao('Excluir', `Apagar a categoria "${nome}"?`, async () => {
+      setCategorias(prev => prev.filter(c => c.id !== id))
+      mostrarToast('Categoria excluída.', 'success')
       try {
         const res = await fetch(`${API_URL}/categorias/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao excluir categoria.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        mostrarToast('Categoria excluída.', 'success')
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir categoria.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     }, true)
   }
 
@@ -1454,36 +1632,36 @@ function App() {
   async function salvarFornecedor(e) {
     e.preventDefault()
     if (!formularioFornecedor.nome) return
+    const editando = fornecedorEditando
     try {
       setSalvando(true)
-      const res = await fetch(`${API_URL}/fornecedores${fornecedorEditando ? `/${fornecedorEditando.id}` : ''}`, {
-        method: fornecedorEditando ? 'PUT' : 'POST',
+      const res = await fetch(`${API_URL}/fornecedores${editando ? `/${editando.id}` : ''}`, {
+        method: editando ? 'PUT' : 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(formularioFornecedor)
       })
-      if (!res.ok) {
-        const erroMsg = await extrairErro(res, 'Erro ao salvar fornecedor.')
-        throw new Error(erroMsg)
-      }
+      if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao salvar fornecedor.'))
       const salvo = await res.json()
-      await carregarDados()
+      setFornecedores(prev => editando ? prev.map(f => f.id === editando.id ? salvo : f) : [...prev, salvo])
       fecharFormularioFornecedor()
-      if (mostrarFormulario && !fornecedorEditando) atualizarCampoFormulario('fornecedor', salvo.nome)
+      if (mostrarFormulario && !editando) atualizarCampoFormulario('fornecedor', salvo.nome)
       mostrarToast('Fornecedor salvo com sucesso!', 'success')
+      carregarDados(false)
     } catch (err) { mostrarToast(err.message, 'error') } finally { setSalvando(false) }
   }
 
   function excluirFornecedor(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
+      setFornecedores(prev => prev.filter(f => f.id !== id))
+      mostrarToast('Fornecedor excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/fornecedores/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
-        if (!res.ok) {
-          const erroMsg = await extrairErro(res, 'Erro ao excluir fornecedor.')
-          throw new Error(erroMsg)
-        }
-        await carregarDados()
-        mostrarToast('Excluído.', 'success')
-      } catch (e) { mostrarToast(e.message, 'error') }
+        if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir fornecedor.'))
+        carregarDados(false)
+      } catch (e) {
+        mostrarToast(e.message, 'error')
+        carregarDados(false)
+      }
     }, true)
   }
 
@@ -1699,7 +1877,7 @@ function App() {
           <div className="topbar-actions">
             <div className={`status-pill ${backendOnline ? '' : 'offline'}`}>
               <span className="status-dot" />
-              <span>{backendOnline ? 'Sistema Online' : 'Reconectando...'}</span>
+              <span>{sincronizando ? 'Sincronizando...' : (backendOnline ? 'Sistema Online' : 'Modo Cache')}</span>
             </div>
 
             {!ehChecklist && (
@@ -1722,10 +1900,10 @@ function App() {
                       <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>{quantidadePendentes} pendentes</span>
                     </div>
                     <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                      {solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').length === 0 ? (
+                      {solicitacoesPendentesLista.length === 0 ? (
                         <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
                       ) : (
-                        solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').map(s => (
+                        solicitacoesPendentesLista.map(s => (
                           <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <strong style={{ fontSize: '12.5px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
@@ -1746,7 +1924,7 @@ function App() {
               </div>
             )}
 
-            <button className="icon-button" onClick={() => carregarDados()} title="Sincronizar agora">↻</button>
+            <button className="icon-button" onClick={() => carregarDados(true)} title="Sincronizar agora">↻</button>
             {!ehChecklist && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova Solicitação</button>
             )}
@@ -1862,7 +2040,7 @@ function App() {
                                 {ult.observacao && (
                                   <span style={{ color: '#334155', fontStyle: 'italic', marginTop: '2px' }}>"{ult.observacao}"</span>
                                 )}
-                                {ult.tem_foto && (
+                                {ult.tem_foto && ult.id && (
                                   <a
                                     href={`${API_URL}/checklists/execucoes/${ult.id}/foto`}
                                     target="_blank"
@@ -2056,9 +2234,9 @@ function App() {
                         <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
                         <RechartsTooltip formatter={v => formatarValor(v)} cursor={{ fill: '#f8fafc' }} />
                         <Legend wrapperStyle={{ paddingTop: '16px' }} />
-                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="Aprovado" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="Realizado" fill="#10b981" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                        <Bar dataKey="Aprovado" fill="#2563eb" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                        <Bar dataKey="Realizado" fill="#10b981" radius={[6, 6, 0, 0]} isAnimationActive={false} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -2465,7 +2643,7 @@ function App() {
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={() => setItemChecklistExecutando(null)}>Cancelar</button>
                 <button type="button" className="button-primary" onClick={confirmarExecucaoChecklist} disabled={salvando}>
-                  {salvando ? 'Registrando...' : 'Confirmar Vistoria'}
+                  Confirmar Vistoria
                 </button>
               </div>
             </div>
