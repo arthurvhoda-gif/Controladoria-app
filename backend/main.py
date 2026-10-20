@@ -8,12 +8,27 @@ from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, F
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from database import engine, Base, SessionLocal
 import models
 import schemas
 
+# Cria tabelas se não existirem
 Base.metadata.create_all(bind=engine)
+
+# Migração segura para SQLite: adiciona a coluna plano_acao_padrao se ainda não existir
+def executar_migracoes():
+    db = SessionLocal()
+    try:
+        db.execute(text("ALTER TABLE checklist_itens ADD COLUMN plano_acao_padrao TEXT"))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+executar_migracoes()
 
 def get_db():
     db = SessionLocal()
@@ -62,9 +77,6 @@ def inicializar_admin():
         db.close()
 
 inicializar_admin()
-
-def get_usuario_atual():
-    return {"nome": "Sessão Ativa"}
 
 @app.get("/")
 @app.get("/status")
@@ -203,22 +215,25 @@ def calcular_rateio(condominio_id: int, mes: Optional[str] = None, db: Session =
 # ==========================================
 @app.get("/categorias")
 def listar_categorias(db: Session = Depends(get_db)):
-    cats = db.query(models.Categoria).order_by(models.Categoria.nome).all()
-    res = []
-    for c in cats:
-        limites_parsed = []
-        if c.limites:
-            try:
-                limites_parsed = json.loads(c.limites)
-            except Exception:
-                limites_parsed = []
-        res.append({
-            "id": c.id,
-            "nome": c.nome,
-            "descricao": c.descricao,
-            "limites": limites_parsed
-        })
-    return res
+    try:
+        cats = db.query(models.Categoria).order_by(models.Categoria.nome).all()
+        res = []
+        for c in cats:
+            limites_parsed = []
+            if c.limites:
+                try:
+                    limites_parsed = json.loads(c.limites)
+                except Exception:
+                    limites_parsed = []
+            res.append({
+                "id": c.id,
+                "nome": c.nome,
+                "descricao": c.descricao or "",
+                "limites": limites_parsed
+            })
+        return res
+    except Exception as e:
+        return []
 
 @app.post("/categorias")
 def criar_categoria(cat: schemas.CategoriaCreate, db: Session = Depends(get_db)):
@@ -470,48 +485,55 @@ def baixar_anexo(anexo_id: int, db: Session = Depends(get_db)):
 # ==========================================
 @app.get("/checklists")
 def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(models.ChecklistItem)
-    if condominio and condominio != "todos":
-        query = query.filter(models.ChecklistItem.condominio == condominio)
-    itens = query.order_by(models.ChecklistItem.id.desc()).all()
-    
-    resultado = []
-    for item in itens:
-        execucoes = db.query(models.ChecklistExecucao).filter(
-            models.ChecklistExecucao.item_id == item.id
-        ).order_by(models.ChecklistExecucao.id.desc()).all()
+    try:
+        query = db.query(models.ChecklistItem)
+        if condominio and condominio != "todos":
+            query = query.filter(models.ChecklistItem.condominio == condominio)
+        itens = query.order_by(models.ChecklistItem.id.desc()).all()
         
-        ultima = execucoes[0] if execucoes else None
-        resultado.append({
-            "id": item.id,
-            "condominio": item.condominio,
-            "titulo": item.titulo,
-            "descricao_orientacao": item.descricao_orientacao,
-            "frequencia": item.frequencia,
-            "plano_acao_padrao": item.plano_acao_padrao,
-            "criado_em": item.criado_em,
-            "ultima_execucao": {
-                "id": ultima.id,
-                "responsavel": ultima.responsavel,
-                "status_conformidade": ultima.status_conformidade,
-                "observacao": ultima.observacao,
-                "nome_foto": ultima.nome_foto,
-                "data_execucao": ultima.data_execucao,
-                "tem_foto": bool(ultima.caminho_foto)
-            } if ultima else None,
-            "historico_execucoes": [
-                {
-                    "id": ex.id,
-                    "responsavel": ex.responsavel,
-                    "status_conformidade": ex.status_conformidade,
-                    "observacao": ex.observacao,
-                    "nome_foto": ex.nome_foto,
-                    "data_execucao": ex.data_execucao,
-                    "tem_foto": bool(ex.caminho_foto)
-                } for ex in execucoes
-            ]
-        })
-    return resultado
+        resultado = []
+        for item in itens:
+            execucoes = db.query(models.ChecklistExecucao).filter(
+                models.ChecklistExecucao.item_id == item.id
+            ).order_by(models.ChecklistExecucao.id.desc()).all()
+            
+            ultima = execucoes[0] if execucoes else None
+            
+            # Garante compatibilidade caso o atributo ainda não tenha sido populado
+            plano_acao = getattr(item, 'plano_acao_padrao', None)
+            
+            resultado.append({
+                "id": item.id,
+                "condominio": item.condominio,
+                "titulo": item.titulo,
+                "descricao_orientacao": item.descricao_orientacao or "",
+                "frequencia": item.frequencia,
+                "plano_acao_padrao": plano_acao or "",
+                "criado_em": item.criado_em,
+                "ultima_execucao": {
+                    "id": ultima.id,
+                    "responsavel": ultima.responsavel,
+                    "status_conformidade": ultima.status_conformidade,
+                    "observacao": ultima.observacao or "",
+                    "nome_foto": ultima.nome_foto,
+                    "data_execucao": ultima.data_execucao,
+                    "tem_foto": bool(ultima.caminho_foto)
+                } if ultima else None,
+                "historico_execucoes": [
+                    {
+                        "id": ex.id,
+                        "responsavel": ex.responsavel,
+                        "status_conformidade": ex.status_conformidade,
+                        "observacao": ex.observacao or "",
+                        "nome_foto": ex.nome_foto,
+                        "data_execucao": ex.data_execucao,
+                        "tem_foto": bool(ex.caminho_foto)
+                    } for ex in execucoes
+                ]
+            })
+        return resultado
+    except Exception as e:
+        return []
 
 @app.post("/checklists")
 def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depends(get_db)):
@@ -601,13 +623,14 @@ def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(g
         if execucoes_problema:
             ultima_falha = execucoes_problema[0]
             total_divergencias += 1
+            plano = getattr(item, 'plano_acao_padrao', None) or "Ação corretiva padrão não definida pela controladoria."
             divergencias.append({
                 "atividade": item.titulo,
                 "frequencia": item.frequencia,
                 "data_ocorrencia": ultima_falha.data_execucao,
                 "responsavel": ultima_falha.responsavel,
                 "relato": ultima_falha.observacao or "Nenhuma observação descrita.",
-                "plano_acao": item.plano_acao_padrao or "Ação corretiva padrão não definida pela controladoria.",
+                "plano_acao": plano,
                 "tem_foto": bool(ultima_falha.caminho_foto)
             })
             
