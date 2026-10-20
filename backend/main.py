@@ -71,6 +71,9 @@ def get_usuario_atual():
 def status_api():
     return {"status": "online", "hora": datetime.now().isoformat()}
 
+# ==========================================
+# AUTENTICAÇÃO
+# ==========================================
 @app.post("/login")
 def login(credenciais: schemas.LoginRequest, db: Session = Depends(get_db)):
     usuario = db.query(models.Usuario).filter(models.Usuario.email == credenciais.email.lower().strip()).first()
@@ -88,15 +91,18 @@ def login(credenciais: schemas.LoginRequest, db: Session = Depends(get_db)):
     }
 
 @app.get("/usuarios", response_model=List[schemas.UsuarioResponse])
-def listar_usuarios(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_usuarios(db: Session = Depends(get_db)):
     return db.query(models.Usuario).all()
 
+# ==========================================
+# CONDOMÍNIOS
+# ==========================================
 @app.get("/condominios")
-def listar_condominios(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_condominios(db: Session = Depends(get_db)):
     return db.query(models.Condominio).order_by(models.Condominio.nome).all()
 
 @app.post("/condominios")
-def criar_condominio(dados: schemas.CondominioCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_condominio(dados: schemas.CondominioCreate, db: Session = Depends(get_db)):
     existente = db.query(models.Condominio).filter(models.Condominio.nome == dados.nome.strip()).first()
     if existente:
         raise HTTPException(status_code=400, detail="Condomínio já cadastrado com este nome.")
@@ -107,7 +113,7 @@ def criar_condominio(dados: schemas.CondominioCreate, db: Session = Depends(get_
     return novo
 
 @app.put("/condominios/{condominio_id}")
-def atualizar_condominio(condominio_id: int, dados: schemas.CondominioCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def atualizar_condominio(condominio_id: int, dados: schemas.CondominioCreate, db: Session = Depends(get_db)):
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
@@ -119,7 +125,7 @@ def atualizar_condominio(condominio_id: int, dados: schemas.CondominioCreate, db
     return cond
 
 @app.delete("/condominios/{condominio_id}")
-def excluir_condominio(condominio_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_condominio(condominio_id: int, db: Session = Depends(get_db)):
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
@@ -127,12 +133,15 @@ def excluir_condominio(condominio_id: int, db: Session = Depends(get_db), usuari
     db.commit()
     return {"mensagem": "Condomínio excluído com sucesso."}
 
+# ==========================================
+# UNIDADES E RATEIO POR FRAÇÃO IDEAL
+# ==========================================
 @app.get("/condominios/{condominio_id}/unidades", response_model=List[schemas.UnidadeResponse])
-def listar_unidades(condominio_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_unidades(condominio_id: int, db: Session = Depends(get_db)):
     return db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).all()
 
 @app.post("/condominios/{condominio_id}/unidades", response_model=schemas.UnidadeResponse)
-def criar_unidade(condominio_id: int, dados: schemas.UnidadeCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_unidade(condominio_id: int, dados: schemas.UnidadeCreate, db: Session = Depends(get_db)):
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
@@ -147,7 +156,7 @@ def criar_unidade(condominio_id: int, dados: schemas.UnidadeCreate, db: Session 
     return nova_unidade
 
 @app.delete("/unidades/{unidade_id}")
-def excluir_unidade(unidade_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_unidade(unidade_id: int, db: Session = Depends(get_db)):
     unidade = db.query(models.Unidade).filter(models.Unidade.id == unidade_id).first()
     if not unidade:
         raise HTTPException(status_code=404, detail="Unidade não encontrada.")
@@ -156,7 +165,7 @@ def excluir_unidade(unidade_id: int, db: Session = Depends(get_db), usuario=Depe
     return {"mensagem": "Unidade excluída com sucesso."}
 
 @app.get("/condominios/{condominio_id}/rateio")
-def calcular_rateio(condominio_id: int, mes: Optional[str] = None, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def calcular_rateio(condominio_id: int, mes: Optional[str] = None, db: Session = Depends(get_db)):
     unidades = db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).all()
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     
@@ -189,8 +198,11 @@ def calcular_rateio(condominio_id: int, mes: Optional[str] = None, db: Session =
         "rateio_unidades": resultado_rateio
     }
 
+# ==========================================
+# CATEGORIAS
+# ==========================================
 @app.get("/categorias")
-def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_categorias(db: Session = Depends(get_db)):
     cats = db.query(models.Categoria).order_by(models.Categoria.nome).all()
     res = []
     for c in cats:
@@ -209,7 +221,7 @@ def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario
     return res
 
 @app.post("/categorias")
-def criar_categoria(cat: schemas.CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_categoria(cat: schemas.CategoriaCreate, db: Session = Depends(get_db)):
     limites_str = json.dumps(cat.limites) if cat.limites is not None else None
     nova_categoria = models.Categoria(nome=cat.nome.strip(), descricao=cat.descricao, limites=limites_str)
     db.add(nova_categoria)
@@ -218,7 +230,7 @@ def criar_categoria(cat: schemas.CategoriaCreate, db: Session = Depends(get_db),
     return nova_categoria
 
 @app.put("/categorias/{categoria_id}")
-def atualizar_categoria(categoria_id: int, cat: schemas.CategoriaCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def atualizar_categoria(categoria_id: int, cat: schemas.CategoriaCreate, db: Session = Depends(get_db)):
     c = db.query(models.Categoria).filter(models.Categoria.id == categoria_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Categoria não encontrada.")
@@ -230,7 +242,7 @@ def atualizar_categoria(categoria_id: int, cat: schemas.CategoriaCreate, db: Ses
     return c
 
 @app.delete("/categorias/{categoria_id}")
-def excluir_categoria(categoria_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_categoria(categoria_id: int, db: Session = Depends(get_db)):
     c = db.query(models.Categoria).filter(models.Categoria.id == categoria_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Categoria não encontrada.")
@@ -238,12 +250,15 @@ def excluir_categoria(categoria_id: int, db: Session = Depends(get_db), usuario=
     db.commit()
     return {"mensagem": "Categoria excluída com sucesso."}
 
+# ==========================================
+# FORNECEDORES
+# ==========================================
 @app.get("/fornecedores")
-def listar_fornecedores(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_fornecedores(db: Session = Depends(get_db)):
     return db.query(models.Fornecedor).order_by(models.Fornecedor.nome).all()
 
 @app.post("/fornecedores")
-def criar_fornecedor(forn: schemas.FornecedorCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_fornecedor(forn: schemas.FornecedorCreate, db: Session = Depends(get_db)):
     novo = models.Fornecedor(nome=forn.nome.strip(), cnpj=forn.cnpj, categoria=forn.categoria)
     db.add(novo)
     db.commit()
@@ -251,7 +266,7 @@ def criar_fornecedor(forn: schemas.FornecedorCreate, db: Session = Depends(get_d
     return novo
 
 @app.put("/fornecedores/{fornecedor_id}")
-def atualizar_fornecedor(fornecedor_id: int, forn: schemas.FornecedorCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def atualizar_fornecedor(fornecedor_id: int, forn: schemas.FornecedorCreate, db: Session = Depends(get_db)):
     f = db.query(models.Fornecedor).filter(models.Fornecedor.id == fornecedor_id).first()
     if not f:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
@@ -263,7 +278,7 @@ def atualizar_fornecedor(fornecedor_id: int, forn: schemas.FornecedorCreate, db:
     return f
 
 @app.delete("/fornecedores/{fornecedor_id}")
-def excluir_fornecedor(fornecedor_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_fornecedor(fornecedor_id: int, db: Session = Depends(get_db)):
     f = db.query(models.Fornecedor).filter(models.Fornecedor.id == fornecedor_id).first()
     if not f:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
@@ -271,12 +286,15 @@ def excluir_fornecedor(fornecedor_id: int, db: Session = Depends(get_db), usuari
     db.commit()
     return {"mensagem": "Fornecedor excluído com sucesso."}
 
+# ==========================================
+# SOLICITAÇÕES
+# ==========================================
 @app.get("/solicitacoes")
-def listar_solicitacoes(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_solicitacoes(db: Session = Depends(get_db)):
     return db.query(models.Solicitacao).order_by(models.Solicitacao.id.desc()).all()
 
 @app.post("/solicitacoes")
-def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(get_db)):
     qtd = db.query(models.Solicitacao).count() + 1
     numero_sol = f"SOL-{datetime.now().year}-{qtd:04d}"
     valor_total = (dados.valor_servico or 0.0) + (dados.valor_produto or 0.0)
@@ -308,7 +326,7 @@ def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(ge
     return nova
 
 @app.put("/solicitacoes/{solicitacao_id}")
-def editar_solicitacao(solicitacao_id: int, dados: schemas.SolicitacaoCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def editar_solicitacao(solicitacao_id: int, dados: schemas.SolicitacaoCreate, db: Session = Depends(get_db)):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -335,7 +353,7 @@ def editar_solicitacao(solicitacao_id: int, dados: schemas.SolicitacaoCreate, db
     return sol
 
 @app.put("/solicitacoes/{solicitacao_id}/status")
-def atualizar_status(solicitacao_id: int, dados: schemas.StatusUpdate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def atualizar_status(solicitacao_id: int, dados: schemas.StatusUpdate, db: Session = Depends(get_db)):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -356,7 +374,7 @@ def atualizar_status(solicitacao_id: int, dados: schemas.StatusUpdate, db: Sessi
     return sol
 
 @app.put("/solicitacoes/{solicitacao_id}/iniciar-execucao")
-def iniciar_execucao(solicitacao_id: int, dados: schemas.IniciarExecucaoUpdate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def iniciar_execucao(solicitacao_id: int, dados: schemas.IniciarExecucaoUpdate, db: Session = Depends(get_db)):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -371,7 +389,7 @@ def iniciar_execucao(solicitacao_id: int, dados: schemas.IniciarExecucaoUpdate, 
     return sol
 
 @app.put("/solicitacoes/{solicitacao_id}/finalizar")
-def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, db: Session = Depends(get_db)):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -387,7 +405,7 @@ def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, d
     return sol
 
 @app.delete("/solicitacoes/{solicitacao_id}")
-def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -397,12 +415,15 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db), usua
     db.commit()
     return {"mensagem": "Solicitação excluída com sucesso."}
 
+# ==========================================
+# HISTÓRICO E ANEXOS DE SOLICITAÇÕES
+# ==========================================
 @app.get("/solicitacoes/{solicitacao_id}/historico")
-def obter_historico(solicitacao_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def obter_historico(solicitacao_id: int, db: Session = Depends(get_db)):
     return db.query(models.HistoricoSolicitacao).filter(models.HistoricoSolicitacao.solicitacao_id == solicitacao_id).order_by(models.HistoricoSolicitacao.id.desc()).all()
 
 @app.get("/solicitacoes/{solicitacao_id}/anexos")
-def listar_anexos(solicitacao_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_anexos(solicitacao_id: int, db: Session = Depends(get_db)):
     return db.query(models.Anexo).filter(models.Anexo.solicitacao_id == solicitacao_id).all()
 
 @app.post("/solicitacoes/{solicitacao_id}/anexos")
@@ -411,8 +432,7 @@ async def anexar_arquivo(
     tipo: str = Form(...),
     responsavel: str = Form(...),
     arquivo: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    usuario=Depends(get_usuario_atual)
+    db: Session = Depends(get_db)
 ):
     extensao = os.path.splitext(arquivo.filename)[1]
     nome_seguro = f"{uuid.uuid4().hex}{extensao}"
@@ -449,7 +469,7 @@ def baixar_anexo(anexo_id: int, db: Session = Depends(get_db)):
 # MÓDULO DE CHECKLIST E RELATÓRIO DE DIVERGÊNCIAS
 # ==========================================
 @app.get("/checklists")
-def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(models.ChecklistItem)
     if condominio and condominio != "todos":
         query = query.filter(models.ChecklistItem.condominio == condominio)
@@ -494,7 +514,7 @@ def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(ge
     return resultado
 
 @app.post("/checklists")
-def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depends(get_db)):
     novo = models.ChecklistItem(
         condominio=dados.condominio.strip(),
         titulo=dados.titulo.strip(),
@@ -508,7 +528,7 @@ def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depen
     return novo
 
 @app.delete("/checklists/{item_id}")
-def excluir_item_checklist(item_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def excluir_item_checklist(item_id: int, db: Session = Depends(get_db)):
     item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
@@ -524,8 +544,7 @@ async def executar_checklist(
     status_conformidade: str = Form("Conforme"),
     observacao: Optional[str] = Form(None),
     foto: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-    usuario=Depends(get_usuario_atual)
+    db: Session = Depends(get_db)
 ):
     item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
     if not item:
@@ -563,7 +582,7 @@ def baixar_foto_checklist(execucao_id: int, db: Session = Depends(get_db)):
     return FileResponse(ex.caminho_foto, filename=ex.nome_foto or "evidencia.jpg")
 
 @app.get("/condominios/{condominio_id}/checklist-relatorio-divergencias")
-def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(get_db)):
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
@@ -588,7 +607,7 @@ def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(g
                 "data_ocorrencia": ultima_falha.data_execucao,
                 "responsavel": ultima_falha.responsavel,
                 "relato": ultima_falha.observacao or "Nenhuma observação descrita.",
-                "plano_acao": item.plano_acao_padrao || "Ação corretiva padrão não definida pela controladoria.",
+                "plano_acao": item.plano_acao_padrao or "Ação corretiva padrão não definida pela controladoria.",
                 "tem_foto": bool(ultima_falha.caminho_foto)
             })
             
