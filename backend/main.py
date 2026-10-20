@@ -71,9 +71,6 @@ def get_usuario_atual():
 def status_api():
     return {"status": "online", "hora": datetime.now().isoformat()}
 
-# ==========================================
-# AUTENTICAÇÃO
-# ==========================================
 @app.post("/login")
 def login(credenciais: schemas.LoginRequest, db: Session = Depends(get_db)):
     usuario = db.query(models.Usuario).filter(models.Usuario.email == credenciais.email.lower().strip()).first()
@@ -94,9 +91,6 @@ def login(credenciais: schemas.LoginRequest, db: Session = Depends(get_db)):
 def listar_usuarios(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.Usuario).all()
 
-# ==========================================
-# CONDOMÍNIOS
-# ==========================================
 @app.get("/condominios")
 def listar_condominios(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.Condominio).order_by(models.Condominio.nome).all()
@@ -133,9 +127,6 @@ def excluir_condominio(condominio_id: int, db: Session = Depends(get_db), usuari
     db.commit()
     return {"mensagem": "Condomínio excluído com sucesso."}
 
-# ==========================================
-# UNIDADES E RATEIO POR FRAÇÃO IDEAL
-# ==========================================
 @app.get("/condominios/{condominio_id}/unidades", response_model=List[schemas.UnidadeResponse])
 def listar_unidades(condominio_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).all()
@@ -198,9 +189,6 @@ def calcular_rateio(condominio_id: int, mes: Optional[str] = None, db: Session =
         "rateio_unidades": resultado_rateio
     }
 
-# ==========================================
-# CATEGORIAS
-# ==========================================
 @app.get("/categorias")
 def listar_categorias(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     cats = db.query(models.Categoria).order_by(models.Categoria.nome).all()
@@ -250,9 +238,6 @@ def excluir_categoria(categoria_id: int, db: Session = Depends(get_db), usuario=
     db.commit()
     return {"mensagem": "Categoria excluída com sucesso."}
 
-# ==========================================
-# FORNECEDORES
-# ==========================================
 @app.get("/fornecedores")
 def listar_fornecedores(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.Fornecedor).order_by(models.Fornecedor.nome).all()
@@ -286,9 +271,6 @@ def excluir_fornecedor(fornecedor_id: int, db: Session = Depends(get_db), usuari
     db.commit()
     return {"mensagem": "Fornecedor excluído com sucesso."}
 
-# ==========================================
-# SOLICITAÇÕES
-# ==========================================
 @app.get("/solicitacoes")
 def listar_solicitacoes(db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.Solicitacao).order_by(models.Solicitacao.id.desc()).all()
@@ -415,9 +397,6 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db), usua
     db.commit()
     return {"mensagem": "Solicitação excluída com sucesso."}
 
-# ==========================================
-# HISTÓRICO E ANEXOS DE SOLICITAÇÕES
-# ==========================================
 @app.get("/solicitacoes/{solicitacao_id}/historico")
 def obter_historico(solicitacao_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
     return db.query(models.HistoricoSolicitacao).filter(models.HistoricoSolicitacao.solicitacao_id == solicitacao_id).order_by(models.HistoricoSolicitacao.id.desc()).all()
@@ -467,7 +446,7 @@ def baixar_anexo(anexo_id: int, db: Session = Depends(get_db)):
     return FileResponse(anexo.caminho, filename=anexo.nome_arquivo)
 
 # ==========================================
-# MÓDULO DE CHECKLIST OPERACIONAL
+# MÓDULO DE CHECKLIST E RELATÓRIO DE DIVERGÊNCIAS
 # ==========================================
 @app.get("/checklists")
 def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
@@ -489,6 +468,7 @@ def listar_checklists(condominio: Optional[str] = None, db: Session = Depends(ge
             "titulo": item.titulo,
             "descricao_orientacao": item.descricao_orientacao,
             "frequencia": item.frequencia,
+            "plano_acao_padrao": item.plano_acao_padrao,
             "criado_em": item.criado_em,
             "ultima_execucao": {
                 "id": ultima.id,
@@ -519,7 +499,8 @@ def criar_item_checklist(dados: schemas.ChecklistItemCreate, db: Session = Depen
         condominio=dados.condominio.strip(),
         titulo=dados.titulo.strip(),
         descricao_orientacao=dados.descricao_orientacao.strip() if dados.descricao_orientacao else None,
-        frequencia=dados.frequencia
+        frequencia=dados.frequencia,
+        plano_acao_padrao=dados.plano_acao_padrao.strip() if dados.plano_acao_padrao else None
     )
     db.add(novo)
     db.commit()
@@ -580,3 +561,39 @@ def baixar_foto_checklist(execucao_id: int, db: Session = Depends(get_db)):
     if not ex or not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
         raise HTTPException(status_code=404, detail="Foto não encontrada.")
     return FileResponse(ex.caminho_foto, filename=ex.nome_foto or "evidencia.jpg")
+
+@app.get("/condominios/{condominio_id}/checklist-relatorio-divergencias")
+def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(get_db), usuario=Depends(get_usuario_atual)):
+    cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
+    if not cond:
+        raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
+        
+    itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio == cond.nome).all()
+    
+    divergencias = []
+    total_divergencias = 0
+    
+    for item in itens:
+        execucoes_problema = db.query(models.ChecklistExecucao).filter(
+            models.ChecklistExecucao.item_id == item.id,
+            models.ChecklistExecucao.status_conformidade == "Não Conforme"
+        ).order_by(models.ChecklistExecucao.id.desc()).all()
+        
+        if execucoes_problema:
+            ultima_falha = execucoes_problema[0]
+            total_divergencias += 1
+            divergencias.append({
+                "atividade": item.titulo,
+                "frequencia": item.frequencia,
+                "data_ocorrencia": ultima_falha.data_execucao,
+                "responsavel": ultima_falha.responsavel,
+                "relato": ultima_falha.observacao or "Nenhuma observação descrita.",
+                "plano_acao": item.plano_acao_padrao || "Ação corretiva padrão não definida pela controladoria.",
+                "tem_foto": bool(ultima_falha.caminho_foto)
+            })
+            
+    return {
+        "condominio": cond.nome,
+        "total_divergencias": total_divergencias,
+        "divergencias": divergencias
+    }

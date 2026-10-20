@@ -9,7 +9,7 @@ class Usuario(Base):
     nome = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     senha = Column(String, nullable=False)
-    perfil = Column(String, default="Solicitante")  # "Controladoria", "Solicitante" ou "Checklist"
+    perfil = Column(String, default="Solicitante")
 
 class Condominio(Base):
     __tablename__ = "condominios"
@@ -79,16 +79,14 @@ class Anexo(Base):
     responsavel = Column(String, nullable=False)
     data_upload = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-# ==========================================
-# MÓDULO DE CHECKLIST E VISTORIAS
-# ==========================================
 class ChecklistItem(Base):
     __tablename__ = "checklist_itens"
     id = Column(Integer, primary_key=True, index=True)
     condominio = Column(String, nullable=False)
     titulo = Column(String, nullable=False)
     descricao_orientacao = Column(Text, nullable=True)
-    frequencia = Column(String, nullable=False)  # Diária, Semanal, Quinzenal, Mensal
+    frequencia = Column(String, nullable=False)
+    plano_acao_padrao = Column(Text, nullable=True)  # Plano de ação predefinido pela controladoria
     criado_em = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 class ChecklistExecucao(Base):
@@ -96,13 +94,12 @@ class ChecklistExecucao(Base):
     id = Column(Integer, primary_key=True, index=True)
     item_id = Column(Integer, ForeignKey("checklist_itens.id"), nullable=False)
     responsavel = Column(String, nullable=False)
-    status_conformidade = Column(String, default="Conforme")  # "Conforme" ou "Não Conforme"
+    status_conformidade = Column(String, default="Conforme")
     observacao = Column(Text, nullable=True)
     nome_foto = Column(String, nullable=True)
     caminho_foto = Column(String, nullable=True)
     data_execucao = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-# Aliases de compatibilidade
 UsuarioDB = Usuario
 CondominioDB = Condominio
 UnidadeDB = Unidade

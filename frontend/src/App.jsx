@@ -48,7 +48,8 @@ function App() {
     condominio: '',
     titulo: '',
     descricao_orientacao: '',
-    frequencia: 'Diária'
+    frequencia: 'Diária',
+    plano_acao_padrao: ''
   })
   const [itemChecklistExecutando, setItemChecklistExecutando] = useState(null)
   const [formExecucaoChecklist, setFormExecucaoChecklist] = useState({
@@ -397,7 +398,7 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // =========================================================================
-  // FUNÇÕES DE CHECKLIST E VISTORIA
+  // FUNÇÕES DE CHECKLIST, PLANO DE AÇÃO E RELATÓRIO PDF DE DIVERGÊNCIAS
   // =========================================================================
   async function salvarNovoChecklist(e) {
     e.preventDefault()
@@ -418,12 +419,101 @@ function App() {
       }
       await carregarDados()
       setMostrarModalNovoChecklist(false)
-      setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária' })
+      setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária', plano_acao_padrao: '' })
       mostrarToast('Atividade adicionada ao checklist!', 'success')
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
       setSalvando(false)
+    }
+  }
+
+  async function gerarRelatorioDivergenciasPDF() {
+    if (filtroCondominioChecklist === 'todos') {
+      mostrarToast('Selecione um condomínio específico no filtro para gerar o relatório de divergências.', 'error')
+      return
+    }
+    const condObj = condominios.find(c => c.nome === filtroCondominioChecklist)
+    if (!condObj) {
+      mostrarToast('Condomínio não encontrado.', 'error')
+      return
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/condominios/${condObj.id}/checklist-relatorio-divergencias`, { headers: getAuthHeaders() })
+      if (!res.ok) throw new Error('Erro ao buscar dados de divergências.')
+      const dados = await res.json()
+
+      const janela = window.open('', '_blank')
+      if (!janela) {
+        mostrarToast('Permita pop-ups no navegador para gerar o relatório PDF.', 'error')
+        return
+      }
+
+      const linhasDivergencias = dados.divergencias.length === 0 ? `
+        <tr><td colspan="3" style="padding: 16px; text-align: center; color: #059669; font-weight: bold;">Nenhuma divergência registrada neste condomínio! Tudo conforme.</td></tr>
+      ` : dados.divergencias.map(d => `
+        <tr>
+          <td style="padding: 10px; border: 1px solid #cbd5e1;">
+            <strong>${d.atividade}</strong><br>
+            <span style="font-size: 11px; color: #64748b;">Frequência: ${d.frequencia} • Ocorrência: ${formatarDataHora(d.data_ocorrencia)} • Por: ${d.responsavel}</span>
+          </td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; color: #dc2626; font-weight: 500;">
+            ${d.relato}
+          </td>
+          <td style="padding: 10px; border: 1px solid #cbd5e1; background: #f8fafc; color: #1e293b; font-weight: 600;">
+            ${d.plano_acao}
+          </td>
+        </tr>
+      `).join('')
+
+      janela.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Relatório de Divergências e Plano de Ação - ${dados.condominio}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 30px; color: #0f172a; margin: 0; }
+            .header { border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+            .title { font-size: 20px; font-weight: 800; text-transform: uppercase; }
+            .subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
+            .badge-total { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 14px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
+            th { background-color: #1e293b; color: white; padding: 10px; border: 1px solid #cbd5e1; text-align: left; }
+            @media print { body { padding: 15px; } button { display: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="title">HAIZE SÍNDICO PROFISSIONAL — RELATÓRIO DE VISTORIAS</div>
+              <div class="subtitle">Condomínio: <strong>${dados.condominio}</strong> | Emitido em: ${new Date().toLocaleDateString('pt-BR')}</div>
+            </div>
+            <div class="badge-total">
+              ⚠️ Total de Divergências: ${dados.total_divergencias}
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 32%;">Atividade Verificada</th>
+                <th style="width: 34%;">Relato da Irregularidade</th>
+                <th style="width: 34%;">Plano de Ação (Diretriz Controladoria)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linhasDivergencias}
+            </tbody>
+          </table>
+
+          <script>window.onload = function() { window.print(); }</script>
+        </body>
+        </html>
+      `)
+      janela.document.close()
+    } catch (e) {
+      mostrarToast('Erro ao gerar relatório de divergências.', 'error')
     }
   }
 
@@ -593,7 +683,7 @@ function App() {
   const somaFracaoTotal = listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
 
   // =========================================================================
-  // EXPORTAÇÃO EXCEL (.XLSX)
+  // EXPORTAÇÃO EXCEL (.XLSX) E PDF FINANCEIRO
   // =========================================================================
   function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
@@ -1453,6 +1543,16 @@ function App() {
                     <option value="Mensal">Mensal</option>
                   </select>
 
+                  {filtroCondominioChecklist !== 'todos' && (
+                    <button
+                      className="button-secondary"
+                      onClick={gerarRelatorioDivergenciasPDF}
+                      style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <span>📄</span> Relatório de Divergências (PDF)
+                    </button>
+                  )}
+
                   {ehControladoria && (
                     <button className="button-primary" onClick={() => setMostrarModalNovoChecklist(true)}>
                       + Nova Atividade
@@ -1485,9 +1585,15 @@ function App() {
 
                           <h4 style={{ fontSize: '16px', margin: '8px 0 6px 0', color: '#0f172a' }}>{item.titulo}</h4>
                           {item.descricao_orientacao && (
-                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 14px 0', lineHeight: '1.4' }}>
+                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px 0', lineHeight: '1.4' }}>
                               {item.descricao_orientacao}
                             </p>
+                          )}
+
+                          {item.plano_acao_padrao && (
+                            <div style={{ fontSize: '12px', background: '#fffbeb', border: '1px solid #fde68a', padding: '8px 10px', borderRadius: '6px', color: '#b45309', marginBottom: '10px' }}>
+                              <strong>Plano de Ação (Controladoria):</strong> {item.plano_acao_padrao}
+                            </div>
                           )}
 
                           {/* RESUMO DA ÚLTIMA EXECUÇÃO */}
@@ -1902,7 +2008,7 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: CRIAR NOVA ATIVIDADE DE CHECKLIST (CONTROLADORIA) */}
+        {/* MODAL: CRIAR NOVA ATIVIDADE DE CHECKLIST COM PLANO DE AÇÃO (CONTROLADORIA) */}
         {mostrarModalNovoChecklist && (
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarModalNovoChecklist(false) }}>
             <div className="modal">
@@ -1956,10 +2062,20 @@ function App() {
                     <div className="form-group full">
                       <label>Instruções / O que observar na vistoria</label>
                       <textarea
-                        rows="3"
+                        rows="2"
                         placeholder="Ex: Checar se há vazamentos no selo mecânico, ruído anormal ou lâmpadas queimadas..."
                         value={formNovoChecklist.descricao_orientacao}
                         onChange={e => setFormNovoChecklist(p => ({ ...p, descricao_orientacao: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="form-group full">
+                      <label>Plano de Ação Predefinido (Diretriz para caso de divergência)</label>
+                      <textarea
+                        rows="2"
+                        placeholder="Ex: Acionar imediatamente empresa de manutenção e abrir solicitação de reparo emergencial..."
+                        value={formNovoChecklist.plano_acao_padrao}
+                        onChange={e => setFormNovoChecklist(p => ({ ...p, plano_acao_padrao: e.target.value }))}
                       />
                     </div>
                   </div>

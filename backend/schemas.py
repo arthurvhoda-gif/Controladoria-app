@@ -89,6 +89,7 @@ class ChecklistItemCreate(BaseModel):
     titulo: str
     descricao_orientacao: Optional[str] = None
     frequencia: str
+    plano_acao_padrao: Optional[str] = None
 
 class ChecklistItemResponse(ChecklistItemCreate):
     id: int
