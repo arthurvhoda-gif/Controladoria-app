@@ -7,6 +7,63 @@ import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
 
+function calcularStatusSLA(frequencia, ultimaExecucao) {
+  if (!ultimaExecucao || !ultimaExecucao.data_execucao) {
+    return {
+      status: 'atrasado',
+      label: '⏳ Nunca executado',
+      bg: '#f1f5f9',
+      color: '#475569',
+      border: '#cbd5e1'
+    }
+  }
+
+  const dataUltima = new Date(ultimaExecucao.data_execucao)
+  if (isNaN(dataUltima.getTime())) {
+    return {
+      status: 'em_dia',
+      label: '✓ Registrado',
+      bg: '#ecfdf5',
+      color: '#059669',
+      border: '#a7f3d0'
+    }
+  }
+
+  const agora = new Date()
+  const diffHoras = (agora - dataUltima) / (1000 * 60 * 60)
+
+  const limitesHoras = {
+    'diaria': 24,
+    'diária': 24,
+    'diario': 24,
+    'diário': 24,
+    'semanal': 7 * 24,
+    'quinzenal': 15 * 24,
+    'mensal': 30 * 24
+  }
+
+  const freqKey = String(frequencia || '').toLowerCase().trim()
+  const limite = limitesHoras[freqKey] || 24
+
+  if (diffHoras > limite) {
+    return {
+      status: 'atrasado',
+      label: '🚨 Atrasado',
+      bg: '#fef2f2',
+      color: '#dc2626',
+      border: '#fecaca'
+    }
+  }
+
+  return {
+    status: 'em_dia',
+    label: '✓ Em dia',
+    bg: '#ecfdf5',
+    color: '#059669',
+    border: '#a7f3d0'
+  }
+}
+
 function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(() => {
     const salvo = localStorage.getItem('usuarioControladoria')
@@ -43,6 +100,7 @@ function App() {
   const [checklists, setChecklists] = useState([])
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
   const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
+  const [filtroSLAChecklist, setFiltroSLAChecklist] = useState('todos')
   const [mostrarModalNovoChecklist, setMostrarModalNovoChecklist] = useState(false)
   const [formNovoChecklist, setFormNovoChecklist] = useState({
     condominio: '',
@@ -58,6 +116,9 @@ function App() {
     foto: null
   })
   const [itemChecklistHistorico, setItemChecklistHistorico] = useState(null)
+
+  // POP-UP AUTOMÁTICO DE PLANO DE AÇÃO QUANDO HÁ INCONFORMIDADE
+  const [alertaPlanoAcao, setAlertaPlanoAcao] = useState(null)
 
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
@@ -609,17 +670,21 @@ function App() {
       return
     }
 
+    const itemAtual = itemChecklistExecutando
+    const statusEscolhido = formExecucaoChecklist.status_conformidade
+    const relatoDigitado = formExecucaoChecklist.observacao.trim()
+
     const formData = new FormData()
     formData.append('responsavel', usuarioLogado.nome)
-    formData.append('status_conformidade', formExecucaoChecklist.status_conformidade)
-    formData.append('observacao', formExecucaoChecklist.observacao)
+    formData.append('status_conformidade', statusEscolhido)
+    formData.append('observacao', relatoDigitado)
     if (formExecucaoChecklist.foto) {
       formData.append('foto', formExecucaoChecklist.foto)
     }
 
     setSalvando(true)
     try {
-      const res = await fetch(`${API_URL}/checklists/${itemChecklistExecutando.id}/executar`, {
+      const res = await fetch(`${API_URL}/checklists/${itemAtual.id}/executar`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         body: formData
@@ -630,7 +695,18 @@ function App() {
       }
       await carregarDados()
       setItemChecklistExecutando(null)
-      mostrarToast('Checklist registrado com sucesso!', 'success')
+
+      // Se houve inconformidade, abre o Pop-up com o Plano de Ação estabelecido
+      if (statusEscolhido === 'Não Conforme') {
+        setAlertaPlanoAcao({
+          condominio: itemAtual.condominio,
+          titulo: itemAtual.titulo,
+          relato: relatoDigitado,
+          plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
+        })
+      } else {
+        mostrarToast('Checklist registrado com sucesso!', 'success')
+      }
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -641,6 +717,10 @@ function App() {
   const checklistsFiltrados = checklists.filter(item => {
     const matchCond = filtroCondominioChecklist === 'todos' || item.condominio === filtroCondominioChecklist
     const matchFreq = filtroFrequenciaChecklist === 'todas' || item.frequencia === filtroFrequenciaChecklist
+    if (filtroSLAChecklist === 'atrasados') {
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
+      return matchCond && matchFreq && sla.status === 'atrasado'
+    }
     return matchCond && matchFreq
   })
 
@@ -1456,6 +1536,50 @@ function App() {
         </div>
       )}
 
+      {/* POP-UP AUTOMÁTICO: PLANO DE AÇÃO EM CASO DE NÃO CONFORMIDADE */}
+      {alertaPlanoAcao && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }} onClick={e => { if (e.target === e.currentTarget) setAlertaPlanoAcao(null) }}>
+          <div className="modal" style={{ maxWidth: '520px', borderTop: '6px solid #dc2626' }}>
+            <div className="modal-header" style={{ borderBottom: '1px solid #fecaca', background: '#fef2f2' }}>
+              <div>
+                <span className="eyebrow" style={{ color: '#dc2626', fontWeight: '800' }}>⚠️ INCONFORMIDADE REGISTRADA</span>
+                <h3 style={{ color: '#991b1b', marginTop: '4px' }}>Diretriz e Plano de Ação</h3>
+              </div>
+              <button className="modal-close" onClick={() => setAlertaPlanoAcao(null)}>×</button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px' }}>
+              <div style={{ fontSize: '13px', color: '#475569', background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div><strong>Condomínio:</strong> {alertaPlanoAcao.condominio}</div>
+                <div style={{ marginTop: '4px' }}><strong>Atividade:</strong> {alertaPlanoAcao.titulo}</div>
+                <div style={{ marginTop: '4px', color: '#b91c1c' }}><strong>Problema relatado:</strong> "{alertaPlanoAcao.relato}"</div>
+              </div>
+
+              <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '10px', padding: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '20px' }}>📋</span>
+                  <strong style={{ fontSize: '14px', color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Plano de Ação Estabelecido:
+                  </strong>
+                </div>
+                <p style={{ margin: 0, fontSize: '14.5px', color: '#78350f', fontWeight: '600', lineHeight: '1.5' }}>
+                  {alertaPlanoAcao.plano_acao}
+                </p>
+              </div>
+            </div>
+            <div className="modal-actions" style={{ justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="button-primary"
+                style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', width: '100%', padding: '12px', fontSize: '14px', fontWeight: '700' }}
+                onClick={() => setAlertaPlanoAcao(null)}
+              >
+                ✓ Ciente do Plano de Ação
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {sidebarAberta && (
         <div className="sidebar-overlay" onClick={() => setSidebarAberta(false)} />
       )}
@@ -1612,6 +1736,15 @@ function App() {
                     <option value="Mensal">Mensal</option>
                   </select>
 
+                  <select
+                    value={filtroSLAChecklist}
+                    onChange={e => setFiltroSLAChecklist(e.target.value)}
+                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
+                  >
+                    <option value="todos">Todos os Prazos (SLA)</option>
+                    <option value="atrasados">🚨 Apenas Atrasados</option>
+                  </select>
+
                   {filtroCondominioChecklist !== 'todos' && (
                     <button
                       className="button-secondary"
@@ -1640,16 +1773,22 @@ function App() {
                   {checklistsFiltrados.map(item => {
                     const ult = item.ultima_execucao
                     const naoConforme = ult && ult.status_conformidade === 'Não Conforme'
+                    const sla = calcularStatusSLA(item.frequencia, ult)
                     return (
                       <div className="company-card" key={item.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', borderLeft: ult ? (naoConforme ? '4px solid #dc2626' : '4px solid #10b981') : '4px solid #cbd5e1' }}>
                         <div>
-                          <div className="company-card-top" style={{ marginBottom: '10px' }}>
+                          <div className="company-card-top" style={{ marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
                             <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', background: '#eff6ff', color: '#1d4ed8', padding: '4px 10px', borderRadius: '999px' }}>
                               🏢 {item.condominio}
                             </span>
-                            <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
-                              ⏱️ {item.frequencia}
-                            </span>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
+                                ⏱️ {item.frequencia}
+                              </span>
+                              <span style={{ fontSize: '11px', fontWeight: '700', background: sla.bg, color: sla.color, border: `1px solid ${sla.border}`, padding: '3px 8px', borderRadius: '999px' }}>
+                                {sla.label}
+                              </span>
+                            </div>
                           </div>
 
                           <h4 style={{ fontSize: '16px', margin: '8px 0 6px 0', color: '#0f172a' }}>{item.titulo}</h4>
