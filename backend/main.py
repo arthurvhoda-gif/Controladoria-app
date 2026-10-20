@@ -740,3 +740,65 @@ def relatorio_divergencias_checklist(condominio_id: int, db: Session = Depends(g
         "total_divergencias": total_divergencias,
         "divergencias": divergencias
     }
+# ==========================================
+# MÓDULO DE EDIÇÃO DE CHECKLIST (PASSO 4)
+# ==========================================
+@app.put("/checklists/{item_id}")
+def editar_item_checklist(item_id: int, dados: schemas.ChecklistItemCreate, db: Session = Depends(get_db)):
+    item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
+    
+    item.condominio = dados.condominio.strip()
+    item.titulo = dados.titulo.strip()
+    item.descricao_orientacao = dados.descricao_orientacao.strip() if dados.descricao_orientacao else None
+    item.frequencia = dados.frequencia
+    item.plano_acao_padrao = dados.plano_acao_padrao.strip() if dados.plano_acao_padrao else None
+
+    db.commit()
+    db.refresh(item)
+    return {"mensagem": "Atividade de checklist atualizada com sucesso!", "item": item}
+
+
+# ==========================================
+# MÓDULO DE GESTÃO DE USUÁRIOS / EQUIPE (PASSO 4)
+# ==========================================
+@app.post("/usuarios", status_code=status.HTTP_201_CREATED)
+def criar_usuario(dados: schemas.UsuarioCreate, db: Session = Depends(get_db)):
+    email_limpo = dados.email.lower().strip()
+    existente = db.query(models.Usuario).filter(models.Usuario.email == email_limpo).first()
+    if existente:
+        raise HTTPException(status_code=400, detail="E-mail já cadastrado no sistema.")
+    
+    novo_usuario = models.Usuario(
+        nome=dados.nome.strip(),
+        email=email_limpo,
+        senha=get_password_hash(dados.senha),
+        perfil=dados.perfil
+    )
+    db.add(novo_usuario)
+    db.commit()
+    db.refresh(novo_usuario)
+    return {"mensagem": "Usuário criado com sucesso!", "id": novo_usuario.id}
+
+
+@app.put("/usuarios/{usuario_id}/senha")
+def trocar_senha_usuario(usuario_id: int, dados: schemas.SenhaUpdate, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    
+    usuario.senha = get_password_hash(dados.nova_senha)
+    db.commit()
+    return {"mensagem": "Senha alterada com sucesso!"}
+
+
+@app.delete("/usuarios/{usuario_id}")
+def excluir_usuario(usuario_id: int, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    
+    db.delete(usuario)
+    db.commit()
+    return {"mensagem": "Usuário excluído com sucesso."}
