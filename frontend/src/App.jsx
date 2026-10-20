@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
@@ -7,19 +7,29 @@ import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
 
+function parseDataSegura(dataStr) {
+  if (!dataStr) return null
+  let str = String(dataStr).trim()
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(str)) {
+    str = str.replace(' ', 'T')
+  }
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? null : d
+}
+
 function calcularStatusSLA(frequencia, ultimaExecucao) {
   if (!ultimaExecucao || !ultimaExecucao.data_execucao) {
     return {
       status: 'atrasado',
-      label: '⏳ Nunca executado',
+      label: '⏳ Pendente',
       bg: '#f1f5f9',
       color: '#475569',
       border: '#cbd5e1'
     }
   }
 
-  const dataUltima = new Date(ultimaExecucao.data_execucao)
-  if (isNaN(dataUltima.getTime())) {
+  const dataUltima = parseDataSegura(ultimaExecucao.data_execucao)
+  if (!dataUltima) {
     return {
       status: 'em_dia',
       label: '✓ Registrado',
@@ -30,7 +40,7 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
   }
 
   const agora = new Date()
-  const diffHoras = (agora - dataUltima) / (1000 * 60 * 60)
+  const diffHoras = Math.max(0, (agora - dataUltima) / (1000 * 60 * 60))
 
   const limitesHoras = {
     'diaria': 24,
@@ -82,7 +92,7 @@ function App() {
   const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
-  const [backendOnline, setBackendOnline] = useState(false)
+  const [backendOnline, setBackendOnline] = useState(true)
   const [solicitacoes, setSolicitacoes] = useState([])
   const [condominios, setCondominios] = useState([])
   const [fornecedores, setFornecedores] = useState([])
@@ -102,6 +112,7 @@ function App() {
   const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
   const [filtroSLAChecklist, setFiltroSLAChecklist] = useState('todos')
   const [mostrarModalNovoChecklist, setMostrarModalNovoChecklist] = useState(false)
+  const [checklistEditando, setChecklistEditando] = useState(null)
   const [formNovoChecklist, setFormNovoChecklist] = useState({
     condominio: '',
     titulo: '',
@@ -140,10 +151,10 @@ function App() {
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [condominioEditando, setCondominioEditando] = useState(null)
   const [mostrarFormularioCondominio, setMostrarFormularioCondominio] = useState(false)
-  
+
   const [fornecedorEditando, setFornecedorEditando] = useState(null)
   const [mostrarFormularioFornecedor, setMostrarFormularioFornecedor] = useState(false)
-  
+
   const [categoriaEditando, setCategoriaEditando] = useState(null)
   const [mostrarFormularioCategoria, setMostrarFormularioCategoria] = useState(false)
 
@@ -165,6 +176,8 @@ function App() {
   const [formularioFornecedor, setFormularioFornecedor] = useState({ nome: '', cnpj: '', categoria: '' })
   const [formularioCategoria, setFormularioCategoria] = useState({ nome: '', descricao: '', limites: {} })
 
+  const qtdSolicitacoesRef = useRef(0)
+
   function getAuthHeaders(isFormData = false) {
     const headers = {}
     if (!isFormData) headers['Content-Type'] = 'application/json'
@@ -180,6 +193,33 @@ function App() {
       return mensagemPadrao
     }
   }
+
+  // Atalho global ESC para fechar janelas com fluidez
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
+        if (dialog.isOpen) { fecharDialog(); return }
+        if (itemChecklistExecutando) { setItemChecklistExecutando(null); return }
+        if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
+        if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
+        if (condominioUnidades) { setCondominioUnidades(null); return }
+        if (mostrarFormularioCondominio) { fecharFormularioCondominio(); return }
+        if (mostrarFormularioCategoria) { fecharFormularioCategoria(); return }
+        if (mostrarFormularioFornecedor) { fecharFormularioFornecedor(); return }
+        if (mostrarFormulario) { fecharFormulario(); return }
+        if (solicitacaoSelecionada) { fecharSolicitacao(); return }
+        if (mostrarMenuNotificacoes) { setMostrarMenuNotificacoes(false); return }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [
+    alertaPlanoAcao, dialog.isOpen, itemChecklistExecutando, itemChecklistHistorico,
+    mostrarModalNovoChecklist, condominioUnidades, mostrarFormularioCondominio,
+    mostrarFormularioCategoria, mostrarFormularioFornecedor, mostrarFormulario,
+    solicitacaoSelecionada, mostrarMenuNotificacoes
+  ])
 
   useEffect(() => {
     if ('Notification' in window) {
@@ -197,7 +237,7 @@ function App() {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         new Notification(titulo, { body: corpo, icon: '/logo.png' })
-      } catch (e) { }
+      } catch { }
     }
   }
 
@@ -235,7 +275,7 @@ function App() {
   }
 
   function mostrarToast(mensagem, tipo = 'success') {
-    const id = Date.now()
+    const id = Date.now() + Math.random()
     setToasts(prev => [...prev, { id, mensagem, tipo }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
@@ -284,17 +324,15 @@ function App() {
         if (usuarioLogado.perfil === 'Solicitante') {
           dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
         }
-        
-        const qtdAntiga = solicitacoes.length
+
+        const qtdAntiga = qtdSolicitacoesRef.current
         if (dados.length > qtdAntiga && qtdAntiga > 0 && usuarioLogado.perfil !== 'Checklist') {
           dispararNotificacaoNativa('Nova Solicitação', 'Um novo pedido foi registrado no sistema.')
         }
+        qtdSolicitacoesRef.current = dados.length
 
         setSolicitacoes(dados)
-        if (solicitacaoSelecionada) {
-          const atual = dados.find(i => i.id === solicitacaoSelecionada.id)
-          setSolicitacaoSelecionada(atual || null)
-        }
+        setSolicitacaoSelecionada(prev => prev ? (dados.find(i => i.id === prev.id) || null) : null)
       }
       if (resCond.ok) setCondominios(await resCond.json())
       if (resForn.ok) setFornecedores(await resForn.json())
@@ -302,12 +340,9 @@ function App() {
       if (resChk.ok) {
         const dadosChk = await resChk.json()
         setChecklists(dadosChk)
-        if (itemChecklistHistorico) {
-          const itemAtualizado = dadosChk.find(c => c.id === itemChecklistHistorico.id)
-          setItemChecklistHistorico(itemAtualizado || null)
-        }
+        setItemChecklistHistorico(prev => prev ? (dadosChk.find(c => c.id === prev.id) || null) : null)
       }
-    } catch (e) { }
+    } catch { }
   }
 
   useEffect(() => {
@@ -317,7 +352,7 @@ function App() {
       }
       verificarBackend()
       carregarDados()
-      const int = setInterval(() => { verificarBackend(); carregarDados() }, 5000)
+      const int = setInterval(() => { verificarBackend(); carregarDados() }, 6000)
       return () => clearInterval(int)
     }
   }, [usuarioLogado])
@@ -338,12 +373,8 @@ function App() {
   function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
   function formatarDataHora(dataStr) {
     if (!dataStr) return '-'
-    try {
-      const d = new Date(dataStr)
-      return isNaN(d.getTime()) ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    } catch {
-      return dataStr
-    }
+    const d = parseDataSegura(dataStr)
+    return !d ? dataStr : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   function normalizarTexto(v) {
@@ -368,20 +399,19 @@ function App() {
     if (typeof sol === 'object') {
       const vSol = solicitado(sol)
       const vApr = aprovado(sol)
-      if (txt === 'Aprovada' && vApr > 0 && vApr < vSol) txt = 'Aprovada Parcialmente'
+      if (txt === 'Aprovada' && vApr > 0 && vApr < vSol) txt = 'Aprovada Parcial'
     }
 
-    let backgroundColor = '#FEF3C7'; let color = '#D97706'
-    if (txt === 'Aprovada') { backgroundColor = '#DBEAFE'; color = '#2563EB' }
-    if (txt === 'Aprovada Parcialmente') { backgroundColor = '#FEF3C7'; color = '#b45309' }
-    if (txt === 'Em execução') { backgroundColor = '#E0E7FF'; color = '#4F46E5' }
-    if (txt === 'Finalizada') { backgroundColor = '#D1FAE5'; color = '#059669' }
-    if (txt === 'Ajuste solicitado') { backgroundColor = '#FEF3C7'; color = '#D97706' }
-    if (txt === 'Reprovada') { backgroundColor = '#FEE2E2'; color = '#DC2626' }
-    if (txt === 'Em análise') { backgroundColor = '#E0F2FE'; color = '#0284C7' }
+    let backgroundColor = '#FEF3C7'; let color = '#B45309'; let borderColor = '#FDE68A'
+    if (txt === 'Aprovada') { backgroundColor = '#EFF6FF'; color = '#1D4ED8'; borderColor = '#BFDBFE' }
+    if (txt === 'Aprovada Parcial') { backgroundColor = '#FEF3C7'; color = '#B45309'; borderColor = '#FDE68A' }
+    if (txt === 'Em execução') { backgroundColor = '#EEF2FF'; color = '#4338CA'; borderColor = '#C7D2FE' }
+    if (txt === 'Finalizada') { backgroundColor = '#ECFDF5'; color = '#047857'; borderColor = '#A7F3D0' }
+    if (txt === 'Ajuste solicitado') { backgroundColor = '#FFFBEB'; color = '#B45309'; borderColor = '#FDE68A' }
+    if (txt === 'Reprovada') { backgroundColor = '#FEF2F2'; color = '#B91C1C'; borderColor = '#FECACA' }
 
     return (
-      <span style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', backgroundColor, color, display: 'inline-block' }}>
+      <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '11.5px', fontWeight: '700', backgroundColor, color, border: `1px solid ${borderColor}`, display: 'inline-flex', alignItems: 'center', width: 'fit-content' }}>
         {txt}
       </span>
     )
@@ -393,7 +423,7 @@ function App() {
   const valorTotalSolicitado = solicitacoes.reduce((total, item) => total + solicitado(item), 0)
   const valorTotalAprovado = solicitacoes.reduce((total, item) => ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(item.status)) ? total + (aprovado(item) || solicitado(item)) : total, 0)
   const valorTotalRealizado = solicitacoes.reduce((total, item) => textoStatus(item.status) === 'Finalizada' ? total + (realizado(item) || aprovado(item) || solicitado(item)) : total, 0)
-  
+
   const economiaTotal = solicitacoes.reduce((total, item) => {
     if (textoStatus(item.status) === 'Finalizada') {
       const vSol = solicitado(item)
@@ -411,16 +441,18 @@ function App() {
   })
 
   const comprasFiltradas = solicitacoes.filter(sol => {
+    const st = textoStatus(sol.status)
+    const emCompra = ['Aprovada', 'Em execução', 'Finalizada'].includes(st)
     const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''}`)
-    return (!filtroCompra || t.includes(normalizarTexto(filtroCompra)))
+    return emCompra && (!filtroCompra || t.includes(normalizarTexto(filtroCompra)))
   })
 
-  const maioresSolicitacoes = [...solicitacoes].sort((a, b) => solicitado(b) - solicitado(a)).slice(0, 5)
+  const maioresSolicitacoes = [...solicitacoes].sort((a, b) => solicitado(b) - solicitado(a)).slice(0, 6)
 
   const solicitacoesAnaliseFiltradas = solicitacoes.filter(sol => {
     const nomeCondominio = sol.condominio || ''
     const matchCondominio = filtroCondominioAnalise === 'todos' || nomeCondominio === filtroCondominioAnalise
-    
+
     let matchData = true
     if (sol.data && typeof sol.data === 'string') {
       const dataSol = sol.data.substring(0, 10)
@@ -440,7 +472,8 @@ function App() {
   const dadosGraficoCondominios = Object.keys(gastosPorCondominio).map(nome => {
     const sols = solicitacoesAnaliseFiltradas.filter(s => (s.condominio || 'Sem condomínio') === nome)
     return {
-      name: nome, Solicitado: sols.reduce((a, s) => a + solicitado(s), 0),
+      name: nome,
+      Solicitado: sols.reduce((a, s) => a + solicitado(s), 0),
       Aprovado: sols.reduce((a, s) => ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(s.status)) ? a + (aprovado(s) || solicitado(s)) : a, 0),
       Realizado: sols.reduce((a, s) => textoStatus(s.status) === 'Finalizada' ? a + (realizado(s) || aprovado(s) || solicitado(s)) : a, 0)
     }
@@ -459,8 +492,32 @@ function App() {
   const listaOrcamentoCondominio = Object.entries(orcamentoPorCondominio).map(([nome, d]) => ({ nome, ...d, saldo: d.aprovado - d.realizado })).sort((a, b) => b.aprovado - a.aprovado)
 
   // =========================================================================
-  // FUNÇÕES DE CHECKLIST, PLANO DE AÇÃO E RELATÓRIO PDF DE DIVERGÊNCIAS
+  // FUNÇÕES DE CHECKLIST, EDIÇÃO, PLANO DE AÇÃO E PDF
   // =========================================================================
+  function abrirModalCriarChecklist() {
+    setChecklistEditando(null)
+    setFormNovoChecklist({
+      condominio: filtroCondominioChecklist !== 'todos' ? filtroCondominioChecklist : '',
+      titulo: '',
+      descricao_orientacao: '',
+      frequencia: 'Diária',
+      plano_acao_padrao: ''
+    })
+    setMostrarModalNovoChecklist(true)
+  }
+
+  function abrirModalEditarChecklist(item) {
+    setChecklistEditando(item)
+    setFormNovoChecklist({
+      condominio: item.condominio || '',
+      titulo: item.titulo || '',
+      descricao_orientacao: item.descricao_orientacao || '',
+      frequencia: item.frequencia || 'Diária',
+      plano_acao_padrao: item.plano_acao_padrao || ''
+    })
+    setMostrarModalNovoChecklist(true)
+  }
+
   async function salvarNovoChecklist(e) {
     e.preventDefault()
     if (!formNovoChecklist.condominio || !formNovoChecklist.titulo.trim()) {
@@ -469,19 +526,22 @@ function App() {
     }
     setSalvando(true)
     try {
-      const res = await fetch(`${API_URL}/checklists`, {
-        method: 'POST',
+      const url = checklistEditando ? `${API_URL}/checklists/${checklistEditando.id}` : `${API_URL}/checklists`
+      const metodo = checklistEditando ? 'PUT' : 'POST'
+      const res = await fetch(url, {
+        method: metodo,
         headers: getAuthHeaders(),
         body: JSON.stringify(formNovoChecklist)
       })
       if (!res.ok) {
-        const err = await extrairErro(res, 'Erro ao criar item de checklist.')
+        const err = await extrairErro(res, 'Erro ao salvar item de checklist.')
         throw new Error(err)
       }
       await carregarDados()
       setMostrarModalNovoChecklist(false)
+      setChecklistEditando(null)
       setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária', plano_acao_padrao: '' })
-      mostrarToast('Atividade adicionada ao checklist!', 'success')
+      mostrarToast(checklistEditando ? 'Atividade atualizada com sucesso!' : 'Atividade adicionada ao checklist!', 'success')
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -547,54 +607,17 @@ function App() {
           <title>Relatório de Divergências - ${dados.condominio}</title>
           <style>
             @page { size: A4 portrait; margin: 15mm; }
-            body { 
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-              color: #0f172a; 
-              margin: 0; 
-              padding: 0;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
-            }
-            .header { 
-              display: flex; 
-              justify-content: space-between; 
-              align-items: center; 
-              border-bottom: 2px solid #0f172a; 
-              padding-bottom: 14px; 
-              margin-bottom: 20px; 
-            }
-            .title-area h1 { font-size: 18px; font-weight: 800; margin: 0; color: #0f172a; letter-spacing: -0.5px; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 20px; }
+            .title-area h1 { font-size: 18px; font-weight: 800; margin: 0; color: #0f172a; }
             .title-area p { font-size: 12px; color: #475569; margin: 3px 0 0 0; }
-            .kpi-badge { 
-              background: #fef2f2; 
-              color: #991b1b; 
-              border: 1px solid #fecaca; 
-              padding: 8px 16px; 
-              border-radius: 8px; 
-              text-align: right;
-            }
+            .kpi-badge { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 16px; border-radius: 8px; text-align: right; }
             .kpi-badge .num { font-size: 18px; font-weight: 800; }
-            .kpi-badge .label { font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; display: block; }
+            .kpi-badge .label { font-size: 10px; text-transform: uppercase; font-weight: 700; display: block; }
             table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th { 
-              background-color: #0f172a; 
-              color: #ffffff; 
-              padding: 10px 14px; 
-              font-size: 11px; 
-              text-transform: uppercase; 
-              letter-spacing: 0.5px; 
-              text-align: left; 
-              border: 1px solid #0f172a; 
-            }
-            .footer-sign { 
-              margin-top: 40px; 
-              display: flex; 
-              justify-content: space-between; 
-              page-break-inside: avoid;
-              padding-top: 20px;
-            }
+            th { background-color: #0f172a; color: #ffffff; padding: 10px 14px; font-size: 11px; text-transform: uppercase; text-align: left; border: 1px solid #0f172a; }
+            .footer-sign { margin-top: 40px; display: flex; justify-content: space-between; page-break-inside: avoid; padding-top: 20px; }
             .sign-box { width: 45%; border-top: 1px solid #94a3b8; text-align: center; padding-top: 6px; font-size: 11px; color: #475569; }
-            @media print { button { display: none; } }
           </style>
         </head>
         <body>
@@ -609,7 +632,6 @@ function App() {
               <span class="num">${dados.total_divergencias}</span>
             </div>
           </div>
-
           <table>
             <thead>
               <tr>
@@ -618,22 +640,18 @@ function App() {
                 <th style="width: 34%;">Diretriz / Plano de Ação</th>
               </tr>
             </thead>
-            <tbody>
-              ${linhasDivergencias}
-            </tbody>
+            <tbody>${linhasDivergencias}</tbody>
           </table>
-
           <div class="footer-sign">
             <div class="sign-box">Responsável pela Vistoria Operacional</div>
             <div class="sign-box">Controladoria / Gestão Haize</div>
           </div>
-
           <script>window.onload = function() { window.print(); }</script>
         </body>
         </html>
       `)
       janela.document.close()
-    } catch (e) {
+    } catch {
       mostrarToast('Erro ao gerar relatório de divergências.', 'error')
     }
   }
@@ -696,7 +714,6 @@ function App() {
       await carregarDados()
       setItemChecklistExecutando(null)
 
-      // Se houve inconformidade, abre o Pop-up com o Plano de Ação estabelecido
       if (statusEscolhido === 'Não Conforme') {
         setAlertaPlanoAcao({
           condominio: itemAtual.condominio,
@@ -720,6 +737,9 @@ function App() {
     if (filtroSLAChecklist === 'atrasados') {
       const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
       return matchCond && matchFreq && sla.status === 'atrasado'
+    }
+    if (filtroSLAChecklist === 'divergencias') {
+      return matchCond && matchFreq && item.ultima_execucao?.status_conformidade === 'Não Conforme'
     }
     return matchCond && matchFreq
   })
@@ -1023,30 +1043,15 @@ function App() {
         <title>Fecho Orçamentário - Controladoria Haize</title>
         <style>
           @page { size: A4 portrait; margin: 12mm; }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            padding: 0; 
-            color: #0f172a; 
-            margin: 0;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-          .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            border-bottom: 2px solid #0f172a; 
-            padding-bottom: 14px; 
-            margin-bottom: 20px; 
-          }
-          .title { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 0; color: #0f172a; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 20px; }
+          .title { font-size: 18px; font-weight: 800; }
           .subtitle { font-size: 12px; color: #64748b; margin-top: 2px; }
           .meta { font-size: 11px; color: #334155; }
-          h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; margin: 20px 0 8px 0; color: #1e293b; font-weight: 800; }
+          h3 { font-size: 12px; text-transform: uppercase; margin: 20px 0 8px 0; color: #1e293b; font-weight: 800; }
           table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-bottom: 16px; }
           th { background-color: #0f172a; color: #ffffff; padding: 8px 10px; border: 1px solid #0f172a; text-align: left; font-size: 10.5px; text-transform: uppercase; }
           tfoot td { background-color: #f1f5f9; font-weight: 800; border: 1px solid #cbd5e1; padding: 8px 10px; }
-          @media print { button { display: none; } }
         </style>
       </head>
       <body>
@@ -1061,7 +1066,6 @@ function App() {
             <div><strong>Emissão:</strong> ${new Date().toLocaleDateString('pt-BR')}</div>
           </div>
         </div>
-
         <h3>Resumo Executivo por Condomínio</h3>
         <table>
           <thead>
@@ -1084,7 +1088,6 @@ function App() {
             </tr>
           </tfoot>
         </table>
-
         <h3>Extrato Analítico de Solicitações</h3>
         <table>
           <thead>
@@ -1108,7 +1111,6 @@ function App() {
             </tr>
           </tfoot>
         </table>
-
         <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
@@ -1164,9 +1166,14 @@ function App() {
         const erroMsg = await extrairErro(res, 'Erro ao salvar solicitação.')
         throw new Error(erroMsg)
       }
+      const criadaOuAtualizada = await res.json()
       await carregarDados()
       fecharFormulario()
-      mostrarToast(solicitacaoEditando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
+      if (criadaOuAtualizada?.status === 'Aprovada') {
+        mostrarToast('Solicitação criada e aprovada automaticamente pela alçada!', 'success')
+      } else {
+        mostrarToast(solicitacaoEditando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
+      }
     } catch (erro) {
       mostrarToast(erro.message, 'error')
     } finally {
@@ -1183,7 +1190,7 @@ function App() {
       if (resHist.ok) setHistoricoSolicitacao(await resHist.json())
       const resAnexos = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/anexos`, { headers: getAuthHeaders() })
       if (resAnexos.ok) setAnexosSolicitacao(await resAnexos.json())
-    } catch (e) { }
+    } catch { }
   }
 
   function fecharSolicitacao() { setSolicitacaoSelecionada(null); setHistoricoSolicitacao([]); setAnexosSolicitacao([]) }
@@ -1343,7 +1350,7 @@ function App() {
   function fecharFormularioCondominio() { setMostrarFormularioCondominio(false); setCondominioEditando(null); setFormularioCondominio({ nome: '', cnpj: '', codigo: '' }) }
   function abrirFormularioNovoCondominio() { setCondominioEditando(null); setFormularioCondominio({ nome: '', cnpj: '', codigo: '' }); setMostrarFormularioCondominio(true) }
   function editarCondominio(cond) { setCondominioEditando(cond); setFormularioCondominio({ nome: cond.nome || '', cnpj: cond.cnpj || '', codigo: cond.codigo || '' }); setMostrarFormularioCondominio(true) }
-  
+
   async function salvarCondominio(e) {
     e.preventDefault()
     if (!formularioCondominio.nome) return
@@ -1382,24 +1389,24 @@ function App() {
 
   function fecharFormularioCategoria() { setMostrarFormularioCategoria(false); setCategoriaEditando(null); setFormularioCategoria({ nome: '', descricao: '', limites: {} }) }
   function abrirFormularioNovoCategoria() { setCategoriaEditando(null); setFormularioCategoria({ nome: '', descricao: '', limites: {} }); setMostrarFormularioCategoria(true) }
-  
-  function editarCategoria(cat) { 
+
+  function editarCategoria(cat) {
     setCategoriaEditando(cat)
     const limitesObj = {}
     if (cat.limites && Array.isArray(cat.limites)) {
       cat.limites.forEach(l => { limitesObj[l.condominio] = formatarNumero(l.limite) })
     }
     setFormularioCategoria({ nome: cat.nome || '', descricao: cat.descricao || '', limites: limitesObj })
-    setMostrarFormularioCategoria(true) 
+    setMostrarFormularioCategoria(true)
   }
-  
+
   async function salvarCategoria(e) {
     e.preventDefault()
     if (!formularioCategoria.nome) return
 
     const limitesArray = Object.entries(formularioCategoria.limites).map(([condominio, limite]) => ({
       condominio: condominio, limite: numero(limite)
-    })).filter(l => l.limite > 0) 
+    })).filter(l => l.limite > 0)
 
     const payload = { nome: formularioCategoria.nome, descricao: formularioCategoria.descricao, limites: limitesArray }
 
@@ -1419,10 +1426,10 @@ function App() {
       fecharFormularioCategoria()
       if (mostrarFormulario && !categoriaEditando) atualizarCampoFormulario('categoria', salvo.nome)
       mostrarToast('Categoria salva!', 'success')
-    } catch (err) { 
-      mostrarToast(err.message, 'error') 
-    } finally { 
-      setSalvando(false) 
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally {
+      setSalvando(false)
     }
   }
 
@@ -1443,7 +1450,7 @@ function App() {
   function fecharFormularioFornecedor() { setMostrarFormularioFornecedor(false); setFornecedorEditando(null); setFormularioFornecedor({ nome: '', cnpj: '', categoria: '' }) }
   function abrirFormularioNovoFornecedor() { setFornecedorEditando(null); setFormularioFornecedor({ nome: '', cnpj: '', categoria: '' }); setMostrarFormularioFornecedor(true) }
   function editarFornecedor(forn) { setFornecedorEditando(forn); setFormularioFornecedor({ nome: forn.nome || '', cnpj: forn.cnpj || '', categoria: forn.categoria || '' }); setMostrarFormularioFornecedor(true) }
-  
+
   async function salvarFornecedor(e) {
     e.preventDefault()
     if (!formularioFornecedor.nome) return
@@ -1486,25 +1493,33 @@ function App() {
 
   if (!usuarioLogado) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', width: '100%', backgroundColor: '#f8fafc', backgroundImage: 'radial-gradient(circle at 50% -20%, #dbeafe, #f8fafc 60%)', padding: '20px', boxSizing: 'border-box' }}>
+      <div className="login-screen">
         <div className="toast-container">
           {toasts.map(t => (<div key={t.id} className={`toast ${t.tipo}`}><span className="toast-icon">{t.tipo === 'success' ? '✓' : '!'}</span><span>{t.mensagem}</span></div>))}
         </div>
-        <div style={{ background: '#ffffff', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)', width: '100%', maxWidth: '420px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <img src="/logo.png" alt="Haize Logo" style={{ width: '80px', height: '80px', marginBottom: '16px', borderRadius: '12px' }} onError={(e) => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
-          <div style={{ display: 'none', width: '64px', height: '64px', background: 'linear-gradient(135deg, #3b82f6, #2563eb)', borderRadius: '16px', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: '800', color: 'white', margin: '0 0 24px 0' }}>C</div>
-          <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>Controladoria</h2>
-          <p style={{ fontSize: '14px', color: '#64748b', textAlign: 'center', margin: '0 0 32px 0' }}>Acesso restrito ao sistema.</p>
-          <form onSubmit={fazerLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: '#475569' }}>E-mail</label>
-              <input type="email" placeholder="Seu e-mail" value={emailLogin} onChange={e => setEmailLogin(e.target.value)} required style={{ width: '100%', padding: '12px 16px', fontSize: '15px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
+        <div className="login-card">
+          <img
+            src="/logo.png"
+            alt="Haize Logo"
+            style={{ width: '72px', height: '72px', marginBottom: '16px', borderRadius: '16px', objectFit: 'contain' }}
+            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+          />
+          <div className="login-logo-box" style={{ display: 'none' }}>H</div>
+          <span className="eyebrow" style={{ marginBottom: '4px' }}>HAIZE SÍNDICO PROFISSIONAL</span>
+          <h2 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a', margin: '0 0 6px 0', letterSpacing: '-0.5px' }}>Controladoria</h2>
+          <p style={{ fontSize: '13.5px', color: '#64748b', textAlign: 'center', margin: '0 0 28px 0' }}>Acesse com suas credenciais corporativas.</p>
+          <form onSubmit={fazerLogin} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="form-group">
+              <label>E-mail Corporativo</label>
+              <input type="email" placeholder="nome@haize.com.br" value={emailLogin} onChange={e => setEmailLogin(e.target.value)} required />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: '#475569' }}>Senha</label>
-              <input type="password" placeholder="••••••••" value={senhaLogin} onChange={e => setSenhaLogin(e.target.value)} required style={{ width: '100%', padding: '12px 16px', fontSize: '15px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px' }} />
+            <div className="form-group">
+              <label>Senha de Acesso</label>
+              <input type="password" placeholder="••••••••" value={senhaLogin} onChange={e => setSenhaLogin(e.target.value)} required />
             </div>
-            <button type="submit" disabled={carregandoLogin} style={{ marginTop: '8px', padding: '14px', fontSize: '16px', width: '100%', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>{carregandoLogin ? 'Entrando...' : 'Entrar'}</button>
+            <button type="submit" className="button-primary" disabled={carregandoLogin} style={{ marginTop: '8px', padding: '13px', fontSize: '14.5px', width: '100%' }}>
+              {carregandoLogin ? 'Autenticando...' : 'Entrar na Plataforma'}
+            </button>
           </form>
         </div>
       </div>
@@ -1523,8 +1538,8 @@ function App() {
       {dialog.isOpen && (
         <div className="dialog-overlay" onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
           <div className="dialog-box">
-            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>{dialog.title}</h3>
-            <p style={{ margin: 0, fontSize: '14px', color: '#475569' }}>{dialog.message}</p>
+            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#0f172a' }}>{dialog.title}</h3>
+            <p style={{ margin: 0, fontSize: '13.5px', color: '#475569' }}>{dialog.message}</p>
             {dialog.type === 'prompt' && (
               <input type="text" className="dialog-input" value={dialog.inputValue} onChange={e => setDialog(p => ({ ...p, inputValue: e.target.value }))} autoFocus onKeyDown={e => { if (e.key === 'Enter') handleConfirmDialog() }} />
             )}
@@ -1542,35 +1557,35 @@ function App() {
           <div className="modal" style={{ maxWidth: '520px', borderTop: '6px solid #dc2626' }}>
             <div className="modal-header" style={{ borderBottom: '1px solid #fecaca', background: '#fef2f2' }}>
               <div>
-                <span className="eyebrow" style={{ color: '#dc2626', fontWeight: '800' }}>⚠️ INCONFORMIDADE REGISTRADA</span>
-                <h3 style={{ color: '#991b1b', marginTop: '4px' }}>Diretriz e Plano de Ação</h3>
+                <span className="eyebrow" style={{ color: '#dc2626' }}>⚠️ INCONFORMIDADE REGISTRADA</span>
+                <h3 style={{ color: '#991b1b', marginTop: '2px' }}>Diretriz e Plano de Ação</h3>
               </div>
               <button className="modal-close" onClick={() => setAlertaPlanoAcao(null)}>×</button>
             </div>
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px' }}>
-              <div style={{ fontSize: '13px', color: '#475569', background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ fontSize: '13px', color: '#334155', background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
                 <div><strong>Condomínio:</strong> {alertaPlanoAcao.condominio}</div>
                 <div style={{ marginTop: '4px' }}><strong>Atividade:</strong> {alertaPlanoAcao.titulo}</div>
-                <div style={{ marginTop: '4px', color: '#b91c1c' }}><strong>Problema relatado:</strong> "{alertaPlanoAcao.relato}"</div>
+                <div style={{ marginTop: '6px', color: '#b91c1c' }}><strong>Problema relatado:</strong> "{alertaPlanoAcao.relato}"</div>
               </div>
 
-              <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '10px', padding: '16px' }}>
+              <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '12px', padding: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '20px' }}>📋</span>
-                  <strong style={{ fontSize: '14px', color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Plano de Ação Estabelecido:
+                  <span style={{ fontSize: '18px' }}>📋</span>
+                  <strong style={{ fontSize: '13px', color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                    Plano de Ação Estabelecido pela Controladoria:
                   </strong>
                 </div>
-                <p style={{ margin: 0, fontSize: '14.5px', color: '#78350f', fontWeight: '600', lineHeight: '1.5' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#78350f', fontWeight: '700', lineHeight: '1.5' }}>
                   {alertaPlanoAcao.plano_acao}
                 </p>
               </div>
             </div>
-            <div className="modal-actions" style={{ justifyContent: 'flex-end' }}>
+            <div className="modal-actions">
               <button
                 type="button"
                 className="button-primary"
-                style={{ backgroundColor: '#dc2626', borderColor: '#dc2626', width: '100%', padding: '12px', fontSize: '14px', fontWeight: '700' }}
+                style={{ background: '#dc2626', borderColor: '#dc2626', width: '100%', padding: '12px' }}
                 onClick={() => setAlertaPlanoAcao(null)}
               >
                 ✓ Ciente do Plano de Ação
@@ -1587,49 +1602,82 @@ function App() {
       <aside className={`sidebar ${sidebarAberta ? 'open' : ''}`}>
         <div className="brand">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <img src="/logo.png" alt="Haize" style={{ width: '38px', height: '38px', borderRadius: '8px', backgroundColor: 'white', padding: '2px' }} onError={(e) => { e.target.style.display='none'; }} />
+            <img
+              src="/logo.png"
+              alt="Haize"
+              style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: 'white', padding: '2px', objectFit: 'contain' }}
+              onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+            />
+            <div className="brand-logo-fallback" style={{ display: 'none' }}>H</div>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <strong style={{ fontSize: '18px', letterSpacing: '-0.5px' }}>Controladoria</strong>
-              <span style={{ fontSize: '12px', opacity: 0.8 }}>Haize Síndico Profissional</span>
+              <strong style={{ fontSize: '16px', letterSpacing: '-0.3px', color: '#fff' }}>Controladoria</strong>
+              <span style={{ fontSize: '11.5px', color: '#94a3b8' }}>Haize Síndico Profissional</span>
             </div>
           </div>
           <button onClick={() => setSidebarAberta(false)} className="fechar-menu-mobile">✕</button>
         </div>
 
-        <nav className="sidebar-nav" style={{ flex: 1 }}>
+        <nav className="sidebar-nav">
           {ehChecklist ? (
-            <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-              <span className="nav-icon">⊡</span><span>Checklist</span>
-            </button>
+            <>
+              <span className="sidebar-section-label">Operacional</span>
+              <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+                <span className="nav-icon">⊡</span><span>Checklist Predial</span>
+              </button>
+            </>
           ) : (
             <>
-              <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}><span className="nav-icon">◈</span><span>Dashboard</span></button>
-              <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}><span className="nav-icon">◠</span><span>Análises</span></button>
-              <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}><span className="nav-icon">▣</span><span>Solicitações</span>{ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}</button>
-              <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}><span className="nav-icon">◫</span><span>Compras</span></button>
-              
+              <span className="sidebar-section-label">Gestão & Controle</span>
+              <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}>
+                <span className="nav-icon">◈</span><span>Dashboard</span>
+              </button>
+              <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}>
+                <span className="nav-icon">◠</span><span>Análises & Rateio</span>
+              </button>
+              <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}>
+                <span className="nav-icon">▣</span><span>Solicitações</span>
+                {ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}
+              </button>
+              <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}>
+                <span className="nav-icon">◫</span><span>Compras</span>
+              </button>
+
               {ehControladoria && (
                 <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">⊡</span><span>Checklist</span>
+                  <span className="nav-icon">⊡</span><span>Checklist Predial</span>
                 </button>
               )}
 
-              <div style={{ margin: '16px 0 8px 0', borderTop: '1px solid rgba(255,255,255,0.1)' }}></div>
-              
-              <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}><span className="nav-icon">🏢</span><span>Condomínios</span></button>
-              <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}><span className="nav-icon">🏷️</span><span>Categorias</span></button>
-              <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}><span className="nav-icon">🤝</span><span>Fornecedores</span></button>
+              <span className="sidebar-section-label">Cadastros Base</span>
+              <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
+                <span className="nav-icon">🏢</span><span>Condomínios</span>
+              </button>
+              <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}>
+                <span className="nav-icon">🏷️</span><span>Categorias & Alçadas</span>
+              </button>
+              <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}>
+                <span className="nav-icon">🤝</span><span>Fornecedores</span>
+              </button>
             </>
           )}
         </nav>
 
-        <div style={{ flexShrink: 0, marginTop: 'auto', paddingBottom: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '12px', background: '#0f172a' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '0 8px', textAlign: 'center' }}>
-            <span style={{ fontSize: '13px', fontWeight: '600', color: 'white' }}>{usuarioLogado.nome}</span>
-            <span style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 'bold' }}>Perfil: {usuarioLogado.perfil}</span>
+        <div className="sidebar-footer">
+          <div className="user-card-mini">
+            <div className="user-avatar-mini">
+              {String(usuarioLogado.nome || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <span style={{ fontSize: '13px', fontWeight: '700', color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {usuarioLogado.nome}
+              </span>
+              <span style={{ fontSize: '10.5px', color: '#94a3b8', fontWeight: '600' }}>
+                {usuarioLogado.perfil}
+              </span>
+            </div>
           </div>
-          <button onClick={fazerLogout} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', padding: '8px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-            <span style={{ fontSize: '14px' }}>🚪</span>Sair do sistema
+          <button onClick={fazerLogout} className="logout-btn">
+            <span>🚪</span> Encerrar Sessão
           </button>
         </div>
       </aside>
@@ -1640,36 +1688,38 @@ function App() {
             <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)}>☰</button>
             <div>
               <span className="breadcrumb">
-                Controladoria {' / '} {pagina === 'dashboard' ? 'Dashboard' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
+                Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Visão geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
-          
-          <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+
+          <div className="topbar-actions">
+            <div className={`status-pill ${backendOnline ? '' : 'offline'}`}>
+              <span className="status-dot" />
+              <span>{backendOnline ? 'Sistema Online' : 'Reconectando...'}</span>
+            </div>
+
             {!ehChecklist && (
               <div style={{ position: 'relative' }}>
-                <button 
-                  className="icon-button" 
+                <button
+                  className="icon-button"
                   onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
-                  style={{ position: 'relative', width: '40px', height: '40px', borderRadius: '50%', background: '#f1f5f9', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '18px' }}
                   title="Central de Alertas e Notificações"
                 >
                   🔔
                   {quantidadePendentes > 0 && (
-                    <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#ef4444', color: 'white', fontSize: '11px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {quantidadePendentes}
-                    </span>
+                    <span className="notification-badge">{quantidadePendentes}</span>
                   )}
                 </button>
 
                 {mostrarMenuNotificacoes && (
-                  <div style={{ position: 'absolute', right: 0, top: '48px', width: '320px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 9999, overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', right: 0, top: '46px', width: '330px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', boxShadow: '0 20px 35px -5px rgba(15,23,42,0.18)', zIndex: 9999, overflow: 'hidden' }}>
                     <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ fontSize: '14px' }}>Central de Alertas</strong>
-                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px' }}>{quantidadePendentes} pendentes</span>
+                      <strong style={{ fontSize: '13.5px' }}>Central de Alertas</strong>
+                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>{quantidadePendentes} pendentes</span>
                     </div>
                     <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
                       {solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').length === 0 ? (
@@ -1677,9 +1727,9 @@ function App() {
                       ) : (
                         solicitacoes.filter(s => textoStatus(s.status) === 'Aprovação pendente').map(s => (
                           <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <strong style={{ fontSize: '13px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
-                              <span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>{formatarValor(s.valor)}</span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <strong style={{ fontSize: '12.5px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
+                              <span style={{ fontSize: '11.5px', color: '#d97706', fontWeight: '700' }}>{formatarValor(s.valor)}</span>
                             </div>
                             <span style={{ fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.descricao}</span>
                           </div>
@@ -1687,7 +1737,7 @@ function App() {
                       )}
                     </div>
                     <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
-                      <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '600' }}>
+                      <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '700' }}>
                         {notificacoesPushAtivas ? '✓ Notificações Push ativas' : '⚠️ Notificações do navegador desativadas'}
                       </span>
                     </div>
@@ -1696,9 +1746,9 @@ function App() {
               </div>
             )}
 
-            <button className="icon-button" onClick={() => carregarDados()} title="Atualizar dados">↻</button>
+            <button className="icon-button" onClick={() => carregarDados()} title="Sincronizar agora">↻</button>
             {!ehChecklist && (
-              <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova solicitação</button>
+              <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova Solicitação</button>
             )}
           </div>
         </header>
@@ -1709,26 +1759,18 @@ function App() {
         {pagina === 'checklist' && (
           <div className="page">
             <section className="panel">
-              <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div className="panel-header">
                 <div>
                   <span className="eyebrow">ROTINAS E MANUTENÇÃO PREVENTIVA</span>
                   <h3>Atividades do Checklist</h3>
                 </div>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <select
-                    value={filtroCondominioChecklist}
-                    onChange={e => setFiltroCondominioChecklist(e.target.value)}
-                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
-                  >
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
                     <option value="todos">Todos os Condomínios</option>
                     {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
                   </select>
 
-                  <select
-                    value={filtroFrequenciaChecklist}
-                    onChange={e => setFiltroFrequenciaChecklist(e.target.value)}
-                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
-                  >
+                  <select value={filtroFrequenciaChecklist} onChange={e => setFiltroFrequenciaChecklist(e.target.value)}>
                     <option value="todas">Todas as Frequências</option>
                     <option value="Diária">Diária</option>
                     <option value="Semanal">Semanal</option>
@@ -1736,53 +1778,54 @@ function App() {
                     <option value="Mensal">Mensal</option>
                   </select>
 
-                  <select
-                    value={filtroSLAChecklist}
-                    onChange={e => setFiltroSLAChecklist(e.target.value)}
-                    style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '13px' }}
-                  >
-                    <option value="todos">Todos os Prazos (SLA)</option>
-                    <option value="atrasados">🚨 Apenas Atrasados</option>
-                  </select>
-
                   {filtroCondominioChecklist !== 'todos' && (
-                    <button
-                      className="button-secondary"
-                      onClick={gerarRelatorioDivergenciasPDF}
-                      style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                    >
-                      <span>📄</span> Relatório de Divergências (PDF)
+                    <button className="button-secondary" onClick={gerarRelatorioDivergenciasPDF}>
+                      <span>📄</span> Relatório PDF
                     </button>
                   )}
 
                   {ehControladoria && (
-                    <button className="button-primary" onClick={() => setMostrarModalNovoChecklist(true)}>
+                    <button className="button-primary" onClick={abrirModalCriarChecklist}>
                       + Nova Atividade
                     </button>
                   )}
                 </div>
               </div>
 
+              <div className="filter-bar">
+                <div className="pill-group">
+                  <button className={`filter-pill ${filtroSLAChecklist === 'todos' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('todos')}>
+                    Todas ({checklists.length})
+                  </button>
+                  <button className={`filter-pill ${filtroSLAChecklist === 'atrasados' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('atrasados')}>
+                    🚨 Em Atraso / Pendentes
+                  </button>
+                  <button className={`filter-pill ${filtroSLAChecklist === 'divergencias' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('divergencias')}>
+                    ⚠️ Com Inconformidade
+                  </button>
+                </div>
+              </div>
+
               {checklistsFiltrados.length === 0 ? (
                 <div style={{ padding: '48px 24px', textAlign: 'center', color: '#64748b' }}>
-                  Nenhuma atividade cadastrada para o filtro selecionado.
+                  Nenhuma atividade encontrada para o filtro selecionado.
                   {ehControladoria && ' Clique em "+ Nova Atividade" para adicionar tarefas ao checklist.'}
                 </div>
               ) : (
-                <div className="company-grid" style={{ marginTop: '16px' }}>
+                <div className="company-grid">
                   {checklistsFiltrados.map(item => {
                     const ult = item.ultima_execucao
                     const naoConforme = ult && ult.status_conformidade === 'Não Conforme'
                     const sla = calcularStatusSLA(item.frequencia, ult)
                     return (
-                      <div className="company-card" key={item.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', borderLeft: ult ? (naoConforme ? '4px solid #dc2626' : '4px solid #10b981') : '4px solid #cbd5e1' }}>
+                      <div className="company-card" key={item.id} style={{ borderLeft: ult ? (naoConforme ? '4px solid #dc2626' : '4px solid #10b981') : '4px solid #cbd5e1' }}>
                         <div>
-                          <div className="company-card-top" style={{ marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', background: '#eff6ff', color: '#1d4ed8', padding: '4px 10px', borderRadius: '999px' }}>
+                          <div className="company-card-top" style={{ flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', background: '#eff6ff', color: '#1d4ed8', padding: '4px 10px', borderRadius: '999px' }}>
                               🏢 {item.condominio}
                             </span>
                             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '999px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '3px 9px', borderRadius: '999px' }}>
                                 ⏱️ {item.frequencia}
                               </span>
                               <span style={{ fontSize: '11px', fontWeight: '700', background: sla.bg, color: sla.color, border: `1px solid ${sla.border}`, padding: '3px 8px', borderRadius: '999px' }}>
@@ -1791,20 +1834,20 @@ function App() {
                             </div>
                           </div>
 
-                          <h4 style={{ fontSize: '16px', margin: '8px 0 6px 0', color: '#0f172a' }}>{item.titulo}</h4>
+                          <h4>{item.titulo}</h4>
                           {item.descricao_orientacao && (
-                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px 0', lineHeight: '1.4' }}>
+                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px 0', lineHeight: '1.45' }}>
                               {item.descricao_orientacao}
                             </p>
                           )}
 
                           {item.plano_acao_padrao && (
-                            <div style={{ fontSize: '12px', background: '#fffbeb', border: '1px solid #fde68a', padding: '8px 10px', borderRadius: '6px', color: '#b45309', marginBottom: '10px' }}>
-                              <strong>Plano de Ação (Controladoria):</strong> {item.plano_acao_padrao}
+                            <div style={{ fontSize: '12px', background: '#fffbeb', border: '1px solid #fde68a', padding: '9px 11px', borderRadius: '8px', color: '#92400e', marginBottom: '10px' }}>
+                              <strong>Plano de Ação:</strong> {item.plano_acao_padrao}
                             </div>
                           )}
 
-                          <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px', marginTop: '12px' }}>
+                          <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '9px', border: '1px solid #e2e8f0', fontSize: '12px', marginTop: '10px' }}>
                             {!ult ? (
                               <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Ainda não realizado nenhuma vez.</span>
                             ) : (
@@ -1815,7 +1858,7 @@ function App() {
                                   </strong>
                                   <span style={{ fontSize: '11px', color: '#64748b' }}>{formatarDataHora(ult.data_execucao)}</span>
                                 </div>
-                                <span style={{ color: '#475569' }}>Feito por: <strong>{ult.responsavel}</strong></span>
+                                <span style={{ color: '#475569' }}>Vistoriador: <strong>{ult.responsavel}</strong></span>
                                 {ult.observacao && (
                                   <span style={{ color: '#334155', fontStyle: 'italic', marginTop: '2px' }}>"{ult.observacao}"</span>
                                 )}
@@ -1824,9 +1867,9 @@ function App() {
                                     href={`${API_URL}/checklists/execucoes/${ult.id}/foto`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    style={{ color: '#2563eb', fontWeight: '600', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}
+                                    style={{ color: '#2563eb', fontWeight: '700', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}
                                   >
-                                    📷 Ver foto anexada
+                                    📷 Ver evidência anexada
                                   </a>
                                 )}
                               </div>
@@ -1834,31 +1877,25 @@ function App() {
                           </div>
                         </div>
 
-                        <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                           <button
                             className="button-primary"
-                            style={{ flex: 1, padding: '8px 12px', fontSize: '13px', backgroundColor: '#10b981', borderColor: '#10b981' }}
+                            style={{ flex: 1, background: '#059669', borderColor: '#059669' }}
                             onClick={() => abrirModalExecutarChecklist(item)}
                           >
                             ✓ Registrar Vistoria
                           </button>
 
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <button
-                              className="text-button"
-                              style={{ fontSize: '12px', padding: '4px 6px' }}
-                              onClick={() => setItemChecklistHistorico(item)}
-                            >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <button className="text-button" onClick={() => setItemChecklistHistorico(item)}>
                               Histórico ({item.historico_execucoes?.length || 0})
                             </button>
                             {ehControladoria && (
                               <>
-                                <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
-                                <button
-                                  className="text-button"
-                                  style={{ color: 'var(--danger)', fontSize: '12px', padding: '4px 6px' }}
-                                  onClick={() => excluirItemChecklist(item)}
-                                >
+                                <button className="text-button" onClick={() => abrirModalEditarChecklist(item)}>
+                                  Editar
+                                </button>
+                                <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirItemChecklist(item)}>
                                   Excluir
                                 </button>
                               </>
@@ -1877,26 +1914,52 @@ function App() {
         {pagina === 'dashboard' && !ehChecklist && (
           <div className="page">
             <section className="kpi-grid">
-              <div className="kpi-card"><div className="kpi-top"><span>Solicitado</span><span className="kpi-icon">$</span></div><strong>{formatarValor(valorTotalSolicitado)}</strong></div>
-              <div className="kpi-card"><div className="kpi-top"><span>Aprovado</span><span className="kpi-icon success">✓</span></div><strong>{formatarValor(valorTotalAprovado)}</strong></div>
-              <div className="kpi-card"><div className="kpi-top"><span>Realizado</span><span className="kpi-icon">◫</span></div><strong>{formatarValor(valorTotalRealizado)}</strong></div>
-              <div className="kpi-card highlight"><div className="kpi-top"><span>Economia (Finalizadas)</span><span className="kpi-icon success">↓</span></div><strong>{formatarValor(economiaTotal)}</strong></div>
+              <div className="kpi-card">
+                <div className="kpi-top"><span>Total Solicitado</span><span className="kpi-icon">$</span></div>
+                <strong>{formatarValor(valorTotalSolicitado)}</strong>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>{solicitacoes.length} pedidos registrados</span>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-top"><span>Total Aprovado</span><span className="kpi-icon success">✓</span></div>
+                <strong>{formatarValor(valorTotalAprovado)}</strong>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>{quantidadePendentes} aguardando análise</span>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-top"><span>Total Realizado</span><span className="kpi-icon">◫</span></div>
+                <strong>{formatarValor(valorTotalRealizado)}</strong>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>Compras concluídas</span>
+              </div>
+              <div className="kpi-card highlight">
+                <div className="kpi-top"><span>Economia Gerada</span><span className="kpi-icon success">↓</span></div>
+                <strong style={{ color: '#059669' }}>{formatarValor(economiaTotal)}</strong>
+                <span style={{ fontSize: '12px', color: '#047857', fontWeight: '600' }}>Eficiência da Controladoria</span>
+              </div>
             </section>
 
             <section className="dashboard-grid">
               <div className="panel">
-                <div className="panel-header"><div><span className="eyebrow">DESTAQUES</span><h3>Maiores Solicitações</h3></div></div>
+                <div className="panel-header">
+                  <div>
+                    <span className="eyebrow">DESTAQUES FINANCEIROS</span>
+                    <h3>Solicitações de Maior Impacto</h3>
+                  </div>
+                  <button className="button-secondary" onClick={() => setPagina('solicitacoes')}>
+                    Ver todas →
+                  </button>
+                </div>
                 <div className="table">
-                  <div className="table-header"><span>ID</span><span>Condomínio</span><span>Descrição</span><span>Valor Total</span><span>Status</span></div>
-                  {maioresSolicitacoes.slice(0, 5).map(sol => (
+                  <div className="table-header">
+                    <span>Código</span><span>Condomínio</span><span>Descrição</span><span>Valor</span><span>Status</span>
+                  </div>
+                  {maioresSolicitacoes.map(sol => (
                     <div className="table-row clickable" key={sol.id} onClick={() => abrirSolicitacao(sol)}>
                       <span className="id">{sol.numero}</span>
-                      <span>{sol.condominio}</span>
+                      <strong style={{ color: '#0f172a' }}>{sol.condominio}</strong>
                       <span>{sol.descricao}</span>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <strong>{formatarValor(sol.valor)}</strong>
-                        {aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
-                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '600' }}>Utilizado: {formatarValor(realizado(sol))}</span>)}
+                        <strong style={{ color: '#0f172a' }}>{formatarValor(sol.valor)}</strong>
+                        {aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '700' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
+                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '700' }}>Pago: {formatarValor(realizado(sol))}</span>)}
                       </div>
                       {renderBadge(sol)}
                     </div>
@@ -1910,45 +1973,43 @@ function App() {
         {pagina === 'analises' && !ehChecklist && (
           <div className="page">
             <section className="welcome" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-              <div><span className="eyebrow">ANÁLISES E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)} style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff', fontSize: '14px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}>
+              <div><span className="eyebrow">INTELIGÊNCIA E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)}>
                   <option value="todos">Todos os Condomínios</option>
                   {condominios?.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
                 </select>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '4px 10px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600' }}>De:</span>
-                  <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '13px', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }} />
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600', marginLeft: '4px' }}>Até:</span>
-                  <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={{ border: 'none', outline: 'none', fontSize: '13px', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '9px', padding: '4px 10px' }}>
+                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>De:</span>
+                  <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
+                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>Até:</span>
+                  <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
                   {(filtroDataInicio || filtroDataFim) && (
-                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} style={{ border: 'none', background: '#f1f5f9', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer', color: '#64748b' }}>Limpar</button>
+                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} className="text-button" style={{ fontSize: '11px' }}>Limpar</button>
                   )}
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="button-secondary" onClick={exportarRelatorioExcel} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>📊</span> Exportar Excel (.xlsx)
-                  </button>
-                  <button className="button-secondary" onClick={exportarRelatorioPDF} style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>🖨️</span> Imprimir / PDF
-                  </button>
-                </div>
+                <button className="button-secondary" onClick={exportarRelatorioExcel}>
+                  <span>📊</span> Excel (.xlsx)
+                </button>
+                <button className="button-secondary" onClick={exportarRelatorioPDF}>
+                  <span>🖨️</span> Imprimir PDF
+                </button>
               </div>
             </section>
 
             {filtroCondominioAnalise !== 'todos' && (
-              <section className="dashboard-grid" style={{ marginTop: '24px' }}>
-                <div className="panel" style={{ gridColumn: '1 / -1' }}>
-                  <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <section className="dashboard-grid" style={{ marginTop: '22px' }}>
+                <div className="panel">
+                  <div className="panel-header">
                     <div>
                       <span className="eyebrow">RATEIO AUTOMÁTICO</span>
                       <h3>Distribuição por Fração Ideal — {filtroCondominioAnalise}</h3>
                     </div>
                     {rateioDados && (
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#1d4ed8', background: '#eff6ff', padding: '6px 12px', borderRadius: '8px' }}>
-                        Total das Despesas: {formatarValor(rateioDados.total_gasto_condominio)} ({rateioDados.quantidade_solicitacoes} despesas)
+                      <span className="badge approved" style={{ fontSize: '12.5px', padding: '6px 12px' }}>
+                        Despesas Finalizadas: {formatarValor(rateioDados.total_gasto_condominio)} ({rateioDados.quantidade_solicitacoes} itens)
                       </span>
                     )}
                   </div>
@@ -1957,19 +2018,19 @@ function App() {
                     <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Calculando rateio de despesas...</div>
                   ) : !rateioDados || rateioDados.rateio_unidades.length === 0 ? (
                     <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
-                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>Unidades</strong> para cadastrar.
+                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>Unidades</strong> para configurar.
                     </div>
                   ) : (
                     <div className="table">
                       <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
                         <span>Unidade / Apartamento</span>
                         <span>Fração Ideal (%)</span>
-                        <span style={{ textAlign: 'right' }}>Valor a Pagar (R$)</span>
+                        <span style={{ textAlign: 'right' }}>Valor Rateado (R$)</span>
                       </div>
                       {rateioDados.rateio_unidades.map((u, i) => (
                         <div className="table-row" key={i} style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
-                          <strong>{u.unidade}</strong>
-                          <span style={{ color: '#475569', fontWeight: '600' }}>{formatarNumero(u.fracao_ideal)}%</span>
+                          <strong style={{ color: '#0f172a' }}>{u.unidade}</strong>
+                          <span style={{ fontWeight: '700' }}>{formatarNumero(u.fracao_ideal)}%</span>
                           <strong style={{ textAlign: 'right', color: '#059669' }}>{formatarValor(u.valor_devido)}</strong>
                         </div>
                       ))}
@@ -1979,23 +2040,25 @@ function App() {
               </section>
             )}
 
-            <section className="dashboard-grid" style={{ marginTop: '24px' }}>
-              <div className="panel" style={{ gridColumn: '1 / -1' }}>
-                <div className="panel-header" style={{ justifyContent: 'center', textAlign: 'center' }}>
-                  <div><span className="eyebrow">COMPARATIVO</span><h3>Solicitado × Aprovado × Realizado</h3></div>
+            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
+              <div className="panel">
+                <div className="panel-header">
+                  <div><span className="eyebrow">COMPARATIVO ORÇAMENTÁRIO</span><h3>Solicitado × Aprovado × Realizado</h3></div>
                 </div>
-                <div style={{ width: '100%', height: 400, marginTop: '20px' }}>
-                  {dadosGraficoCondominios.length === 0 ? (<div className="empty" style={{ textAlign: 'center', padding: '40px' }}>Sem dados para gerar gráfico para o filtro selecionado.</div>) : (
+                <div style={{ width: '100%', height: 360 }}>
+                  {dadosGraficoCondominios.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>Sem dados para gerar gráfico no filtro selecionado.</div>
+                  ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dadosGraficoCondominios} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                      <BarChart data={dadosGraficoCondominios} margin={{ top: 16, right: 24, left: 12, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
                         <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
                         <RechartsTooltip formatter={v => formatarValor(v)} cursor={{ fill: '#f8fafc' }} />
-                        <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="Aprovado" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="Realizado" fill="#10b981" radius={[4, 4, 0, 0]} />
+                        <Legend wrapperStyle={{ paddingTop: '16px' }} />
+                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="Aprovado" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="Realizado" fill="#10b981" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -2003,24 +2066,26 @@ function App() {
               </div>
             </section>
 
-            <div style={{ marginTop: '48px', marginBottom: '16px' }}><span className="eyebrow">RELATÓRIOS GERENCIAIS DE FECHAMENTO</span></div>
-
-            <section className="dashboard-grid">
-              <div className="panel" style={{ gridColumn: '1 / -1' }}>
-                <div className="panel-header"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Relatório de Execução por Condomínio</h3></div></div>
+            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
+              <div className="panel">
+                <div className="panel-header"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Execução Orçamentária por Condomínio</h3></div></div>
                 <div className="table">
-                  <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
-                    <span>Condomínio</span><span>Teto Aprovado</span><span>Gasto Realizado</span><span>Saldo (R$)</span><span>Status Orçamentário</span>
+                  <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
+                    <span>Condomínio</span><span>Teto Aprovado</span><span>Gasto Realizado</span><span>Saldo (R$)</span><span>Status</span>
                   </div>
-                  {listaOrcamentoCondominio.length === 0 ? (<div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>Nenhuma solicitação encontrada para o filtro.</div>) : (
+                  {listaOrcamentoCondominio.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Nenhuma solicitação encontrada para o filtro.</div>
+                  ) : (
                     listaOrcamentoCondominio.map(item => {
                       let sBadge = 'neutral'; let sTexto = 'No Limite'
                       if (item.saldo > 0) { sBadge = 'positive'; sTexto = 'Economia' }
                       if (item.saldo < 0) { sBadge = 'negative'; sTexto = 'Estourado' }
                       if (item.aprovado === 0) { sBadge = 'neutral'; sTexto = 'Sem Orçamento' }
                       return (
-                        <div className="table-row" key={item.nome} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}>
-                          <strong>{item.nome}</strong><span>{formatarValor(item.aprovado)}</span><span>{formatarValor(item.realizado)}</span>
+                        <div className="table-row" key={item.nome} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
+                          <strong style={{ color: '#0f172a' }}>{item.nome}</strong>
+                          <span>{formatarValor(item.aprovado)}</span>
+                          <span>{formatarValor(item.realizado)}</span>
                           <strong className={classeVariacao(item.saldo)}>{formatarValor(item.saldo)}</strong>
                           <span className={`badge ${sBadge}`}>{sTexto}</span>
                         </div>
@@ -2036,43 +2101,78 @@ function App() {
         {(pagina === 'solicitacoes' || pagina === 'compras') && !ehChecklist && (
           <div className="page">
             <section className="panel">
-              <div className="panel-header" style={{ display: 'flex', alignItems: 'center' }}>
-                <div><span className="eyebrow">CONTROLE</span><h3>{pagina === 'solicitacoes' ? 'Solicitações de Compra' : 'Compras em Andamento'}</h3></div>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  {pagina === 'solicitacoes' && (
-                    <select style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff' }} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
-                      <option value="todos">Todos os Status</option>
-                      <option value="Aprovação pendente">Aprovação pendente</option>
-                      <option value="Ajuste solicitado">Ajuste solicitado</option>
-                      <option value="Aprovada">Aprovada</option>
-                      <option value="Em execução">Em execução</option>
-                      <option value="Finalizada">Finalizada</option>
-                      <option value="Reprovada">Reprovada</option>
-                    </select>
-                  )}
-                  <input style={{ padding: '8px 12px', border: '1px solid var(--border-color)', borderRadius: '8px' }} type="text" placeholder="Buscar..." value={pagina === 'solicitacoes' ? filtroSolicitacao : filtroCompra} onChange={e => pagina === 'solicitacoes' ? setFiltroSolicitacao(e.target.value) : setFiltroCompra(e.target.value)} />
+              <div className="panel-header">
+                <div>
+                  <span className="eyebrow">FLUXO DE COMPRAS</span>
+                  <h3>{pagina === 'solicitacoes' ? 'Solicitações de Compra' : 'Compras Aprovadas & Em Execução'}</h3>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="🔍 Buscar por código, condomínio ou item..."
+                    style={{ minWidth: '260px' }}
+                    value={pagina === 'solicitacoes' ? filtroSolicitacao : filtroCompra}
+                    onChange={e => pagina === 'solicitacoes' ? setFiltroSolicitacao(e.target.value) : setFiltroCompra(e.target.value)}
+                  />
                 </div>
               </div>
-              <div className="table">
-                <div className="table-header" style={pagina === 'compras' ? { gridTemplateColumns: '100px 1.2fr 2fr 1fr 1fr 120px' } : undefined}>
-                  <span>ID</span><span>Condomínio</span><span>Descrição</span>{pagina === 'compras' && (<span>Solicitado</span>)}<span>{pagina === 'compras' ? 'Aprovado' : 'Total'}</span><span>Status</span>
-                </div>
-                {(pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).map(sol => (
-                  <div className="table-row clickable" key={sol.id} style={pagina === 'compras' ? { gridTemplateColumns: '100px 1.2fr 2fr 1fr 1fr 120px' } : undefined} onClick={() => abrirSolicitacao(sol)}>
-                    <span className="id">{sol.numero}</span><span>{sol.condominio}</span>
-                    <span>
-                      {sol.descricao}
-                      {sol.categoria && <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>📁 {sol.categoria}</div>}
-                    </span>
-                    {pagina === 'compras' && (<strong>{formatarValor(sol.valor)}</strong>)}
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <strong>{formatarValor(pagina === 'compras' ? (aprovado(sol) || sol.valor) : sol.valor)}</strong>
-                      {pagina === 'solicitacoes' && aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '600' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
-                      {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '600' }}>Utilizado: {formatarValor(realizado(sol))}</span>)}
-                    </div>
-                    {renderBadge(sol)}
+
+              {pagina === 'solicitacoes' && (
+                <div className="filter-bar">
+                  <div className="pill-group">
+                    {[
+                      { id: 'todos', label: 'Todas' },
+                      { id: 'Aprovação pendente', label: '⏳ Pendentes' },
+                      { id: 'Ajuste solicitado', label: '📌 Em Ajuste' },
+                      { id: 'Aprovada', label: '✓ Aprovadas' },
+                      { id: 'Em execução', label: '▶ Em Execução' },
+                      { id: 'Finalizada', label: '✅ Finalizadas' },
+                      { id: 'Reprovada', label: '✕ Reprovadas' }
+                    ].map(st => (
+                      <button
+                        key={st.id}
+                        className={`filter-pill ${filtroStatus === st.id ? 'active' : ''}`}
+                        onClick={() => setFiltroStatus(st.id)}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                </div>
+              )}
+
+              <div className="table">
+                <div className="table-header" style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined}>
+                  <span>Código</span>
+                  <span>Condomínio</span>
+                  <span>Descrição & Categoria</span>
+                  {pagina === 'compras' && (<span>Solicitado</span>)}
+                  <span>{pagina === 'compras' ? 'Aprovado' : 'Valor Total'}</span>
+                  <span>Status</span>
+                </div>
+                {(pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).length === 0 ? (
+                  <div style={{ padding: '36px', textAlign: 'center', color: '#64748b' }}>
+                    Nenhum registro encontrado para este filtro.
+                  </div>
+                ) : (
+                  (pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).map(sol => (
+                    <div className="table-row clickable" key={sol.id} style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined} onClick={() => abrirSolicitacao(sol)}>
+                      <span className="id">{sol.numero}</span>
+                      <strong style={{ color: '#0f172a' }}>{sol.condominio}</strong>
+                      <div>
+                        <div style={{ color: '#1e293b', fontWeight: '600' }}>{sol.descricao}</div>
+                        {sol.categoria && <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>📁 {sol.categoria} {sol.fornecedor ? `• ${sol.fornecedor}` : ''}</div>}
+                      </div>
+                      {pagina === 'compras' && (<strong>{formatarValor(sol.valor)}</strong>)}
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <strong style={{ color: '#0f172a' }}>{formatarValor(pagina === 'compras' ? (aprovado(sol) || sol.valor) : sol.valor)}</strong>
+                        {pagina === 'solicitacoes' && aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '700' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
+                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '700' }}>Pago: {formatarValor(realizado(sol))}</span>)}
+                      </div>
+                      {renderBadge(sol)}
+                    </div>
+                  ))
+                )}
               </div>
             </section>
           </div>
@@ -2082,7 +2182,7 @@ function App() {
           <div className="page">
             <section className="panel">
               <div className="panel-header">
-                <div><span className="eyebrow">CADASTRO</span><h3>Categorias de Despesa</h3></div>
+                <div><span className="eyebrow">REGRAS DE ALÇADA</span><h3>Categorias de Despesa</h3></div>
                 <button className="button-primary" onClick={abrirFormularioNovoCategoria}>+ Nova Categoria</button>
               </div>
               <div className="company-grid">
@@ -2093,23 +2193,29 @@ function App() {
 
                   return (
                     <div className="company-card" key={cat.id}>
-                      <div className="company-card-top">
-                        <div className="company-avatar" style={{ background: '#fdf4ff', color: '#7e22ce' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                        <span className="badge neutral">Ativo</span>
-                      </div>
-                      <h4>{nome}</h4>
-                      {cat.descricao && (<span className="company-detail" style={{ fontStyle: 'italic' }}>{cat.descricao}</span>)}
-                      
-                      {limitesCadastrados > 0 && (
-                        <div style={{ marginTop: '12px', fontSize: '12px', color: '#059669', background: '#ecfdf5', padding: '6px 12px', borderRadius: '6px', fontWeight: '600' }}>
-                          Regra Automática ativa em {limitesCadastrados} {limitesCadastrados === 1 ? 'condomínio' : 'condomínios'}
+                      <div>
+                        <div className="company-card-top">
+                          <div className="company-avatar" style={{ background: '#f3e8ff', color: '#7e22ce' }}>{String(nome).charAt(0).toUpperCase()}</div>
+                          <span className="badge neutral">Ativa</span>
                         </div>
-                      )}
+                        <h4>{nome}</h4>
+                        {cat.descricao && (<span className="company-detail">{cat.descricao}</span>)}
 
-                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                        {limitesCadastrados > 0 ? (
+                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '7px 12px', borderRadius: '8px', fontWeight: '700' }}>
+                            ⚡ Alçada Automática em {limitesCadastrados} {limitesCadastrados === 1 ? 'condomínio' : 'condomínios'}
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '7px 12px', borderRadius: '8px' }}>
+                            Aprovação manual padrão
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="text-button" onClick={() => editarCategoria(cat)}>Editar</button>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button className="text-button" onClick={() => editarCategoria(cat)}>Configurar Alçadas</button>
                           <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCategoria(cat.id, nome)}>Excluir</button>
                         </div>
                       </div>
@@ -2125,7 +2231,7 @@ function App() {
           <div className="page">
             <section className="panel">
               <div className="panel-header">
-                <div><span className="eyebrow">CADASTRO</span><h3>Condomínios</h3></div>
+                <div><span className="eyebrow">CARTEIRA PREDIAL</span><h3>Condomínios Gerenciados</h3></div>
                 <button className="button-primary" onClick={abrirFormularioNovoCondominio}>+ Novo Condomínio</button>
               </div>
               <div className="company-grid">
@@ -2134,43 +2240,25 @@ function App() {
                   const qtd = solicitacoes.filter(s => s.condominio === nome).length
                   return (
                     <div className="company-card" key={condominio.id}>
-                      <div className="company-card-top">
-                        <div className="company-avatar">{String(nome).charAt(0).toUpperCase()}</div>
-                        <span className="badge approved">Ativo</span>
-                      </div>
-                      <h4>{nome}</h4>
-                      {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
-                      {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
-                      
-                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span>
-                          <strong style={{ fontSize: '13px' }}>{qtd}</strong>
+                      <div>
+                        <div className="company-card-top">
+                          <div className="company-avatar">{String(nome).charAt(0).toUpperCase()}</div>
+                          <span className="badge approved">Ativo</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <button 
-                            className="text-button" 
-                            style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px', padding: '2px 4px' }} 
-                            onClick={() => abrirGerenciadorUnidades(condominio)}
-                          >
-                            Unidades
-                          </button>
-                          <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
-                          <button 
-                            className="text-button" 
-                            style={{ fontSize: '12px', padding: '2px 4px' }} 
-                            onClick={() => editarCondominio(condominio)}
-                          >
-                            Editar
-                          </button>
-                          <span style={{ color: '#cbd5e1', fontSize: '10px' }}>•</span>
-                          <button 
-                            className="text-button" 
-                            style={{ color: 'var(--danger)', fontSize: '12px', padding: '2px 4px' }} 
-                            onClick={() => excluirCondominio(condominio.id, nome)}
-                          >
-                            Excluir
-                          </button>
+                        <h4>{nome}</h4>
+                        {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
+                        {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
+                      </div>
+
+                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pedidos: </span>
+                          <strong>{qtd}</strong>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <button className="text-button" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button>
+                          <button className="text-button" onClick={() => editarCondominio(condominio)}>Editar</button>
+                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button>
                         </div>
                       </div>
                     </div>
@@ -2185,7 +2273,7 @@ function App() {
           <div className="page">
             <section className="panel">
               <div className="panel-header">
-                <div><span className="eyebrow">CADASTRO</span><h3>Fornecedores</h3></div>
+                <div><span className="eyebrow">PARCEIROS E PRESTADORES</span><h3>Fornecedores Homologados</h3></div>
                 <button className="button-primary" onClick={abrirFormularioNovoFornecedor}>+ Novo Fornecedor</button>
               </div>
               <div className="company-grid">
@@ -2194,15 +2282,18 @@ function App() {
                   const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
                   return (
                     <div className="company-card" key={forn.id}>
-                      <div className="company-card-top">
-                        <div className="company-avatar" style={{ background: '#f1f5f9', color: '#475569' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                        <span className="badge neutral">Ativo</span>
+                      <div>
+                        <div className="company-card-top">
+                          <div className="company-avatar" style={{ background: '#f1f5f9', color: '#334155' }}>{String(nome).charAt(0).toUpperCase()}</div>
+                          <span className="badge neutral">Homologado</span>
+                        </div>
+                        <h4>{nome}</h4>
+                        {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
+                        {forn.categoria && (<span className="company-detail">Especialidade: {forn.categoria}</span>)}
                       </div>
-                      <h4>{nome}</h4>
-                      {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
-                      <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '16px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ display: 'flex', gap: '6px' }}>
                           <button className="text-button" onClick={() => editarFornecedor(forn)}>Editar</button>
                           <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button>
                         </div>
@@ -2215,14 +2306,14 @@ function App() {
           </div>
         )}
 
-        {/* MODAL: CRIAR NOVA ATIVIDADE DE CHECKLIST COM PLANO DE AÇÃO (CONTROLADORIA) */}
+        {/* MODAL: CRIAR OU EDITAR ATIVIDADE DE CHECKLIST */}
         {mostrarModalNovoChecklist && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarModalNovoChecklist(false) }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setMostrarModalNovoChecklist(false) }}>
             <div className="modal">
               <div className="modal-header">
                 <div>
                   <span className="eyebrow">PLANEJAMENTO OPERACIONAL</span>
-                  <h3>Nova Atividade de Checklist</h3>
+                  <h3>{checklistEditando ? 'Editar Atividade de Checklist' : 'Nova Atividade de Checklist'}</h3>
                 </div>
                 <button className="modal-close" onClick={() => setMostrarModalNovoChecklist(false)}>×</button>
               </div>
@@ -2277,10 +2368,10 @@ function App() {
                     </div>
 
                     <div className="form-group full">
-                      <label>Plano de Ação Predefinido (Diretriz para caso de divergência)</label>
+                      <label>Plano de Ação Predefinido (Exibido em pop-up caso haja inconformidade)</label>
                       <textarea
-                        rows="2"
-                        placeholder="Ex: Acionar imediatamente empresa de manutenção e abrir solicitação de reparo emergencial..."
+                        rows="3"
+                        placeholder="Ex: Isolar a área imediatamente e acionar a manutenção credenciada..."
                         value={formNovoChecklist.plano_acao_padrao}
                         onChange={e => setFormNovoChecklist(p => ({ ...p, plano_acao_padrao: e.target.value }))}
                       />
@@ -2291,16 +2382,16 @@ function App() {
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={() => setMostrarModalNovoChecklist(false)}>Cancelar</button>
                 <button type="button" className="button-primary" onClick={salvarNovoChecklist} disabled={salvando}>
-                  {salvando ? 'Salvando...' : 'Criar Atividade'}
+                  {salvando ? 'Salvando...' : (checklistEditando ? 'Salvar Alterações' : 'Criar Atividade')}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* MODAL: REGISTRAR EXECUÇÃO DO CHECKLIST (Zelador / Responsável) */}
+        {/* MODAL: REGISTRAR EXECUÇÃO DO CHECKLIST */}
         {itemChecklistExecutando && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setItemChecklistExecutando(null) }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setItemChecklistExecutando(null) }}>
             <div className="modal">
               <div className="modal-header">
                 <div>
@@ -2319,7 +2410,7 @@ function App() {
                           type="button"
                           onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Conforme' }))}
                           style={{
-                            flex: 1, padding: '12px', borderRadius: '8px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                            flex: 1, padding: '12px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
                             border: formExecucaoChecklist.status_conformidade === 'Conforme' ? '2px solid #059669' : '1px solid #cbd5e1',
                             background: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#ecfdf5' : '#ffffff',
                             color: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#059669' : '#475569'
@@ -2331,7 +2422,7 @@ function App() {
                           type="button"
                           onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Não Conforme' }))}
                           style={{
-                            flex: 1, padding: '12px', borderRadius: '8px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
+                            flex: 1, padding: '12px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
                             border: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '2px solid #dc2626' : '1px solid #cbd5e1',
                             background: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#fef2f2' : '#ffffff',
                             color: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#dc2626' : '#475569'
@@ -2344,7 +2435,7 @@ function App() {
 
                     <div className="form-group full">
                       <label>
-                        Observações / Descrição {formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '* (Obrigatório informar o problema)' : '(Opcional)'}
+                        Observações / Descrição {formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '* (Obrigatório relatar o problema)' : '(Opcional)'}
                       </label>
                       <textarea
                         rows="3"
@@ -2360,11 +2451,11 @@ function App() {
                         type="file"
                         accept="image/*,.pdf"
                         onChange={e => setFormExecucaoChecklist(p => ({ ...p, foto: e.target.files[0] || null }))}
-                        style={{ padding: '10px', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '8px' }}
+                        style={{ padding: '10px', background: '#f8fafc', border: '1px dashed #cbd5e1' }}
                       />
                       {formExecucaoChecklist.foto && (
-                        <span style={{ fontSize: '12px', color: '#059669', fontWeight: '600', marginTop: '4px' }}>
-                          📎 Foto selecionada: {formExecucaoChecklist.foto.name}
+                        <span style={{ fontSize: '12px', color: '#059669', fontWeight: '700', marginTop: '4px' }}>
+                          📎 Arquivo selecionado: {formExecucaoChecklist.foto.name}
                         </span>
                       )}
                     </div>
@@ -2383,7 +2474,7 @@ function App() {
 
         {/* MODAL: HISTÓRICO DE EXECUÇÕES DA ATIVIDADE */}
         {itemChecklistHistorico && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setItemChecklistHistorico(null) }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setItemChecklistHistorico(null) }}>
             <div className="modal modal-large">
               <div className="modal-header">
                 <div>
@@ -2398,18 +2489,18 @@ function App() {
                     Nenhuma execução registrada para esta atividade até o momento.
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
                     {itemChecklistHistorico.historico_execucoes.map(ex => {
                       const ehProblema = ex.status_conformidade === 'Não Conforme'
                       return (
                         <div key={ex.id} style={{ padding: '14px 16px', borderRadius: '10px', border: `1px solid ${ehProblema ? '#fecaca' : '#e2e8f0'}`, background: ehProblema ? '#fef2f2' : '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                               <strong style={{ fontSize: '13px', color: ehProblema ? '#dc2626' : '#059669' }}>
                                 {ehProblema ? '⚠️ Não Conforme' : '✅ Conforme'}
                               </strong>
                               <span style={{ fontSize: '12px', color: '#64748b' }}>• {formatarDataHora(ex.data_execucao)}</span>
-                              <span style={{ fontSize: '12px', color: '#334155', fontWeight: '600' }}>• Responsável: {ex.responsavel}</span>
+                              <span style={{ fontSize: '12px', color: '#334155', fontWeight: '700' }}>• Vistoriador: {ex.responsavel}</span>
                             </div>
                             {ex.observacao && (
                               <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#1e293b' }}>
@@ -2425,7 +2516,7 @@ function App() {
                               className="button-secondary"
                               style={{ padding: '6px 12px', fontSize: '12px', textDecoration: 'none' }}
                             >
-                              📷 Ver Foto / Evidência
+                              📷 Ver Evidência
                             </a>
                           )}
                         </div>
@@ -2443,7 +2534,7 @@ function App() {
 
         {/* MODAL DE GERENCIAMENTO DE UNIDADES E FRAÇÕES */}
         {condominioUnidades && (
-          <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) setCondominioUnidades(null) }}>
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setCondominioUnidades(null) }}>
             <div className="modal modal-large">
               <div className="modal-header">
                 <div>
@@ -2455,30 +2546,30 @@ function App() {
               <div className="modal-body">
                 <form onSubmit={salvarNovaUnidade} style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                   <div style={{ flex: 2, minWidth: '180px' }}>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>Identificação da Unidade *</label>
-                    <input type="text" placeholder="Ex: Ap 101, Apto 202, Cobertura 01" value={novaUnidade.identificacao} onChange={e => setNovaUnidade(p => ({ ...p, identificacao: e.target.value }))} required style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>Identificação da Unidade *</label>
+                    <input type="text" placeholder="Ex: Ap 101, Apto 202, Cobertura 01" value={novaUnidade.identificacao} onChange={e => setNovaUnidade(p => ({ ...p, identificacao: e.target.value }))} required style={{ width: '100%' }} />
                   </div>
                   <div style={{ flex: 1, minWidth: '140px' }}>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '4px' }}>Fração Ideal (%) *</label>
-                    <input type="text" placeholder="Ex: 2,5 ou 5,0" value={novaUnidade.fracao_ideal} onChange={e => setNovaUnidade(p => ({ ...p, fracao_ideal: e.target.value }))} required style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>Fração Ideal (%) *</label>
+                    <input type="text" placeholder="Ex: 2,5 ou 5,0" value={novaUnidade.fracao_ideal} onChange={e => setNovaUnidade(p => ({ ...p, fracao_ideal: e.target.value }))} required style={{ width: '100%' }} />
                   </div>
-                  <button type="submit" className="button-primary" style={{ padding: '10px 20px', height: '42px' }}>+ Adicionar Unidade</button>
+                  <button type="submit" className="button-primary" style={{ height: '39px' }}>+ Adicionar</button>
                 </form>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '20px 0 10px 0' }}>
-                  <h4 style={{ margin: 0, fontSize: '14px', textTransform: 'uppercase', color: '#334155' }}>Unidades Cadastradas ({listaUnidades.length})</h4>
-                  <span style={{ fontSize: '13px', fontWeight: '700', color: Math.round(somaFracaoTotal) === 100 ? '#059669' : '#d97706' }}>
-                    Soma das Frações: {formatarNumero(somaFracaoTotal)}% {Math.round(somaFracaoTotal) === 100 ? '✓ (100% Completo)' : '(Diferente de 100%)'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '18px 0 10px 0' }}>
+                  <h4 style={{ margin: 0, fontSize: '13px', textTransform: 'uppercase', color: '#334155' }}>Unidades Cadastradas ({listaUnidades.length})</h4>
+                  <span style={{ fontSize: '12.5px', fontWeight: '800', color: Math.round(somaFracaoTotal) === 100 ? '#059669' : '#d97706' }}>
+                    Soma das Frações: {formatarNumero(somaFracaoTotal)}% {Math.round(somaFracaoTotal) === 100 ? '✓ (100% Fechado)' : '(Diferente de 100%)'}
                   </span>
                 </div>
 
-                <div style={{ maxHeight: '280px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
                   {carregandoUnidades ? (
                     <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>Carregando unidades...</div>
                   ) : listaUnidades.length === 0 ? (
-                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>Nenhuma unidade cadastrada para este condomínio. Cadastre acima!</div>
+                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>Nenhuma unidade cadastrada para este condomínio.</div>
                   ) : (
-                    <div className="table" style={{ margin: 0 }}>
+                    <div className="table">
                       <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
                         <span>Identificação</span>
                         <span>Fração Ideal (%)</span>
@@ -2486,10 +2577,10 @@ function App() {
                       </div>
                       {listaUnidades.map(u => (
                         <div className="table-row" key={u.id} style={{ gridTemplateColumns: '2fr 1fr 100px' }}>
-                          <strong>{u.identificacao}</strong>
-                          <span style={{ fontWeight: '600', color: '#1d4ed8' }}>{formatarNumero(u.fracao_ideal)}%</span>
+                          <strong style={{ color: '#0f172a' }}>{u.identificacao}</strong>
+                          <span style={{ fontWeight: '700', color: '#1d4ed8' }}>{formatarNumero(u.fracao_ideal)}%</span>
                           <div style={{ textAlign: 'center' }}>
-                            <button className="text-button" style={{ color: 'var(--danger)', fontSize: '12px' }} onClick={() => excluirUnidade(u.id)}>Excluir</button>
+                            <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirUnidade(u.id)}>Excluir</button>
                           </div>
                         </div>
                       ))}
@@ -2508,7 +2599,7 @@ function App() {
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharSolicitacao() }}>
             <div className="modal modal-large">
               <div className="modal-header">
-                <div><span className="eyebrow">DETALHES</span><h3>{solicitacaoSelecionada.numero}</h3></div>
+                <div><span className="eyebrow">DETALHES DO PEDIDO</span><h3>{solicitacaoSelecionada.numero} • {solicitacaoSelecionada.condominio}</h3></div>
                 <button className="modal-close" onClick={fecharSolicitacao}>×</button>
               </div>
               <div className="modal-body">
@@ -2516,33 +2607,32 @@ function App() {
                   const vSol = solicitado(solicitacaoSelecionada); const vApr = aprovado(solicitacaoSelecionada); const vReal = realizado(solicitacaoSelecionada)
                   const temCorte = vApr > 0 && vApr < vSol; const taFinalizado = vReal > 0; const limite = vApr > 0 ? vApr : vSol; const estourou = taFinalizado && vReal > limite
                   return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '18px' }}>
                       {solicitacaoSelecionada.motivo_ajuste && (
-                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ fontSize: '20px' }}>📌</span>
                           <div>
-                            <strong style={{ display: 'block', fontSize: '14px', color: '#991b1b', marginBottom: '4px' }}>Motivo do Ajuste / Reprovação</strong>
+                            <strong style={{ display: 'block', fontSize: '13.5px', color: '#991b1b' }}>Motivo do Ajuste / Reprovação</strong>
                             <span style={{ fontSize: '13px', color: '#b91c1c' }}>{solicitacaoSelecionada.motivo_ajuste}</span>
                           </div>
                         </div>
                       )}
                       {temCorte && (
-                        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ fontSize: '20px' }}>⚠️</span>
                           <div>
-                            <strong style={{ display: 'block', fontSize: '14px', color: '#b45309', marginBottom: '4px' }}>Aprovação Parcial</strong>
-                            <span style={{ fontSize: '13px', color: '#d97706' }}>Esta solicitação foi aprovada com o valor de <strong>{formatarValor(vApr)}</strong>, que é inferior ao valor original solicitado de <strong>{formatarValor(vSol)}</strong>.</span>
+                            <strong style={{ display: 'block', fontSize: '13.5px', color: '#b45309' }}>Aprovação Parcial</strong>
+                            <span style={{ fontSize: '13px', color: '#d97706' }}>Aprovada com o valor de <strong>{formatarValor(vApr)}</strong> (inferior ao solicitado de <strong>{formatarValor(vSol)}</strong>).</span>
                           </div>
                         </div>
                       )}
                       {taFinalizado && (
-                        <div style={{ background: estourou ? '#fef2f2' : '#f0fdf4', border: `1px solid ${estourou ? '#fecaca' : '#bbf7d0'}`, padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ background: estourou ? '#fef2f2' : '#f0fdf4', border: `1px solid ${estourou ? '#fecaca' : '#bbf7d0'}`, padding: '12px 16px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ fontSize: '20px' }}>{estourou ? '🚨' : '✅'}</span>
                           <div>
-                            <strong style={{ display: 'block', fontSize: '14px', color: estourou ? '#991b1b' : '#15803d', marginBottom: '4px' }}>{estourou ? 'Orçamento Ultrapassado' : 'Dentro do Orçamento'}</strong>
+                            <strong style={{ display: 'block', fontSize: '13.5px', color: estourou ? '#991b1b' : '#15803d' }}>{estourou ? 'Orçamento Ultrapassado' : 'Dentro do Orçamento'}</strong>
                             <span style={{ fontSize: '13px', color: estourou ? '#b91c1c' : '#166534' }}>
-                              O valor finalizado (utilizado) foi de <strong>{formatarValor(vReal)}</strong>.
-                              {estourou ? ` Esse valor ultrapassou o limite aprovado de ${formatarValor(limite)}.` : ` Excelente! O gasto se manteve dentro do limite aprovado de ${formatarValor(limite)}.`}
+                              Valor finalizado: <strong>{formatarValor(vReal)}</strong> (Teto aprovado: {formatarValor(limite)}).
                             </span>
                           </div>
                         </div>
@@ -2553,44 +2643,50 @@ function App() {
 
                 <div className="detail-grid">
                   <div className="detail-card"><span>Status</span><strong>{renderBadge(solicitacaoSelecionada)}</strong></div>
-                  
                   {solicitacaoSelecionada.categoria && (
                     <div className="detail-card" style={{ background: '#faf5ff', borderColor: '#f3e8ff' }}>
                       <span>Categoria</span><strong style={{ color: '#7e22ce' }}>📁 {solicitacaoSelecionada.categoria}</strong>
                     </div>
                   )}
-
                   <div className="detail-card"><span>Valor Serviço</span><strong>{formatarValor(solicitacaoSelecionada.valor_servico)}</strong></div>
                   <div className="detail-card"><span>Valor Produto</span><strong>{formatarValor(solicitacaoSelecionada.valor_produto)}</strong></div>
                   <div className="detail-card" style={{ background: '#eff6ff', borderColor: '#bfdbfe' }}><span>Total Solicitado</span><strong style={{ color: '#1d4ed8' }}>{formatarValor(solicitacaoSelecionada.valor)}</strong></div>
-
                   {aprovado(solicitacaoSelecionada) > 0 && (<div className="detail-card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}><span>Valor Aprovado</span><strong style={{ color: '#15803d' }}>{formatarValor(solicitacaoSelecionada.valor_aprovado)}</strong></div>)}
-                  {realizado(solicitacaoSelecionada) > 0 && (<div className="detail-card" style={{ background: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#f0fdf4' : '#fef2f2', borderColor: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#bbf7d0' : '#fecaca' }}><span>Valor Realizado</span><strong style={{ color: realizado(solicitacaoSelecionada) <= (aprovado(solicitacaoSelecionada) || solicitado(solicitacaoSelecionada)) ? '#15803d' : '#b91c1c' }}>{formatarValor(solicitacaoSelecionada.valor_realizado)}</strong></div>)}
+                  {realizado(solicitacaoSelecionada) > 0 && (<div className="detail-card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}><span>Valor Realizado</span><strong style={{ color: '#15803d' }}>{formatarValor(solicitacaoSelecionada.valor_realizado)}</strong></div>)}
                 </div>
 
-                <div className="detail-section" style={{ background: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
-                  <div className="section-title-row"><div><span className="eyebrow">DOCUMENTAÇÃO</span><h4 style={{ margin: 0 }}>Arquivos e Comprovantes</h4></div></div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-                    {anexosSolicitacao.length === 0 ? (<div style={{ padding: '16px', background: 'white', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>Nenhum arquivo anexado ainda.</div>) : (
+                <div style={{ background: '#f8fafc', padding: '14px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '20px', fontSize: '13px' }}>
+                  <div><strong>Descrição:</strong> {solicitacaoSelecionada.descricao}</div>
+                  {solicitacaoSelecionada.fornecedor && <div style={{ marginTop: '4px' }}><strong>Fornecedor:</strong> {solicitacaoSelecionada.fornecedor}</div>}
+                  {solicitacaoSelecionada.observacao && <div style={{ marginTop: '4px' }}><strong>Observações:</strong> {solicitacaoSelecionada.observacao}</div>}
+                </div>
+
+                <div style={{ background: '#f8fafc', padding: '18px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                  <span className="eyebrow">DOCUMENTAÇÃO</span>
+                  <h4 style={{ margin: '0 0 12px 0' }}>Arquivos e Comprovantes</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {anexosSolicitacao.length === 0 ? (
+                      <div style={{ padding: '14px', background: 'white', border: '1px dashed #cbd5e1', borderRadius: '8px', textAlign: 'center', fontSize: '12.5px', color: '#64748b' }}>Nenhum arquivo anexado ainda.</div>
+                    ) : (
                       anexosSolicitacao.map(anexo => (
-                        <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'white', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <span style={{ fontSize: '24px' }}>📄</span>
+                        <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '20px' }}>📄</span>
                             <div>
-                              <strong style={{ display: 'block', fontSize: '14px', color: 'var(--text-primary)' }}>{anexo.nome_arquivo}</strong>
-                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>{String(anexo.tipo || '').toUpperCase()} • Enviado em: {formatarDataHora(anexo.data_upload)}</span>
+                              <strong style={{ display: 'block', fontSize: '13px', color: '#0f172a' }}>{anexo.nome_arquivo}</strong>
+                              <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>{String(anexo.tipo || '').toUpperCase()} • {formatarDataHora(anexo.data_upload)}</span>
                             </div>
                           </div>
-                          <a href={`${API_URL}/anexos/${anexo.id}/download`} target="_blank" rel="noreferrer" className="button-secondary" style={{ padding: '8px 16px', fontSize: '12px' }}>Baixar Arquivo</a>
+                          <a href={`${API_URL}/anexos/${anexo.id}/download`} target="_blank" rel="noreferrer" className="button-secondary" style={{ padding: '6px 12px', fontSize: '12px', textDecoration: 'none' }}>Baixar</a>
                         </div>
                       ))
                     )}
-                    <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                      <label className="button-secondary" style={{ cursor: 'pointer', textAlign: 'center', flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      <label className="button-secondary" style={{ cursor: 'pointer', flex: 1 }}>
                         {fazendoUpload ? 'Enviando...' : '+ Anexar Orçamento'}
                         <input type="file" style={{ display: 'none' }} onChange={e => fazerUploadAnexo(e, 'Orçamento')} disabled={fazendoUpload} accept=".pdf,.png,.jpg,.jpeg" />
                       </label>
-                      <label className="button-primary" style={{ cursor: 'pointer', textAlign: 'center', flex: 1, backgroundColor: '#10b981', borderColor: '#10b981' }}>
+                      <label className="button-primary" style={{ cursor: 'pointer', flex: 1, background: '#059669', borderColor: '#059669' }}>
                         {fazendoUpload ? 'Enviando...' : '+ Anexar Nota Fiscal / Comprovante'}
                         <input type="file" style={{ display: 'none' }} onChange={e => fazerUploadAnexo(e, 'Nota Fiscal / Comprovante')} disabled={fazendoUpload} accept=".pdf,.png,.jpg,.jpeg" />
                       </label>
@@ -2598,8 +2694,9 @@ function App() {
                   </div>
                 </div>
 
-                <div className="detail-section" style={{ marginTop: '24px' }}>
-                  <div className="section-title-row"><div><span className="eyebrow">RASTREABILIDADE</span><h4>Histórico</h4></div></div>
+                <div style={{ marginTop: '20px' }}>
+                  <span className="eyebrow">AUDITORIA</span>
+                  <h4 style={{ margin: '0 0 8px 0' }}>Histórico de Eventos</h4>
                   <div className="timeline">
                     {historicoSolicitacao.map(evento => (
                       <div className="timeline-item" key={evento.id}>
@@ -2619,7 +2716,7 @@ function App() {
                 )}
                 {ehControladoria && ['Aprovação pendente', 'Ajuste solicitado'].includes(textoStatus(solicitacaoSelecionada.status)) && (
                   <>
-                    <button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>Aprovar Solicitação</button>
+                    <button className="button-primary" onClick={() => aprovarSolicitacao(solicitacaoSelecionada)}>✓ Aprovar Solicitação</button>
                     <button className="button-secondary" onClick={() => solicitarAjuste(solicitacaoSelecionada)}>Solicitar Ajuste</button>
                     <button className="button-danger" onClick={() => reprovarSolicitacao(solicitacaoSelecionada)}>Reprovar</button>
                     <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
@@ -2627,22 +2724,22 @@ function App() {
                 )}
                 {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
                   <>
-                    <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Executar Solicitação</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                    <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Iniciar Execução</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
                   </>
                 )}
                 {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
                   <>
-                    <button className="button-primary" style={{ backgroundColor: '#10b981', borderColor: '#10b981' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Solicitação</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                    <button className="button-primary" style={{ background: '#059669', borderColor: '#059669' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Compra</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
                   </>
                 )}
                 {ehControladoria && ['Finalizada', 'Reprovada'].includes(textoStatus(solicitacaoSelecionada.status)) && (
                   <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '600', color: textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '#059669' : '#dc2626' }}>
-                      {textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '✓ Solicitação finalizada' : '✕ Solicitação reprovada'}
+                    <span style={{ fontSize: '13px', fontWeight: '700', color: textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '#059669' : '#dc2626' }}>
+                      {textoStatus(solicitacaoSelecionada.status) === 'Finalizada' ? '✓ Solicitação concluída e auditada' : '✕ Solicitação reprovada'}
                     </span>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir Solicitação</button>
+                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
                   </div>
                 )}
               </div>
@@ -2654,22 +2751,28 @@ function App() {
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
             <div className="modal">
               <div className="modal-header">
-                <div><span className="eyebrow">{solicitacaoEditando ? 'EDIÇÃO' : 'NOVA SOLICITAÇÃO'}</span><h3>{solicitacaoEditando ? 'Editar solicitação' : 'Criar Solicitação'}</h3></div>
+                <div><span className="eyebrow">{solicitacaoEditando ? 'EDIÇÃO' : 'NOVA SOLICITAÇÃO'}</span><h3>{solicitacaoEditando ? 'Editar Solicitação' : 'Abrir Solicitação de Compra'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormulario}>×</button>
               </div>
               <div className="modal-body">
                 <form className="form" onSubmit={salvarSolicitacao}>
                   <div className="form-grid">
                     <div className="form-group full">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Condomínio *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCondominio() }}>+ Novo</button></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label>Condomínio *</label>
+                        <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCondominio() }}>+ Novo</button>
+                      </div>
                       <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
                         <option value="">Selecione...</option>
                         {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
                       </select>
                     </div>
-                    
+
                     <div className="form-group full">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Categoria da Despesa *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoCategoria() }}>+ Nova</button></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label>Categoria da Despesa *</label>
+                        <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCategoria() }}>+ Nova</button>
+                      </div>
                       <select value={formulario.categoria} onChange={e => atualizarCampoFormulario('categoria', e.target.value)} required>
                         <option value="">Selecione...</option>
                         {categorias.map(cat => (<option key={cat.id} value={cat.nome}>{cat.nome}</option>))}
@@ -2677,22 +2780,25 @@ function App() {
                     </div>
 
                     <div className="form-group full">
-                      <label>O que está sendo comprado? *</label>
-                      <input type="text" placeholder="Ex: Reforma da guarita..." value={formulario.descricao} onChange={e => atualizarCampoFormulario('descricao', e.target.value)} required />
+                      <label>O que está sendo comprado ou contratado? *</label>
+                      <input type="text" placeholder="Ex: Manutenção corretiva do portão eletrônico..." value={formulario.descricao} onChange={e => atualizarCampoFormulario('descricao', e.target.value)} required />
                     </div>
-                    
+
                     <div className="form-group">
                       <label>Valor de Serviço (R$)</label>
-                      <input type="text" placeholder="Ex: 500,00" value={formulario.valor_servico} onChange={e => atualizarCampoFormulario('valor_servico', e.target.value)} />
+                      <input type="text" placeholder="0,00" value={formulario.valor_servico} onChange={e => atualizarCampoFormulario('valor_servico', e.target.value)} />
                     </div>
-                    
+
                     <div className="form-group">
                       <label>Valor de Produto / Material (R$)</label>
-                      <input type="text" placeholder="Ex: 1200,00" value={formulario.valor_produto} onChange={e => atualizarCampoFormulario('valor_produto', e.target.value)} />
+                      <input type="text" placeholder="0,00" value={formulario.valor_produto} onChange={e => atualizarCampoFormulario('valor_produto', e.target.value)} />
                     </div>
-                    
+
                     <div className="form-group full">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><label style={{ margin: 0 }}>Fornecedor / Prestador de Serviço *</label><button type="button" className="text-button" style={{ fontSize: '12px', padding: 0 }} onClick={e => { e.preventDefault(); e.stopPropagation(); abrirFormularioNovoFornecedor() }}>+ Novo</button></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label>Fornecedor / Prestador *</label>
+                        <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoFornecedor() }}>+ Novo</button>
+                      </div>
                       <select value={formulario.fornecedor} onChange={e => atualizarCampoFormulario('fornecedor', e.target.value)} required>
                         <option value="">Selecione...</option>
                         {fornecedores.map(forn => (<option key={forn.id || forn.nome} value={forn.nome}>{forn.nome}</option>))}
@@ -2700,15 +2806,15 @@ function App() {
                     </div>
 
                     <div className="form-group full">
-                      <label>Observação adicional *</label>
-                      <textarea rows="3" placeholder="Informações úteis para a controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                      <label>Justificativa / Observação *</label>
+                      <textarea rows="3" placeholder="Detalhes importantes para análise da controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
                     </div>
                   </div>
                 </form>
               </div>
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={fecharFormulario}>Cancelar</button>
-                <button type="submit" className="button-primary" onClick={salvarSolicitacao} disabled={salvando}>{salvando ? 'Enviando...' : 'Enviar Solicitação'}</button>
+                <button type="button" className="button-primary" onClick={salvarSolicitacao} disabled={salvando}>{salvando ? 'Enviando...' : 'Salvar Solicitação'}</button>
               </div>
             </div>
           </div>
@@ -2751,7 +2857,7 @@ function App() {
           <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={e => { if (e.target === e.currentTarget) fecharFormularioCategoria() }}>
             <div className="modal">
               <div className="modal-header">
-                <div><span className="eyebrow">{categoriaEditando ? 'EDIÇÃO' : 'NOVO CADASTRO'}</span><h3>{categoriaEditando ? 'Editar Categoria' : 'Cadastrar Categoria'}</h3></div>
+                <div><span className="eyebrow">{categoriaEditando ? 'ALÇADAS E REGRAS' : 'NOVO CADASTRO'}</span><h3>{categoriaEditando ? 'Editar Categoria' : 'Cadastrar Categoria'}</h3></div>
                 <button type="button" className="modal-close" onClick={fecharFormularioCategoria}>×</button>
               </div>
               <div className="modal-body">
@@ -2766,34 +2872,28 @@ function App() {
                       <input type="text" value={formularioCategoria.descricao} onChange={e => atualizarCampoCategoria('descricao', e.target.value)} />
                     </div>
 
-                    <div className="form-group full" style={{ marginTop: '8px' }}>
-                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Limites de Aprovação Automática por Condomínio</span>
-                      </label>
-                      
+                    <div className="form-group full" style={{ marginTop: '6px' }}>
+                      <label>Teto de Aprovação Automática por Condomínio (R$)</label>
                       {condominios.length === 0 ? (
-                        <div style={{ fontSize: '13px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+                        <div style={{ fontSize: '12.5px', color: '#64748b', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
                           Cadastre condomínios primeiro para definir limites de aprovação automática.
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px', maxHeight: '210px', overflowY: 'auto', paddingRight: '4px' }}>
                           {condominios.map(c => (
-                            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#334155' }}>{c.nome}</span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '13px', color: '#64748b' }}>R$</span>
-                                <input 
-                                  type="text" 
-                                  style={{ width: '110px', padding: '8px', fontSize: '14px', textAlign: 'right', border: '1px solid #cbd5e1', borderRadius: '6px' }} 
+                            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>{c.nome}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '700' }}>R$</span>
+                                <input
+                                  type="text"
+                                  style={{ width: '110px', padding: '6px 10px', textAlign: 'right' }}
                                   placeholder="0,00"
                                   value={formularioCategoria.limites[c.nome] || ''}
                                   onChange={e => {
                                     setFormularioCategoria(prev => ({
                                       ...prev,
-                                      limites: {
-                                        ...prev.limites,
-                                        [c.nome]: e.target.value
-                                      }
+                                      limites: { ...prev.limites, [c.nome]: e.target.value }
                                     }))
                                   }}
                                 />
@@ -2808,7 +2908,7 @@ function App() {
               </div>
               <div className="modal-actions">
                 <button type="button" className="button-secondary" onClick={fecharFormularioCategoria} disabled={salvando}>Cancelar</button>
-                <button type="button" className="button-primary" onClick={salvarCategoria} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+                <button type="button" className="button-primary" onClick={salvarCategoria} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar Categoria'}</button>
               </div>
             </div>
           </div>
@@ -2833,7 +2933,7 @@ function App() {
                       <input type="text" value={formularioFornecedor.cnpj} onChange={e => atualizarCampoFornecedor('cnpj', e.target.value)} />
                     </div>
                     <div className="form-group">
-                      <label>Categoria de Serviço</label>
+                      <label>Especialidade / Categoria</label>
                       <input type="text" value={formularioFornecedor.categoria} onChange={e => atualizarCampoFornecedor('categoria', e.target.value)} />
                     </div>
                   </div>
