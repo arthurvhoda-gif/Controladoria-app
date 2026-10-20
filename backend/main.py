@@ -78,6 +78,70 @@ def inicializar_admin():
 
 inicializar_admin()
 
+# ==========================================
+# FUNÇÃO AUXILIAR DE ALÇADA AUTOMÁTICA (PASSO 1)
+# ==========================================
+def obter_limite_aprovacao(db: Session, nome_categoria: str, condominio_nome: Optional[str], condominio_id: Optional[int]) -> Optional[float]:
+    """
+    Busca a categoria pelo nome, lê o JSON de limites e verifica se há alçada
+    configurada para o condomínio (por ID, por nome ou global 'Todos').
+    """
+    if not nome_categoria:
+        return None
+
+    cat = db.query(models.Categoria).filter(
+        models.Categoria.nome == nome_categoria.strip()
+    ).first()
+
+    if not cat or not cat.limites:
+        return None
+
+    try:
+        lista_limites = json.loads(cat.limites)
+        if not isinstance(lista_limites, list):
+            return None
+    except Exception:
+        return None
+
+    limite_global = None
+
+    for item in lista_limites:
+        if not isinstance(item, dict):
+            continue
+
+        # Suporta diferentes chaves possíveis vindas do frontend (valor, limite, valor_maximo, valor_limite)
+        val_raw = item.get("valor") if item.get("valor") is not None else (
+                  item.get("limite") if item.get("limite") is not None else (
+                  item.get("valor_maximo") if item.get("valor_maximo") is not None else item.get("valor_limite")))
+
+        if val_raw is None or val_raw == "":
+            continue
+
+        try:
+            valor_limite = float(val_raw)
+        except ValueError:
+            continue
+
+        item_cond_id = item.get("condominio_id") or item.get("condominioId")
+        item_cond_nome = str(item.get("condominio") or item.get("condominio_nome") or "").strip()
+
+        # 1. Bate pelo ID do condomínio
+        if condominio_id is not None and item_cond_id is not None:
+            if str(item_cond_id) == str(condominio_id):
+                return valor_limite
+
+        # 2. Bate pelo Nome do condomínio
+        if condominio_nome and item_cond_nome:
+            if item_cond_nome.lower() == condominio_nome.strip().lower():
+                return valor_limite
+
+        # 3. Guarda caso exista uma regra geral ("Todos" / "Geral")
+        if item_cond_nome.lower() in ["todos", "geral", "todos os condomínios"]:
+            limite_global = valor_limite
+
+    return limite_global
+
+
 @app.get("/")
 @app.get("/status")
 def status_api():
@@ -314,6 +378,25 @@ def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(ge
     numero_sol = f"SOL-{datetime.now().year}-{qtd:04d}"
     valor_total = (dados.valor_servico or 0.0) + (dados.valor_produto or 0.0)
     
+    # Verifica se há limite de aprovação automática configurado para a categoria e condomínio
+    limite_alcada = obter_limite_aprovacao(
+        db=db,
+        nome_categoria=dados.categoria,
+        condominio_nome=dados.condominio,
+        condominio_id=dados.condominio_id
+    )
+
+    if limite_alcada is not None and valor_total > 0 and valor_total <= limite_alcada:
+        status_inicial = "Aprovada"
+        valor_aprovado_inicial = valor_total
+        acao_historico = f"Solicitação criada e aprovada automaticamente por regra de alçada da Controladoria (Limite: R$ {limite_alcada:.2f})"
+        responsavel_historico = "Sistema (Alçada Automática)"
+    else:
+        status_inicial = "Aprovação pendente"
+        valor_aprovado_inicial = None
+        acao_historico = "Solicitação criada"
+        responsavel_historico = dados.solicitante or "Solicitante"
+
     nova = models.Solicitacao(
         numero=numero_sol,
         condominio=dados.condominio,
@@ -324,8 +407,9 @@ def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(ge
         valor_servico=dados.valor_servico or 0.0,
         valor_produto=dados.valor_produto or 0.0,
         valor=valor_total,
+        valor_aprovado=valor_aprovado_inicial,
         solicitante=dados.solicitante or "Solicitante",
-        status="Aprovação pendente",
+        status=status_inicial,
         observacao=dados.observacao
     )
     db.add(nova)
@@ -334,8 +418,8 @@ def criar_solicitacao(dados: schemas.SolicitacaoCreate, db: Session = Depends(ge
     
     db.add(models.HistoricoSolicitacao(
         solicitacao_id=nova.id,
-        acao="Solicitação criada",
-        responsavel=nova.solicitante
+        acao=acao_historico,
+        responsavel=responsavel_historico
     ))
     db.commit()
     return nova
@@ -355,13 +439,30 @@ def editar_solicitacao(solicitacao_id: int, dados: schemas.SolicitacaoCreate, db
     sol.valor_produto = dados.valor_produto or 0.0
     sol.valor = sol.valor_servico + sol.valor_produto
     sol.observacao = dados.observacao
-    sol.status = "Aprovação pendente"
     sol.motivo_ajuste = None
+
+    # Reavalia a regra de alçada caso o valor ajustado caia dentro do limite automático
+    limite_alcada = obter_limite_aprovacao(
+        db=db,
+        nome_categoria=sol.categoria,
+        condominio_nome=sol.condominio,
+        condominio_id=sol.condominio_id
+    )
+
+    if limite_alcada is not None and sol.valor > 0 and sol.valor <= limite_alcada:
+        sol.status = "Aprovada"
+        sol.valor_aprovado = sol.valor
+        acao_historico = f"Solicitação ajustada e aprovada automaticamente por regra de alçada (Limite: R$ {limite_alcada:.2f})"
+        responsavel_historico = "Sistema (Alçada Automática)"
+    else:
+        sol.status = "Aprovação pendente"
+        acao_historico = "Solicitação ajustada e reenviada para aprovação"
+        responsavel_historico = dados.solicitante or "Solicitante"
     
     db.add(models.HistoricoSolicitacao(
         solicitacao_id=sol.id,
-        acao="Solicitação ajustada e reenviada para aprovação",
-        responsavel=dados.solicitante or "Solicitante"
+        acao=acao_historico,
+        responsavel=responsavel_historico
     ))
     db.commit()
     db.refresh(sol)
