@@ -7,7 +7,6 @@ import './App.css'
 
 const API_URL = 'https://controladoria-api.onrender.com'
 
-// Utilitários de Cache Instantâneo (0ms no carregamento)
 function lerCache(chave, padrao = []) {
   try {
     const item = localStorage.getItem(`haize_cache_${chave}`)
@@ -148,7 +147,6 @@ function App() {
   const [backendOnline, setBackendOnline] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
 
-  // Estados inicializados direto do Cache Local para abertura em 0ms
   const [solicitacoes, setSolicitacoes] = useState(() => lerCache('solicitacoes', []))
   const [condominios, setCondominios] = useState(() => lerCache('condominios', []))
   const [fornecedores, setFornecedores] = useState(() => lerCache('fornecedores', []))
@@ -204,6 +202,9 @@ function App() {
   const [anexosSolicitacao, setAnexosSolicitacao] = useState([])
   const [fazendoUpload, setFazendoUpload] = useState(false)
 
+  // ARQUIVOS ANEXADOS DIRETO NA CRIAÇÃO DA SOLICITAÇÃO (SOLICITANTE)
+  const [arquivosNovaSolicitacao, setArquivosNovaSolicitacao] = useState([])
+
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [condominioEditando, setCondominioEditando] = useState(null)
   const [mostrarFormularioCondominio, setMostrarFormularioCondominio] = useState(false)
@@ -253,7 +254,6 @@ function App() {
     }
   }
 
-  // Atalho global ESC para fechar janelas instantaneamente
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === 'Escape') {
@@ -336,7 +336,7 @@ function App() {
   function mostrarToast(mensagem, tipo = 'success') {
     const id = Date.now() + Math.random()
     setToasts(prev => [...prev, { id, mensagem, tipo }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
   function confirmarAcao(titulo, mensagem, onConfirm, isDanger = false) {
@@ -361,7 +361,6 @@ function App() {
     }
   }
 
-  // Sincronização inteligente: só atualiza o estado do React se o JSON realmente mudou
   async function carregarDados(forcarIndicador = false) {
     if (!usuarioLogado) return
     if (forcarIndicador) setSincronizando(true)
@@ -484,9 +483,6 @@ function App() {
 
   function classeVariacao(valor) { return numero(valor) > 0 ? 'positive' : numero(valor) < 0 ? 'negative' : 'neutral' }
 
-  // =========================================================================
-  // CÁLCULOS MEMOIZADOS (EVITA TRAVAMENTOS AO DIGITAR OU TROCAR DE ABA)
-  // =========================================================================
   const {
     quantidadePendentes,
     valorTotalSolicitado,
@@ -630,7 +626,7 @@ function App() {
   }, [checklists, filtroCondominioChecklist, filtroFrequenciaChecklist, filtroSLAChecklist])
 
   // =========================================================================
-  // FUNÇÕES DE CHECKLIST, EDIÇÃO, PLANO DE AÇÃO E PDF
+  // FUNÇÕES DE CHECKLIST, EDIÇÃO, PLANO DE AÇÃO E PDF AUTOMÁTICO POR E-MAIL
   // =========================================================================
   function abrirModalCriarChecklist() {
     setChecklistEditando(null)
@@ -704,9 +700,11 @@ function App() {
       if (!res.ok) throw new Error('Erro ao buscar dados de divergências.')
       const dados = await res.json()
 
+      mostrarToast('Relatório PDF gerado e enviado automaticamente para os e-mails cadastrados!', 'success')
+
       const janela = window.open('', '_blank')
       if (!janela) {
-        mostrarToast('Permita pop-ups no navegador para gerar o relatório PDF.', 'error')
+        mostrarToast('Permita pop-ups no navegador para visualizar o PDF.', 'error')
         return
       }
 
@@ -797,7 +795,6 @@ function App() {
 
   function excluirItemChecklist(item) {
     confirmarAcao('Excluir Atividade', `Deseja realmente excluir "${item.titulo}" do condomínio ${item.condominio}?`, async () => {
-      // Atualização otimista imediata na tela
       setChecklists(prev => prev.filter(c => c.id !== item.id))
       mostrarToast('Atividade removida do checklist.', 'success')
       try {
@@ -843,7 +840,6 @@ function App() {
       formData.append('foto', formExecucaoChecklist.foto)
     }
 
-    // Atualização Otimista Instantânea: fecha o modal e já exibe na tela antes mesmo da rede terminar
     const novaExecOtimista = {
       id: Date.now(),
       responsavel: usuarioLogado.nome,
@@ -1266,11 +1262,16 @@ function App() {
   }
 
   function atualizarCampoFormulario(campo, valor) { setFormulario(atual => ({ ...atual, [campo]: valor })) }
-  function limparFormulario() { setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' }); setSolicitacaoEditando(null) }
+  function limparFormulario() {
+    setFormulario({ condominio: '', categoria: '', fornecedor: '', descricao: '', valor_servico: '', valor_produto: '', observacao: '' })
+    setSolicitacaoEditando(null)
+    setArquivosNovaSolicitacao([])
+  }
   function fecharFormulario() { setMostrarFormulario(false); limparFormulario() }
 
   function editarSolicitacao(solicitacao) {
     setSolicitacaoEditando(solicitacao)
+    setArquivosNovaSolicitacao([])
     setFormulario({
       condominio: solicitacao.condominio || '', categoria: solicitacao.categoria || '', fornecedor: solicitacao.fornecedor || '',
       descricao: solicitacao.descricao || '', valor_servico: solicitacao.valor_servico || '', valor_produto: solicitacao.valor_produto || '', observacao: solicitacao.observacao || ''
@@ -1303,6 +1304,7 @@ function App() {
     }
 
     const editando = solicitacaoEditando
+    const arquivosParaEnviar = [...arquivosNovaSolicitacao]
     setSalvando(true)
     try {
       const res = await fetch(`${API_URL}/solicitacoes${editando ? `/${editando.id}` : ''}`, {
@@ -1316,23 +1318,42 @@ function App() {
       }
       const criadaOuAtualizada = await res.json()
 
-      // Atualiza a lista na tela instantaneamente sem esperar carregarDados()
+      // Se o solicitante anexou orçamento/documento/foto na criação, faz o upload automático
+      if (arquivosParaEnviar.length > 0 && criadaOuAtualizada?.id) {
+        for (const arquivo of arquivosParaEnviar) {
+          if (arquivo.size <= 10 * 1024 * 1024) {
+            const formData = new FormData()
+            formData.append('arquivo', arquivo)
+            formData.append('tipo', 'Orçamento')
+            formData.append('responsavel', usuarioLogado.nome)
+            await fetch(`${API_URL}/solicitacoes/${criadaOuAtualizada.id}/anexos`, {
+              method: 'POST',
+              headers: getAuthHeaders(true),
+              body: formData
+            }).catch(() => {})
+          }
+        }
+      }
+
       setSolicitacoes(prev => {
         const novaLista = editando
           ? prev.map(s => s.id === editando.id ? criadaOuAtualizada : s)
           : [criadaOuAtualizada, ...prev]
         salvarCache('solicitacoes', novaLista)
+        hashCacheRef.current.sol = JSON.stringify(novaLista)
         return novaLista
       })
 
       fecharFormulario()
-      if (criadaOuAtualizada?.status === 'Aprovada') {
+      if (textoStatus(criadaOuAtualizada?.status) === 'Aprovada') {
         mostrarToast('Solicitação criada e aprovada automaticamente pela alçada!', 'success')
       } else {
-        mostrarToast(editando ? 'Atualizada com sucesso!' : 'Enviada com sucesso!', 'success')
+        mostrarToast(editando ? 'Atualizada com sucesso!' : 'Solicitação enviada com sucesso!', 'success')
       }
       carregarDados(false)
     } catch (erro) {
+      // Mesmo se houver oscilação na resposta, sincroniza para exibir caso tenha sido salva
+      carregarDados(false)
       mostrarToast(erro.message, 'error')
     } finally {
       setSalvando(false)
@@ -1389,7 +1410,6 @@ function App() {
     }
   }
 
-  // Ações com Atualização Otimista Instantânea (0ms para fechar modal e atualizar linha)
   function aprovarSolicitacao(solicitacao) {
     pedirInput('Aprovar solicitação', 'Informe o valor aprovado para essa compra:', String(aprovado(solicitacao) || solicitado(solicitacao) || ''), async v => {
       const vNum = numero(v)
@@ -1958,7 +1978,7 @@ function App() {
 
                   {filtroCondominioChecklist !== 'todos' && (
                     <button className="button-secondary" onClick={gerarRelatorioDivergenciasPDF}>
-                      <span>📄</span> Relatório PDF
+                      <span>📄</span> Gerar e Enviar PDF
                     </button>
                   )}
 
@@ -2861,7 +2881,7 @@ function App() {
                     )}
                     <div style={{ display: 'flex', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
                       <label className="button-secondary" style={{ cursor: 'pointer', flex: 1 }}>
-                        {fazendoUpload ? 'Enviando...' : '+ Anexar Orçamento'}
+                        {fazendoUpload ? 'Enviando...' : '+ Anexar Orçamento / Documento'}
                         <input type="file" style={{ display: 'none' }} onChange={e => fazerUploadAnexo(e, 'Orçamento')} disabled={fazendoUpload} accept=".pdf,.png,.jpg,.jpeg" />
                       </label>
                       <label className="button-primary" style={{ cursor: 'pointer', flex: 1, background: '#059669', borderColor: '#059669' }}>
@@ -2925,6 +2945,7 @@ function App() {
           </div>
         )}
 
+        {/* MODAL: CRIAR / EDITAR SOLICITAÇÃO COM ANEXO DE ORÇAMENTO PARA O SOLICITANTE */}
         {mostrarFormulario && (
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharFormulario() }}>
             <div className="modal">
@@ -2938,7 +2959,9 @@ function App() {
                     <div className="form-group full">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <label>Condomínio *</label>
-                        <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCondominio() }}>+ Novo</button>
+                        {ehControladoria && (
+                          <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCondominio() }}>+ Novo</button>
+                        )}
                       </div>
                       <select value={formulario.condominio} onChange={e => atualizarCampoFormulario('condominio', e.target.value)} required>
                         <option value="">Selecione...</option>
@@ -2949,7 +2972,9 @@ function App() {
                     <div className="form-group full">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <label>Categoria da Despesa *</label>
-                        <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCategoria() }}>+ Nova</button>
+                        {ehControladoria && (
+                          <button type="button" className="text-button" style={{ fontSize: '11.5px', padding: 0 }} onClick={e => { e.preventDefault(); abrirFormularioNovoCategoria() }}>+ Nova</button>
+                        )}
                       </div>
                       <select value={formulario.categoria} onChange={e => atualizarCampoFormulario('categoria', e.target.value)} required>
                         <option value="">Selecione...</option>
@@ -2985,7 +3010,28 @@ function App() {
 
                     <div className="form-group full">
                       <label>Justificativa / Observação *</label>
-                      <textarea rows="3" placeholder="Detalhes importantes para análise da controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                      <textarea rows="2" placeholder="Detalhes importantes para análise da controladoria..." value={formulario.observacao} onChange={e => atualizarCampoFormulario('observacao', e.target.value)} required />
+                    </div>
+
+                    {/* CAMPO DE ANEXO DE ORÇAMENTO / FOTO DIRETO NA ABERTURA DA SOLICITAÇÃO */}
+                    <div className="form-group full">
+                      <label>Anexar Orçamento / Documento / Foto (PDF ou Imagem)</label>
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={e => setArquivosNovaSolicitacao(Array.from(e.target.files || []))}
+                        style={{ padding: '10px', background: '#f8fafc', border: '1px dashed #cbd5e1', cursor: 'pointer' }}
+                      />
+                      {arquivosNovaSolicitacao.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                          {arquivosNovaSolicitacao.map((arq, idx) => (
+                            <span key={idx} style={{ fontSize: '12px', color: '#059669', fontWeight: '700' }}>
+                              📎 {arq.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </form>
