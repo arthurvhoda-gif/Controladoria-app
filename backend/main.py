@@ -11,7 +11,7 @@ from email.mime.text import MIMEText
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -43,11 +43,12 @@ os.makedirs(FOTOS_CHECKLIST_DIR, exist_ok=True)
 # CONFIGURAÇÃO DE E-MAILS PARA ENVIO AUTOMÁTICO DO RELATÓRIO DE CHECKLIST
 # =========================================================================
 EMAILS_DESTINO_RELATORIO = [
-    os.getenv("EMAIL_RELATORIO_1", "email1@suaempresa.com.br"),
-    os.getenv("EMAIL_RELATORIO_2", "email2@suaempresa.com.br")
+    "atendimento@haize.com.br",
+    "Igor@armagni.adv.br"
 ]
 
-SMTP_REMETENTE = os.getenv("SMTP_EMAIL", "seu_email_envio@gmail.com")
+# Credenciais da conta que fará o disparo dos e-mails:
+SMTP_REMETENTE = os.getenv("SMTP_EMAIL", "atendimento@haize.com.br")
 SMTP_SENHA = os.getenv("SMTP_SENHA", "sua_senha_de_app_aqui")
 SMTP_SERVIDOR = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORTA = int(os.getenv("SMTP_PORT", "587"))
@@ -931,7 +932,7 @@ def ver_foto_execucao(execucao_id: int, db: Session = Depends(get_db)):
 
 
 def enviar_relatorio_por_email_bg(dados_relatorio: dict):
-    """Envia o relatório de divergências automaticamente para os 2 e-mails configurados."""
+    """Envia o relatório de divergências automaticamente para atendimento@haize.com.br e Igor@armagni.adv.br."""
     try:
         if not SMTP_SENHA or SMTP_SENHA == "sua_senha_de_app_aqui":
             print("Aviso: Configure SMTP_EMAIL e SMTP_SENHA para envio real de e-mails.")
