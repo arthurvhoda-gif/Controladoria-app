@@ -299,14 +299,36 @@ def listar_categorias(db: Session = Depends(get_db)):
     except Exception as e:
         return []
 
+import json
+from sqlalchemy import text
+
 @app.post("/categorias")
 def criar_categoria(cat: schemas.CategoriaCreate, db: Session = Depends(get_db)):
-    limites_str = json.dumps(cat.limites) if cat.limites is not None else None
-    nova_categoria = models.Categoria(nome=cat.nome.strip(), descricao=cat.descricao, limites=limites_str)
+    # Garante automaticamente que a coluna 'limites' exista no banco de dados
+    try:
+        db.execute(text("ALTER TABLE categorias ADD COLUMN limites TEXT"))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    limites_lista = cat.limites if isinstance(cat.limites, list) else []
+    limites_str = json.dumps(limites_lista, ensure_ascii=False)
+
+    nova_categoria = models.Categoria(
+        nome=cat.nome.strip(),
+        descricao=cat.descricao,
+        limites=limites_str
+    )
     db.add(nova_categoria)
     db.commit()
     db.refresh(nova_categoria)
-    return nova_categoria
+
+    return {
+        "id": nova_categoria.id,
+        "nome": nova_categoria.nome,
+        "descricao": nova_categoria.descricao,
+        "limites": limites_lista
+    }
 
 @app.put("/categorias/{categoria_id}")
 def atualizar_categoria(categoria_id: int, cat: schemas.CategoriaCreate, db: Session = Depends(get_db)):
