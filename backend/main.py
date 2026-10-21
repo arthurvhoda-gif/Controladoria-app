@@ -16,7 +16,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Que
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4, landscape
@@ -87,7 +87,12 @@ def executar_migracoes_automaticas():
         "ALTER TABLE solicitacoes ADD COLUMN valor_realizado FLOAT DEFAULT 0.0",
         "ALTER TABLE checklist_itens ADD COLUMN plano_acao_padrao TEXT",
         "ALTER TABLE checklist_itens ADD COLUMN descricao_orientacao TEXT",
-        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS caminho VARCHAR"  
+        # Compatibilidade com estruturas antigas de anexos no Neon.
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS nome_arquivo VARCHAR",
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS caminho VARCHAR",
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS tipo VARCHAR",
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS responsavel VARCHAR",
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS data_upload VARCHAR"
     ]
     db = SessionLocal()
     try:
@@ -97,6 +102,8 @@ def executar_migracoes_automaticas():
                 db.commit()
             except Exception:
                 db.rollback()
+                if "IF NOT EXISTS" in cmd:
+                    logging.exception("Falha na migração: %s", cmd)
     finally:
         db.close()
 
@@ -724,8 +731,22 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
 
     # Não apague os arquivos antes de o banco confirmar a exclusão.
     try:
-        anexos = db.query(models.Anexo).filter(models.Anexo.solicitacao_id == solicitacao_id).all()
-        caminhos_anexos = [a.caminho for a in anexos if a.caminho]
+        # Um SELECT do modelo inteiro exige todas as colunas de anexos.
+        # Bancos antigos podem não ter algumas delas, impedindo a exclusão.
+        # Lemos SOMENTE o caminho, e apenas se a coluna realmente existir.
+        caminhos_anexos = []
+        colunas_anexos = {
+            coluna["name"] for coluna in inspect(db.get_bind()).get_columns("anexos")
+        }
+        if "caminho" in colunas_anexos:
+            caminhos_anexos = [
+                caminho
+                for caminho in db.execute(
+                    text("SELECT caminho FROM anexos WHERE solicitacao_id = :solicitacao_id"),
+                    {"solicitacao_id": solicitacao_id}
+                ).scalars().all()
+                if isinstance(caminho, str) and caminho
+            ]
         db.query(models.HistoricoSolicitacao).filter(
             models.HistoricoSolicitacao.solicitacao_id == solicitacao_id
         ).delete(synchronize_session=False)
