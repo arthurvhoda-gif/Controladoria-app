@@ -2,18 +2,27 @@ import os
 import json
 import shutil
 import hashlib
-import smtplib
+import base64
+import io
+import logging
+from html import escape
+from urllib import request as urllib_request, error as urllib_error
+from urllib.parse import urlparse
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether
 
 import models
 import schemas
@@ -40,18 +49,17 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(FOTOS_CHECKLIST_DIR, exist_ok=True)
 
 # =========================================================================
-# CONFIGURAÇÃO DE E-MAILS PARA ENVIO AUTOMÁTICO DO RELATÓRIO DE CHECKLIST
+# ENVIO DE RELATORIO PDF VIA GOOGLE APPS SCRIPT (HTTPS)
+# Configure GAS_WEB_APP_URL e HAIZE_SECRET no Environment do Render.
+# Guarde a chave somente no servidor; nunca inclua no App.jsx nem no GitHub.
 # =========================================================================
 EMAILS_DESTINO_RELATORIO = [
     "atendimento@haize.com.br",
-    "Igor@armagni.adv.br"
+    "Igor@armagni.adv.br",
 ]
-
-# Credenciais da conta que fará o disparo dos e-mails:
-SMTP_REMETENTE = os.getenv("SMTP_EMAIL", "atendimento@haize.com.br")
-SMTP_SENHA = os.getenv("SMTP_SENHA", "sua_senha_de_app_aqui")
-SMTP_SERVIDOR = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORTA = int(os.getenv("SMTP_PORT", "587"))
+GAS_WEB_APP_URL = os.getenv("GAS_WEB_APP_URL", "").strip()
+HAIZE_SECRET = os.getenv("HAIZE_SECRET", "").strip()
+logger = logging.getLogger("haize.checklist.email")
 
 
 # =========================================================================
@@ -931,82 +939,193 @@ def ver_foto_execucao(execucao_id: int, db: Session = Depends(get_db)):
     return FileResponse(ex.caminho_foto)
 
 
-def enviar_relatorio_por_email_bg(dados_relatorio: dict):
-    """Envia o relatório de divergências automaticamente para atendimento@haize.com.br e Igor@armagni.adv.br."""
+def gerar_pdf_relatorio_checklist(dados: dict) -> bytes:
+    """Gera um PDF A4 horizontal em memória, sem armazenar no disco do Render."""
+    memoria = io.BytesIO()
+    documento = SimpleDocTemplate(
+        memoria, pagesize=landscape(A4),
+        rightMargin=16 * mm, leftMargin=16 * mm,
+        topMargin=16 * mm, bottomMargin=17 * mm,
+        title=f"Relatório de Divergências - {dados['condominio']}",
+        author="Haize Síndico Profissional",
+    )
+    estilos = getSampleStyleSheet()
+    titulo = ParagraphStyle(
+        "TituloHaize", parent=estilos["Heading1"],
+        fontName="Helvetica-Bold", fontSize=16, leading=19,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=5,
+    )
+    texto = ParagraphStyle(
+        "TextoHaize", parent=estilos["Normal"], fontName="Helvetica",
+        fontSize=9, leading=13, textColor=colors.HexColor("#334155"),
+    )
+    pequeno = ParagraphStyle(
+        "PequenoHaize", parent=texto, fontSize=8, leading=11,
+    )
+    cabecalho = ParagraphStyle(
+        "CabecalhoHaize", parent=pequeno, fontName="Helvetica-Bold",
+        textColor=colors.white,
+    )
+
+    def p(texto_bruto, estilo=pequeno):
+        seguro = escape(str(texto_bruto or "-")).replace("\n", "<br/>")
+        return Paragraph(seguro, estilo)
+
+    elementos = [
+        Paragraph("HAIZE SÍNDICO PROFISSIONAL", titulo),
+        Paragraph("Relatório de Auditoria e Divergências de Vistoria", texto),
+        Spacer(1, 7 * mm),
+        p(f"Condomínio: {dados['condominio']}", texto),
+        p(f"Emissão: {datetime.now().strftime('%d/%m/%Y %H:%M')} | Total de divergências: {dados['total_divergencias']}", texto),
+        Spacer(1, 6 * mm),
+    ]
+
+    colunas = [
+        Paragraph("ITEM VISTORIADO", cabecalho),
+        Paragraph("APONTAMENTO / NÃO CONFORMIDADE", cabecalho),
+        Paragraph("DIRETRIZ / PLANO DE AÇÃO", cabecalho),
+    ]
+    linhas = [colunas]
+    for d in dados["divergencias"]:
+        informacoes = [
+            p(d.get("atividade")),
+            p(f"Frequência: {d.get('frequencia') or '-'}"),
+            p(f"Data: {d.get('data_ocorrencia') or '-'}"),
+            p(f"Vistoriador: {d.get('responsavel') or '-'}"),
+        ]
+        linhas.append([
+            informacoes,
+            p(d.get("relato")),
+            p(d.get("plano_acao")),
+        ])
+    if not dados["divergencias"]:
+        linhas.append([
+            p("Nenhuma irregularidade identificada; todas as vistorias estão em conformidade."),
+            "", "",
+        ])
+
+    largura_util = landscape(A4)[0] - 32 * mm
+    tabela = Table(
+        linhas, colWidths=[largura_util * 0.31, largura_util * 0.35, largura_util * 0.34],
+        repeatRows=1, hAlign="LEFT",
+    )
+    estilo_tabela = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]
+    if not dados["divergencias"]:
+        estilo_tabela.append(("SPAN", (0, 1), (-1, 1)))
+    tabela.setStyle(TableStyle(estilo_tabela))
+    elementos.append(tabela)
+    elementos.append(Spacer(1, 16 * mm))
+    elementos.append(Paragraph("Relatório gerado pelo sistema de Controladoria Haize.", pequeno))
+
+    def rodape(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.drawRightString(landscape(A4)[0] - 16 * mm, 9 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    documento.build(elementos, onFirstPage=rodape, onLaterPages=rodape)
+    return memoria.getvalue()
+
+
+def enviar_relatorio_google_apps_script(dados: dict) -> None:
+    """Envia o PDF a um Google Apps Script que usa MailApp.sendEmail.
+
+    A resposta sucesso=true significa que o Apps Script concluiu a chamada
+    do MailApp sem erro, mas não garante entrega na caixa de entrada.
+    """
+    if not GAS_WEB_APP_URL or not HAIZE_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Envio não configurado. Cadastre GAS_WEB_APP_URL e HAIZE_SECRET no Render.",
+        )
+
+    destino = urlparse(GAS_WEB_APP_URL)
+    if (
+        destino.scheme != "https"
+        or destino.hostname != "script.google.com"
+        or not destino.path.startswith("/macros/s/")
+        or not destino.path.endswith("/exec")
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="GAS_WEB_APP_URL inválida. Use a URL de implantação do Apps Script terminada em /exec.",
+        )
+
+    pdf = gerar_pdf_relatorio_checklist(dados)
+    # O script espera exatamente estas chaves, como configurado anteriormente.
+    payload = {
+        "chave": HAIZE_SECRET,
+        "condominio": dados["condominio"],
+        "pdf_base64": base64.b64encode(pdf).decode("ascii"),
+    }
+    req = urllib_request.Request(
+        GAS_WEB_APP_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
     try:
-        if not SMTP_SENHA or SMTP_SENHA == "sua_senha_de_app_aqui":
-            print("Aviso: Configure SMTP_EMAIL e SMTP_SENHA para envio real de e-mails.")
-            return
+        # O ContentService do Google redireciona a resposta para googleusercontent.
+        # urllib segue esse redirecionamento e lê o JSON de resposta.
+        with urllib_request.urlopen(req, timeout=45) as resp:
+            corpo = resp.read(100_000).decode("utf-8")
+    except urllib_error.HTTPError as exc:
+        logger.error("Google Apps Script respondeu com HTTP %s", exc.code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google Apps Script recusou o envio (HTTP {exc.code}). Confira a implantação e os logs.",
+        ) from exc
+    except (urllib_error.URLError, TimeoutError, OSError) as exc:
+        logger.exception("Não foi possível acessar o Google Apps Script")
+        raise HTTPException(
+            status_code=502,
+            detail="Erro de conexão com Google Apps Script. Confira a URL e a implantação.",
+        ) from exc
 
-        linhas_html = ""
-        if not dados_relatorio["divergencias"]:
-            linhas_html = """
-            <tr>
-                <td colspan="3" style="padding:16px; text-align:center; color:#059669; font-weight:bold; background:#f0fdf4;">
-                    ✓ Nenhuma irregularidade identificada. Todas as vistorias estão em conformidade.
-                </td>
-            </tr>
-            """
-        else:
-            for d in dados_relatorio["divergencias"]:
-                linhas_html += f"""
-                <tr>
-                    <td style="padding:10px; border:1px solid #cbd5e1;">
-                        <strong>{d['atividade']}</strong><br>
-                        <small style="color:#64748b;">Frequência: {d['frequencia']} | Data: {d['data_ocorrencia']} | Vistoriador: {d['responsavel']}</small>
-                    </td>
-                    <td style="padding:10px; border:1px solid #cbd5e1; color:#b91c1c;">{d['relato']}</td>
-                    <td style="padding:10px; border:1px solid #cbd5e1; background:#fffbeb; color:#92400e; font-weight:bold;">{d['plano_acao']}</td>
-                </tr>
-                """
+    try:
+        resposta = json.loads(corpo)
+    except (json.JSONDecodeError, TypeError):
+        logger.error("Resposta não JSON do Google Apps Script (possível página de login ou autorização)")
+        raise HTTPException(
+            status_code=502,
+            detail="Google Apps Script não retornou JSON. Confirme o acesso 'Qualquer pessoa' e a autorização do script.",
+        )
 
-        corpo_html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #0f172a;">
-            <h2 style="margin-bottom:4px;">HAIZE SÍNDICO PROFISSIONAL</h2>
-            <p style="margin-top:0; color:#475569;">Relatório Automático de Divergências de Vistoria</p>
-            <p><strong>Condomínio:</strong> {dados_relatorio['condominio']} | <strong>Total de Divergências:</strong> {dados_relatorio['total_divergencias']}</p>
-            <table style="width:100%; border-collapse:collapse; margin-top:12px;">
-                <thead>
-                    <tr style="background:#0f172a; color:#ffffff;">
-                        <th style="padding:10px; text-align:left; border:1px solid #0f172a;">Item Vistoriado</th>
-                        <th style="padding:10px; text-align:left; border:1px solid #0f172a;">Não Conformidade</th>
-                        <th style="padding:10px; text-align:left; border:1px solid #0f172a;">Plano de Ação</th>
-                    </tr>
-                </thead>
-                <tbody>{linhas_html}</tbody>
-            </table>
-        </body>
-        </html>
-        """
+    if resposta.get("sucesso") is not True:
+        erro_publico = resposta.get("erro", "Falha não especificada.")
+        logger.error("Google Apps Script não concluiu o envio do checklist: %s", erro_publico)
+        # Não exibe dados confidenciais do Script na interface.
+        raise HTTPException(
+            status_code=502,
+            detail="O Google Apps Script não conseguiu enviar o e-mail. Confira a chave e os logs do Apps Script.",
+        )
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Relatório de Divergências (Checklist) - {dados_relatorio['condominio']}"
-        msg["From"] = SMTP_REMETENTE
-        msg["To"] = ", ".join(EMAILS_DESTINO_RELATORIO)
-        msg.attach(MIMEText(corpo_html, "html", "utf-8"))
-
-        with smtplib.SMTP(SMTP_SERVIDOR, SMTP_PORTA) as server:
-            server.starttls()
-            server.login(SMTP_REMETENTE, SMTP_SENHA)
-            server.sendmail(SMTP_REMETENTE, EMAILS_DESTINO_RELATORIO, msg.as_string())
-    except Exception as e:
-        print("Erro ao enviar e-mail do relatorio:", e)
+    logger.info("Google Apps Script confirmou envio do checklist para condomínio: %s", dados["condominio"])
 
 
 @app.get("/condominios/{condominio_id}/checklist-relatorio-divergencias")
 def relatorio_divergencias_checklist(
     condominio_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
+    """Consulta dados do relatório. GET não envia e-mail para evitar disparos acidentais."""
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
 
     itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio == cond.nome).all()
     divergencias = []
-
     for item in itens:
         ultima = (
             db.query(models.ChecklistExecucao)
@@ -1023,15 +1142,27 @@ def relatorio_divergencias_checklist(
                 "data_ocorrencia": ultima.data_execucao,
                 "relato": ultima.observacao or "Sem descrição detalhada.",
                 "plano_acao": item.plano_acao_padrao or "Acionar controladoria para definição corretiva.",
-                "tem_foto": bool(ultima.caminho_foto)
+                "tem_foto": bool(ultima.caminho_foto),
             })
-
-    resultado = {
+    return {
         "condominio": cond.nome,
         "total_divergencias": len(divergencias),
         "divergencias": divergencias,
-        "emails_notificados": EMAILS_DESTINO_RELATORIO
+        "emails_notificados": EMAILS_DESTINO_RELATORIO,
     }
 
-    background_tasks.add_task(enviar_relatorio_por_email_bg, resultado)
-    return resultado
+
+@app.post("/condominios/{condominio_id}/checklist-relatorio-divergencias/enviar")
+def enviar_relatorio_divergencias_checklist(
+    condominio_id: int,
+    db: Session = Depends(get_db),
+):
+    """Gera PDF e solicita envio por HTTPS aos dois destinatários."""
+    dados = relatorio_divergencias_checklist(condominio_id, db)
+    enviar_relatorio_google_apps_script(dados)
+    return {
+        "status": "enviado_pelo_apps_script",
+        "mensagem": "O Google Apps Script confirmou o envio do e-mail com o PDF anexado.",
+        "emails_destino": EMAILS_DESTINO_RELATORIO,
+        "condominio": dados["condominio"],
+    }
