@@ -1548,17 +1548,30 @@ function App() {
 
   function excluirSolicitacao(solicitacao) {
     confirmarAcao('Excluir', `Apagar ${solicitacao.numero || ''}?`, async () => {
-      fecharSolicitacao()
-      setSolicitacoes(prev => prev.filter(s => s.id !== solicitacao.id))
-      mostrarToast('Excluída com sucesso.', 'success')
-
       try {
-        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}`, { method: 'DELETE', headers: getAuthHeaders() })
+        // Primeiro confirma a exclusão no servidor; não remove dados nem exibe
+        // sucesso antes de receber a resposta da API.
+        const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir solicitação.'))
+
+        // Só atualiza a tela e o cache depois da confirmação do banco de dados.
+        const atualizadas = solicitacoes.filter(s => s.id !== solicitacao.id)
+        setSolicitacoes(prev => prev.filter(s => s.id !== solicitacao.id))
+        salvarCache('solicitacoes', atualizadas)
+        hashCacheRef.current.sol = JSON.stringify(atualizadas)
+        qtdSolicitacoesRef.current = atualizadas.length
+        fecharSolicitacao()
+        mostrarToast('Solicitação excluída com sucesso.', 'success')
         carregarDados(false)
-      } catch (e) {
-        mostrarToast(e.message, 'error')
-        carregarDados(false)
+      } catch (erro) {
+        const falhaDeRede = erro instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(erro.message)
+        const mensagem = falhaDeRede
+          ? 'Falha na comunicação com o Render. Confira a API e os Logs do servidor.'
+          : (erro.message || 'Erro inesperado ao excluir a solicitação.')
+        mostrarToast(`Solicitação NÃO excluída: ${mensagem}`, 'error')
       }
     }, true)
   }
@@ -1753,7 +1766,7 @@ function App() {
       </div>
 
       {dialog.isOpen && (
-        <div className="dialog-overlay" onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
+        <div className="dialog-overlay" style={{ zIndex: 11000 }} onClick={e => { if (e.target === e.currentTarget) fecharDialog() }}>
           <div className="dialog-box">
             <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '800', color: '#0f172a' }}>{dialog.title}</h3>
             <p style={{ margin: 0, fontSize: '13.5px', color: '#475569' }}>{dialog.message}</p>

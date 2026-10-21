@@ -721,18 +721,35 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
     if not db_sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
 
-    db.query(models.HistoricoSolicitacao).filter(models.HistoricoSolicitacao.solicitacao_id == solicitacao_id).delete()
-    anexos = db.query(models.Anexo).filter(models.Anexo.solicitacao_id == solicitacao_id).all()
-    for a in anexos:
-        if a.caminho and os.path.exists(a.caminho):
-            try:
-                os.remove(a.caminho)
-            except Exception:
-                pass
-    db.query(models.Anexo).filter(models.Anexo.solicitacao_id == solicitacao_id).delete()
+    # Não apague os arquivos antes de o banco confirmar a exclusão.
+    try:
+        anexos = db.query(models.Anexo).filter(models.Anexo.solicitacao_id == solicitacao_id).all()
+        caminhos_anexos = [a.caminho for a in anexos if a.caminho]
+        db.query(models.HistoricoSolicitacao).filter(
+            models.HistoricoSolicitacao.solicitacao_id == solicitacao_id
+        ).delete(synchronize_session=False)
+        db.query(models.Anexo).filter(
+            models.Anexo.solicitacao_id == solicitacao_id
+        ).delete(synchronize_session=False)
+        db.delete(db_sol)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logging.exception("Falha ao excluir solicitação %s", solicitacao_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Não foi possível excluir a solicitação no banco de dados. Consulte os Logs do Render."
+        )
 
-    db.delete(db_sol)
-    db.commit()
+    # A limpeza dos anexos é posterior à confirmação: problemas com arquivo
+    # não devem desfazer nem falsificar a exclusão já feita no banco.
+    for caminho in caminhos_anexos:
+        try:
+            if os.path.isfile(caminho):
+                os.remove(caminho)
+        except OSError:
+            logging.warning("Não foi possível limpar anexo após excluir solicitação %s", solicitacao_id, exc_info=True)
+
     return {"mensagem": "Solicitação excluída com sucesso."}
 
 
