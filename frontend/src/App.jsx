@@ -165,6 +165,7 @@ function App() {
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
   const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
   const [filtroSLAChecklist, setFiltroSLAChecklist] = useState('todos')
+  const [enviandoRelatorio, setEnviandoRelatorio] = useState(false)
   const [mostrarModalNovoChecklist, setMostrarModalNovoChecklist] = useState(false)
   const [checklistEditando, setChecklistEditando] = useState(null)
   const [formNovoChecklist, setFormNovoChecklist] = useState({
@@ -685,6 +686,7 @@ function App() {
   }
 
   async function gerarRelatorioDivergenciasPDF() {
+    if (enviandoRelatorio) return
     if (filtroCondominioChecklist === 'todos') {
       mostrarToast('Selecione um condomínio específico no filtro para gerar o relatório de divergências.', 'error')
       return
@@ -695,17 +697,16 @@ function App() {
       return
     }
 
+    // Abra a aba no próprio clique para evitar bloqueio de pop-ups após o fetch.
+    const janela = window.open('', '_blank')
+    setEnviandoRelatorio(true)
     try {
       const res = await fetch(`${API_URL}/condominios/${condObj.id}/checklist-relatorio-divergencias`, { headers: getAuthHeaders() })
       if (!res.ok) throw new Error('Erro ao buscar dados de divergências.')
       const dados = await res.json()
 
-      mostrarToast('Relatório PDF gerado e enviado automaticamente para os e-mails cadastrados!', 'success')
-
-      const janela = window.open('', '_blank')
       if (!janela) {
-        mostrarToast('Permita pop-ups no navegador para visualizar o PDF.', 'error')
-        return
+        mostrarToast('Permita pop-ups no navegador para visualizar o PDF. O envio por e-mail continuará normalmente.', 'error')
       }
 
       const linhasDivergencias = dados.divergencias.length === 0 ? `
@@ -736,7 +737,7 @@ function App() {
         </tr>
       `).join('')
 
-      janela.document.write(`
+      if (janela) janela.document.write(`
         <!DOCTYPE html>
         <html lang="pt-BR">
         <head>
@@ -787,9 +788,27 @@ function App() {
         </body>
         </html>
       `)
-      janela.document.close()
-    } catch {
-      mostrarToast('Erro ao gerar relatório de divergências.', 'error')
+      if (janela) janela.document.close()
+
+      // O GET apenas consulta as divergências. O POST solicita o envio real do PDF.
+      // Não exibimos sucesso antes da confirmação do provedor de e-mail.
+      try {
+        const respostaEnvio = await fetch(
+          `${API_URL}/condominios/${condObj.id}/checklist-relatorio-divergencias/enviar`,
+          { method: 'POST', headers: getAuthHeaders() }
+        )
+        if (!respostaEnvio.ok) {
+          throw new Error(await extrairErro(respostaEnvio, 'O serviço de e-mail não aceitou o relatório.'))
+        }
+        mostrarToast('Envio solicitado pelo Gmail para os dois destinatários! Confira o recebimento.', 'success')
+      } catch (erroEmail) {
+        mostrarToast(`PDF gerado, mas e-mail NÃO enviado: ${erroEmail.message}`, 'error')
+      }
+    } catch (erro) {
+      if (janela && !janela.closed) janela.close()
+      mostrarToast(erro.message || 'Erro ao gerar relatório de divergências.', 'error')
+    } finally {
+      setEnviandoRelatorio(false)
     }
   }
 
@@ -1977,8 +1996,8 @@ function App() {
                   </select>
 
                   {filtroCondominioChecklist !== 'todos' && (
-                    <button className="button-secondary" onClick={gerarRelatorioDivergenciasPDF}>
-                      <span>📄</span> Gerar e Enviar PDF
+                    <button className="button-secondary" onClick={gerarRelatorioDivergenciasPDF} disabled={enviandoRelatorio}>
+                      <span>📄</span> {enviandoRelatorio ? 'Enviando relatório...' : 'Gerar e Enviar PDF'}
                     </button>
                   )}
 
