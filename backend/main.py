@@ -86,7 +86,8 @@ def executar_migracoes_automaticas():
         "ALTER TABLE solicitacoes ADD COLUMN valor_aprovado FLOAT DEFAULT 0.0",
         "ALTER TABLE solicitacoes ADD COLUMN valor_realizado FLOAT DEFAULT 0.0",
         "ALTER TABLE checklist_itens ADD COLUMN plano_acao_padrao TEXT",
-        "ALTER TABLE checklist_itens ADD COLUMN descricao_orientacao TEXT"
+        "ALTER TABLE checklist_itens ADD COLUMN descricao_orientacao TEXT",
+        "ALTER TABLE anexos ADD COLUMN IF NOT EXISTS caminho VARCHAR"  
     ]
     db = SessionLocal()
     try:
