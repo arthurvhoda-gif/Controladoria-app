@@ -272,6 +272,13 @@ function App() {
   const [ordenacaoSolicitacao, setOrdenacaoSolicitacao] = useState('recentes')
   const [paginaSolicitacoes, setPaginaSolicitacoes] = useState(1)
   const [filtroCompra, setFiltroCompra] = useState('')
+  const [filtroCondominioCompra, setFiltroCondominioCompra] = useState('todos')
+  const [filtroStatusCompra, setFiltroStatusCompra] = useState('todos')
+  const [ordenacaoCompra, setOrdenacaoCompra] = useState('recentes')
+  const [paginaCompra, setPaginaCompra] = useState(1)
+  const [buscaCondominioCadastro, setBuscaCondominioCadastro] = useState('')
+  const [buscaCategoriaCadastro, setBuscaCategoriaCadastro] = useState('')
+  const [buscaFornecedorCadastro, setBuscaFornecedorCadastro] = useState('')
   const [salvando, setSalvando] = useState(false)
 
   const [filtroDataInicio, setFiltroDataInicio] = useState('')
@@ -769,16 +776,56 @@ function App() {
     }
   }, [solicitacoes])
 
+  // Compras: somente registros nas etapas aprovadas, execução ou finalização.
+  const comprasBase = useMemo(() => solicitacoes.filter(sol =>
+    ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(sol.status))
+  ), [solicitacoes])
   const comprasFiltradas = useMemo(() => {
-    const buscaNorm = normalizarTexto(filtroCompra)
-    return solicitacoes.filter(sol => {
-      const st = textoStatus(sol.status)
-      if (!['Aprovada', 'Em execução', 'Finalizada'].includes(st)) return false
-      if (!buscaNorm) return true
-      const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''}`)
-      return t.includes(buscaNorm)
+    const busca = normalizarTexto(filtroCompra)
+    return comprasBase.filter(sol => {
+      if (filtroCondominioCompra !== 'todos' && sol.condominio !== filtroCondominioCompra) return false
+      if (filtroStatusCompra !== 'todos' && textoStatus(sol.status) !== filtroStatusCompra) return false
+      return !busca || normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.descricao || ''} ${sol.categoria || ''} ${sol.fornecedor || ''}`).includes(busca)
+    }).sort((a, b) => {
+      if (ordenacaoCompra === 'maior_valor') return aprovado(b) - aprovado(a) || numero(b.id) - numero(a.id)
+      if (ordenacaoCompra === 'menor_valor') return aprovado(a) - aprovado(b) || numero(b.id) - numero(a.id)
+      if (ordenacaoCompra === 'condominio') return String(a.condominio || '').localeCompare(String(b.condominio || ''), 'pt-BR') || numero(b.id) - numero(a.id)
+      return String(b.data || '').localeCompare(String(a.data || '')) || numero(b.id) - numero(a.id)
     })
-  }, [solicitacoes, filtroCompra])
+  }, [comprasBase, filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
+  const resumoCompras = useMemo(() => ({
+    total: comprasBase.length,
+    aprovadas: comprasBase.filter(sol => textoStatus(sol.status) === 'Aprovada').length,
+    emExecucao: comprasBase.filter(sol => textoStatus(sol.status) === 'Em execução').length,
+    finalizadas: comprasBase.filter(sol => textoStatus(sol.status) === 'Finalizada').length
+  }), [comprasBase])
+  const totalComprasAprovado = comprasFiltradas.reduce((acc, sol) => acc + aprovado(sol), 0)
+  const totalComprasRealizado = comprasFiltradas.reduce((acc, sol) => acc + realizado(sol), 0)
+  const comprasPorPagina = 10
+  const totalPaginasCompra = Math.max(1, Math.ceil(comprasFiltradas.length / comprasPorPagina))
+  const paginaAtualCompra = Math.min(paginaCompra, totalPaginasCompra)
+  const comprasPaginadas = comprasFiltradas.slice((paginaAtualCompra - 1) * comprasPorPagina, paginaAtualCompra * comprasPorPagina)
+  useEffect(() => { setPaginaCompra(1) }, [filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
+  function limparFiltrosCompra() {
+    setFiltroCompra('')
+    setFiltroCondominioCompra('todos')
+    setFiltroStatusCompra('todos')
+    setOrdenacaoCompra('recentes')
+    setPaginaCompra(1)
+  }
+  const opcoesCondominiosCompra = useMemo(() =>
+    [...new Set(comprasBase.map(sol => sol.condominio).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [comprasBase]
+  )
+  const condominiosCadastroFiltrados = useMemo(() => condominios.filter(cond =>
+    normalizarTexto(`${cond.nome || ''} ${cond.cnpj || ''} ${cond.codigo || ''}`).includes(normalizarTexto(buscaCondominioCadastro))
+  ), [condominios, buscaCondominioCadastro])
+  const categoriasCadastroFiltradas = useMemo(() => categorias.filter(cat =>
+    normalizarTexto(`${cat.nome || ''} ${cat.descricao || ''}`).includes(normalizarTexto(buscaCategoriaCadastro))
+  ), [categorias, buscaCategoriaCadastro])
+  const fornecedoresCadastroFiltrados = useMemo(() => fornecedores.filter(forn =>
+    normalizarTexto(`${forn.nome || ''} ${forn.cnpj || ''} ${forn.categoria || ''}`).includes(normalizarTexto(buscaFornecedorCadastro))
+  ), [fornecedores, buscaFornecedorCadastro])
 
   const {
     solicitacoesAnaliseFiltradas,
@@ -1882,14 +1929,14 @@ function App() {
 
   function excluirCondominio(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
-      setCondominios(prev => prev.filter(c => c.id !== id))
-      mostrarToast('Condomínio excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/condominios/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir condomínio.'))
-        carregarDados(false)
+        setCondominios(prev => prev.filter(c => c.id !== id))
+        mostrarToast('Condomínio excluído.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir o condomínio: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -1943,14 +1990,14 @@ function App() {
 
   function excluirCategoria(id, nome) {
     confirmarAcao('Excluir', `Apagar a categoria "${nome}"?`, async () => {
-      setCategorias(prev => prev.filter(c => c.id !== id))
-      mostrarToast('Categoria excluída.', 'success')
       try {
         const res = await fetch(`${API_URL}/categorias/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir categoria.'))
-        carregarDados(false)
+        setCategorias(prev => prev.filter(c => c.id !== id))
+        mostrarToast('Categoria excluída.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir a categoria: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -1983,14 +2030,14 @@ function App() {
 
   function excluirFornecedor(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
-      setFornecedores(prev => prev.filter(f => f.id !== id))
-      mostrarToast('Fornecedor excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/fornecedores/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir fornecedor.'))
-        carregarDados(false)
+        setFornecedores(prev => prev.filter(f => f.id !== id))
+        mostrarToast('Fornecedor excluído.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir o fornecedor: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -2782,210 +2829,96 @@ function App() {
         )}
 
         {pagina === 'compras' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <span className="eyebrow">FLUXO DE COMPRAS</span>
-                  <h3>{pagina === 'solicitacoes' ? 'Solicitações de Compra' : 'Compras Aprovadas & Em Execução'}</h3>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input
-                    type="text"
-                    placeholder="🔍 Buscar por código, condomínio ou item..."
-                    style={{ minWidth: '260px' }}
-                    value={pagina === 'solicitacoes' ? filtroSolicitacao : filtroCompra}
-                    onChange={e => pagina === 'solicitacoes' ? setFiltroSolicitacao(e.target.value) : setFiltroCompra(e.target.value)}
-                  />
-                </div>
+          <div className="page compras-page">
+            <header className="cadastro-hero compras-hero">
+              <div>
+                <span className="cadastro-hero-kicker">ACOMPANHAMENTO DE COMPRAS</span>
+                <h2>Compras e execução</h2>
+                <p>Visualize pedidos aprovados, acompanhe a execução e consulte os valores registrados.</p>
               </div>
-
-              {pagina === 'solicitacoes' && (
-                <div className="filter-bar">
-                  <div className="pill-group">
-                    {[
-                      { id: 'todos', label: 'Todas' },
-                      { id: 'Aprovação pendente', label: '⏳ Pendentes' },
-                      { id: 'Em análise', label: 'Em análise' },
-                      { id: 'Ajuste solicitado', label: '📌 Em Ajuste' },
-                      { id: 'Aprovada', label: '✓ Aprovadas' },
-                      { id: 'Em execução', label: '▶ Em Execução' },
-                      { id: 'Finalizada', label: '✅ Finalizadas' },
-                      { id: 'Reprovada', label: '✕ Reprovadas' }
-                    ].map(st => (
-                      <button
-                        key={st.id}
-                        className={`filter-pill ${filtroStatus === st.id ? 'active' : ''}`}
-                        onClick={() => setFiltroStatus(st.id)}
-                      >
-                        {st.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="table">
-                <div className="table-header" style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined}>
-                  <span>Código</span>
-                  <span>Condomínio</span>
-                  <span>Descrição & Categoria</span>
-                  {pagina === 'compras' && (<span>Solicitado</span>)}
-                  <span>{pagina === 'compras' ? 'Aprovado' : 'Valor Total'}</span>
-                  <span>Status</span>
-                </div>
-                {(pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).length === 0 ? (
-                  <div style={{ padding: '36px', textAlign: 'center', color: '#64748b' }}>
-                    Nenhum registro encontrado para este filtro.
-                  </div>
-                ) : (
-                  (pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).map(sol => (
-                    <div className="table-row clickable" key={sol.id} style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined} onClick={() => abrirSolicitacao(sol)}>
-                      <span className="id">{sol.numero}</span>
-                      <strong style={{ color: '#0f172a' }}>{sol.condominio}</strong>
-                      <div>
-                        <div style={{ color: '#1e293b', fontWeight: '600' }}>{sol.descricao}</div>
-                        {sol.categoria && <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>📁 {sol.categoria} {sol.fornecedor ? `• ${sol.fornecedor}` : ''}</div>}
-                      </div>
-                      {pagina === 'compras' && (<strong>{formatarValor(sol.valor)}</strong>)}
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <strong style={{ color: '#0f172a' }}>{formatarValor(pagina === 'compras' ? (aprovado(sol) || sol.valor) : sol.valor)}</strong>
-                        {pagina === 'solicitacoes' && aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '700' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
-                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '700' }}>Pago: {formatarValor(realizado(sol))}</span>)}
-                      </div>
-                      {renderBadge(sol)}
-                    </div>
-                  ))
-                )}
+              <div className="cadastro-hero-icon"><IconeHaize nome="shopping" tamanho={40}/></div>
+            </header>
+            <div className="compras-indicadores" aria-label="Resumo do fluxo de compras">
+              <div className="compras-indicador"><span>Em acompanhamento</span><strong>{resumoCompras.total}</strong><small>Pedidos aprovados ou posteriores</small></div>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Aprovada' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Aprovada' ? 'todos' : 'Aprovada')}><span>Aprovadas</span><strong>{resumoCompras.aprovadas}</strong><small>Prontas para execução</small></button>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Em execução' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Em execução' ? 'todos' : 'Em execução')}><span>Em execução</span><strong>{resumoCompras.emExecucao}</strong><small>Compras em andamento</small></button>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Finalizada' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Finalizada' ? 'todos' : 'Finalizada')}><span>Finalizadas</span><strong>{resumoCompras.finalizadas}</strong><small>Compras concluídas</small></button>
+            </div>
+            <section className="panel compras-painel">
+              <div className="cadastro-painel-topo">
+                <div><span className="eyebrow">PAINEL DE COMPRAS</span><h3>Registros e valores</h3><p>Use os filtros para encontrar uma compra e abra seus detalhes para consultar o histórico.</p></div>
+                <span className="cadastro-contador">{comprasFiltradas.length} {comprasFiltradas.length === 1 ? 'resultado' : 'resultados'}</span>
               </div>
+              <div className="cadastro-filtros compras-filtros">
+                <label className="cadastro-campo cadastro-busca"><span>Buscar compra</span><input type="search" value={filtroCompra} placeholder="Código, descrição, fornecedor..." onChange={e => setFiltroCompra(e.target.value)}/></label>
+                <label className="cadastro-campo"><span>Condomínio</span><select value={filtroCondominioCompra} onChange={e => setFiltroCondominioCompra(e.target.value)}><option value="todos">Todos os condomínios</option>{opcoesCondominiosCompra.map(nome => <option value={nome} key={nome}>{nome}</option>)}</select></label>
+                <label className="cadastro-campo"><span>Status</span><select value={filtroStatusCompra} onChange={e => setFiltroStatusCompra(e.target.value)}><option value="todos">Todos os status</option><option value="Aprovada">Aprovadas</option><option value="Em execução">Em execução</option><option value="Finalizada">Finalizadas</option></select></label>
+                <label className="cadastro-campo"><span>Ordenar</span><select value={ordenacaoCompra} onChange={e => setOrdenacaoCompra(e.target.value)}><option value="recentes">Mais recentes</option><option value="maior_valor">Maior aprovado</option><option value="menor_valor">Menor aprovado</option><option value="condominio">Condomínio (A–Z)</option></select></label>
+              </div>
+              {(filtroCompra || filtroCondominioCompra !== 'todos' || filtroStatusCompra !== 'todos' || ordenacaoCompra !== 'recentes') && <div className="cadastro-acoes-filtro"><button type="button" className="text-button" onClick={limparFiltrosCompra}>Limpar filtros</button></div>}
+              <div className="compras-resumo-valores" aria-live="polite">
+                <div><span>Total aprovado no filtro</span><strong>{formatarValor(totalComprasAprovado)}</strong></div>
+                <div><span>Total realizado no filtro</span><strong>{formatarValor(totalComprasRealizado)}</strong></div>
+                <p>Valores calculados apenas com os lançamentos registrados. Aprovação não é pagamento.</p>
+              </div>
+              <div className="compras-tabela" role="table" aria-label="Compras aprovadas e em execução">
+                <div className="compras-tabela-cabecalho" role="row"><span role="columnheader">Código</span><span role="columnheader">Condomínio / Descrição</span><span role="columnheader">Aprovado</span><span role="columnheader">Realizado</span><span role="columnheader">Status</span><span role="columnheader">Detalhes</span></div>
+                {comprasPaginadas.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="shopping" tamanho={30}/><strong>{comprasBase.length === 0 ? 'Nenhuma compra em acompanhamento' : 'Nenhuma compra encontrada'}</strong><p>{comprasBase.length === 0 ? 'As solicitações aprovadas, em execução e finalizadas aparecerão aqui.' : 'Altere os filtros ou limpe a busca para ver mais resultados.'}</p><button type="button" className="button-secondary" onClick={limparFiltrosCompra}>Limpar filtros</button></div> : comprasPaginadas.map(sol => <div className="compras-linha" role="row" key={sol.id}>
+                  <div role="cell"><span className="compras-mobile-label">Código</span><button type="button" className="central-codigo-botao" onClick={() => abrirSolicitacao(sol)}>{sol.numero || `#${sol.id}`}</button><small>{String(sol.data || '').slice(0,10).split('-').reverse().join('/')}</small></div>
+                  <div role="cell" className="compras-descricao"><span className="compras-mobile-label">Condomínio / Descrição</span><strong>{sol.condominio}</strong><span title={sol.descricao || ''}>{sol.descricao || 'Sem descrição'}</span><small>{[sol.categoria, sol.fornecedor].filter(Boolean).join(' • ')}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Aprovado</span><strong>{formatarValor(aprovado(sol))}</strong><small>Solicitado: {formatarValor(solicitado(sol))}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Realizado</span><strong>{formatarValor(realizado(sol))}</strong><small>{textoStatus(sol.status) === 'Finalizada' ? 'Valor registrado' : 'Ainda em andamento'}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Status</span>{renderBadge(sol)}</div>
+                  <div role="cell" className="compras-cell-acao"><button type="button" className="button-secondary" onClick={() => abrirSolicitacao(sol)}>Ver detalhes <IconeHaize nome="arrow" tamanho={15}/></button></div>
+                </div>)}
+              </div>
+              {totalPaginasCompra > 1 && <nav className="cadastro-paginacao" aria-label="Páginas das compras"><span>Página {paginaAtualCompra} de {totalPaginasCompra}</span><div><button type="button" className="button-secondary" disabled={paginaAtualCompra === 1} onClick={() => setPaginaCompra(p => Math.max(1, p-1))}>Anterior</button><button type="button" className="button-secondary" disabled={paginaAtualCompra === totalPaginasCompra} onClick={() => setPaginaCompra(p => Math.min(totalPaginasCompra, p+1))}>Próxima</button></div></nav>}
             </section>
           </div>
         )}
 
         {pagina === 'categorias' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">REGRAS DE ALÇADA</span><h3>Categorias de Despesa</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoCategoria}>+ Nova Categoria</button>
-              </div>
-              <div className="company-grid">
-                {categorias.map(cat => {
-                  const nome = cat.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.categoria === nome).length
-                  const limitesCadastrados = cat.limites?.length || 0
-
-                  return (
-                    <div className="company-card" key={cat.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar" style={{ background: '#f3e8ff', color: '#7e22ce' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge neutral">Ativa</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {cat.descricao && (<span className="company-detail">{cat.descricao}</span>)}
-
-                        {limitesCadastrados > 0 ? (
-                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '7px 12px', borderRadius: '8px', fontWeight: '700' }}>
-                            ⚡ Alçada Automática em {limitesCadastrados} {limitesCadastrados === 1 ? 'condomínio' : 'condomínios'}
-                          </div>
-                        ) : (
-                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '7px 12px', borderRadius: '8px' }}>
-                            Aprovação manual padrão
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button className="text-button" onClick={() => editarCategoria(cat)}>Configurar Alçadas</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCategoria(cat.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">CATEGORIAS E ALÇADAS</span><h2>Categorias de despesas</h2><p>Organize os tipos de gasto e configure os limites de aprovação automática.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="categories" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Gerenciar categorias</h3><p>{categorias.length} {categorias.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoCategoria}><IconeHaize nome="plus" tamanho={16}/> Nova categoria</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar categoria</span><input type="search" value={buscaCategoriaCadastro} onChange={e => setBuscaCategoriaCadastro(e.target.value)} placeholder="Nome ou descrição" /></label><span className="cadastro-contador">{categoriasCadastroFiltradas.length} {categoriasCadastroFiltradas.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {categoriasCadastroFiltradas.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="categories" tamanho={28}/><strong>{categorias.length ? 'Nenhuma categoria encontrada' : 'Nenhuma categoria cadastrada'}</strong><p>{categorias.length ? 'Experimente outro termo de busca.' : 'Cadastre uma categoria para definir regras de aprovação.'}</p>{categorias.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaCategoriaCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{categoriasCadastroFiltradas.map(cat => {
+                const nome = cat.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.categoria === nome).length
+                const limitesCadastrados = Array.isArray(cat.limites) ? cat.limites.length : 0
+                return <article className="cadastro-card" key={cat.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="categories" tamanho={20}/></span><span className="cadastro-chip">Cadastrada</span></div><h4>{nome}</h4><p className="cadastro-card-descricao">{cat.descricao || 'Sem descrição informada'}</p><div className="cadastro-card-info"><span><strong>{qtd}</strong> solicitações vinculadas</span><span>{limitesCadastrados ? `${limitesCadastrados} ${limitesCadastrados === 1 ? 'limite' : 'limites'} de alçada` : 'Aprovação manual padrão'}</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => editarCategoria(cat)}>Configurar alçadas</button><button type="button" className="cadastro-excluir" onClick={() => excluirCategoria(cat.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
 
         {pagina === 'condominios' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">CARTEIRA PREDIAL</span><h3>Condomínios Gerenciados</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoCondominio}>+ Novo Condomínio</button>
-              </div>
-              <div className="company-grid">
-                {condominios.map(condominio => {
-                  const nome = condominio.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.condominio === nome).length
-                  return (
-                    <div className="company-card" key={condominio.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar">{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge approved">Ativo</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
-                        {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
-                      </div>
-
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pedidos: </span>
-                          <strong>{qtd}</strong>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <button className="text-button" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button>
-                          <button className="text-button" onClick={() => editarCondominio(condominio)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">CARTEIRA DE CONDOMÍNIOS</span><h2>Condomínios gerenciados</h2><p>Consulte cadastros, dados administrativos e unidades de rateio em um só lugar.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="buildings" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Carteira predial</h3><p>{condominios.length} {condominios.length === 1 ? 'condomínio cadastrado' : 'condomínios cadastrados'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoCondominio}><IconeHaize nome="plus" tamanho={16}/> Novo condomínio</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar condomínio</span><input type="search" value={buscaCondominioCadastro} onChange={e => setBuscaCondominioCadastro(e.target.value)} placeholder="Nome, CNPJ ou código"/></label><span className="cadastro-contador">{condominiosCadastroFiltrados.length} {condominiosCadastroFiltrados.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {condominiosCadastroFiltrados.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="buildings" tamanho={28}/><strong>{condominios.length ? 'Nenhum condomínio encontrado' : 'Nenhum condomínio cadastrado'}</strong><p>{condominios.length ? 'Experimente outro termo de busca.' : 'Cadastre um condomínio para começar a organizar as solicitações.'}</p>{condominios.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaCondominioCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{condominiosCadastroFiltrados.map(condominio => {
+                const nome = condominio.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.condominio === nome).length
+                return <article className="cadastro-card" key={condominio.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="buildings" tamanho={20}/></span><span className="cadastro-chip">Cadastrado</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{condominio.cnpj || 'Não informado'}</strong></span><span>Código: <strong>{condominio.codigo || 'Não informado'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button><button type="button" className="button-secondary" onClick={() => editarCondominio(condominio)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
 
         {pagina === 'fornecedores' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">PARCEIROS E PRESTADORES</span><h3>Fornecedores Homologados</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoFornecedor}>+ Novo Fornecedor</button>
-              </div>
-              <div className="company-grid">
-                {fornecedores.map(forn => {
-                  const nome = forn.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
-                  return (
-                    <div className="company-card" key={forn.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar" style={{ background: '#f1f5f9', color: '#334155' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge neutral">Homologado</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
-                        {forn.categoria && (<span className="company-detail">Especialidade: {forn.categoria}</span>)}
-                      </div>
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button className="text-button" onClick={() => editarFornecedor(forn)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">REDE DE FORNECEDORES</span><h2>Fornecedores e prestadores</h2><p>Organize parceiros, especialidades e dados cadastrais usados nas solicitações.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="suppliers" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Gerenciar fornecedores</h3><p>{fornecedores.length} {fornecedores.length === 1 ? 'fornecedor cadastrado' : 'fornecedores cadastrados'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoFornecedor}><IconeHaize nome="plus" tamanho={16}/> Novo fornecedor</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar fornecedor</span><input type="search" value={buscaFornecedorCadastro} onChange={e => setBuscaFornecedorCadastro(e.target.value)} placeholder="Nome, CNPJ ou especialidade"/></label><span className="cadastro-contador">{fornecedoresCadastroFiltrados.length} {fornecedoresCadastroFiltrados.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {fornecedoresCadastroFiltrados.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="suppliers" tamanho={28}/><strong>{fornecedores.length ? 'Nenhum fornecedor encontrado' : 'Nenhum fornecedor cadastrado'}</strong><p>{fornecedores.length ? 'Experimente outro termo de busca.' : 'Cadastre um fornecedor para facilitar as próximas solicitações.'}</p>{fornecedores.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaFornecedorCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{fornecedoresCadastroFiltrados.map(forn => {
+                const nome = forn.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
+                return <article className="cadastro-card" key={forn.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="suppliers" tamanho={20}/></span><span className="cadastro-chip">Cadastrado</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{forn.cnpj || 'Não informado'}</strong></span><span>Especialidade: <strong>{forn.categoria || 'Não informada'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => editarFornecedor(forn)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
