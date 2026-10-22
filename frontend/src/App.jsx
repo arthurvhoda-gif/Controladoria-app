@@ -306,6 +306,9 @@ function App() {
   const hashCacheRef = useRef({
     sol: '', cond: '', forn: '', cat: '', chk: ''
   })
+  // Impede que uma resposta iniciada na conta anterior atualize a nova sessão.
+  const tokenSessaoRef = useRef(usuarioLogado?.token || null)
+  const sequenciaCarregamentoRef = useRef(0)
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -341,6 +344,34 @@ function App() {
     localStorage.removeItem('usuarioControladoria')
   }
 
+  // Toda troca de conta começa com dados e filtros limpos, sem pedir F5.
+  function reiniciarDadosDaSessao(proximoToken = null) {
+    tokenSessaoRef.current = proximoToken
+    sequenciaCarregamentoRef.current += 1
+    limparCacheLocal()
+    hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
+    qtdSolicitacoesRef.current = 0
+    setSolicitacoes([])
+    setCondominios([])
+    setFornecedores([])
+    setCategorias([])
+    setChecklists([])
+    setZeladores([])
+    setAtribuicoesZeladores({})
+    setFiltroCondominioChecklist('todos')
+    setFiltroFrequenciaChecklist('todas')
+    setFiltroSLAChecklist('todos')
+    setBuscaChecklist('')
+    setOrdenacaoChecklist('prioridade')
+    setAbaChecklist('vistorias')
+    setSincronizando(false)
+    setItemChecklistHistorico(null)
+    setItemChecklistExecutando(null)
+    setChecklistEditando(null)
+    setMostrarModalNovoChecklist(false)
+    setSolicitacaoSelecionada(null)
+  }
+
   useEffect(() => {
     // Descarta tokens e caches legados do localStorage, anteriores à autenticação segura.
     for (const chave of Object.keys(localStorage)) {
@@ -362,7 +393,7 @@ function App() {
       .catch(() => {
         if (!canceled) {
           sessionStorage.removeItem('usuarioControladoria')
-          limparCacheLocal()
+          reiniciarDadosDaSessao()
           setUsuarioLogado(null)
         }
       })
@@ -464,8 +495,8 @@ function App() {
       }
       const dados = await res.json()
       const dadosUsuario = { ...dados.usuario, token: dados.access_token }
+      reiniciarDadosDaSessao(dadosUsuario.token)
       setUsuarioLogado(dadosUsuario)
-      limparCacheLocal()
       sessionStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       setSenhaLogin('')
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
@@ -478,16 +509,9 @@ function App() {
   }
 
   function fazerLogout() {
-    setUsuarioLogado(null)
     sessionStorage.removeItem('usuarioControladoria')
-    limparCacheLocal()
-    setSolicitacoes([])
-    setCondominios([])
-    setFornecedores([])
-    setCategorias([])
-    setChecklists([])
-    hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
-    setSolicitacaoSelecionada(null)
+    reiniciarDadosDaSessao()
+    setUsuarioLogado(null)
     setPagina('dashboard')
     setEmailLogin('')
     setSenhaLogin('')
@@ -522,16 +546,28 @@ function App() {
   }
 
   async function carregarDados(forcarIndicador = false) {
-    if (!usuarioLogado) return
+    const tokenDestaSessao = usuarioLogado?.token
+    if (!tokenDestaSessao) return
+    const sequencia = ++sequenciaCarregamentoRef.current
+    const respostaDaSessaoAtual = () =>
+      tokenSessaoRef.current === tokenDestaSessao &&
+      sequenciaCarregamentoRef.current === sequencia
+
     if (forcarIndicador) setSincronizando(true)
     try {
+      // Não reutilizar respostas armazenadas pelo navegador para uma lista sensível a permissões.
+      const opcoes = {
+        headers: { Authorization: `Bearer ${tokenDestaSessao}` },
+        cache: 'no-store'
+      }
       const [resSol, resCond, resForn, resCat, resChk] = await Promise.all([
-        fetch(`${API_URL}/solicitacoes`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/condominios`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/fornecedores`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/categorias`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/checklists`, { headers: getAuthHeaders() })
+        fetch(`${API_URL}/solicitacoes`, opcoes),
+        fetch(`${API_URL}/condominios`, opcoes),
+        fetch(`${API_URL}/fornecedores`, opcoes),
+        fetch(`${API_URL}/categorias`, opcoes),
+        fetch(`${API_URL}/checklists`, opcoes)
       ])
+      if (!respostaDaSessaoAtual()) return
 
       if ([resSol, resCond, resForn, resCat, resChk].some(r => r.status === 401)) {
         fazerLogout()
@@ -542,6 +578,7 @@ function App() {
 
       if (resSol.ok) {
         let dados = await resSol.json()
+        if (!respostaDaSessaoAtual()) return
         if (usuarioLogado.perfil === 'Solicitante') {
           dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
         }
@@ -561,8 +598,9 @@ function App() {
 
       if (resCond.ok) {
         const dadosCond = await resCond.json()
+        if (!respostaDaSessaoAtual()) return
         if (usuarioLogado.perfil === 'Checklist') {
-          // A API envia somente o condomínio ao qual o usuário está vinculado.
+          // Apenas o zelador fica com o condomínio da sua conta selecionado.
           setFiltroCondominioChecklist(dadosCond[0]?.nome || 'todos')
         }
         const strCond = JSON.stringify(dadosCond)
@@ -575,6 +613,7 @@ function App() {
 
       if (resForn.ok) {
         const dadosForn = await resForn.json()
+        if (!respostaDaSessaoAtual()) return
         const strForn = JSON.stringify(dadosForn)
         if (strForn !== hashCacheRef.current.forn) {
           hashCacheRef.current.forn = strForn
@@ -585,6 +624,7 @@ function App() {
 
       if (resCat.ok) {
         const dadosCat = await resCat.json()
+        if (!respostaDaSessaoAtual()) return
         const strCat = JSON.stringify(dadosCat)
         if (strCat !== hashCacheRef.current.cat) {
           hashCacheRef.current.cat = strCat
@@ -595,6 +635,7 @@ function App() {
 
       if (resChk.ok) {
         const dadosChk = await resChk.json()
+        if (!respostaDaSessaoAtual()) return
         const strChk = JSON.stringify(dadosChk)
         if (strChk !== hashCacheRef.current.chk) {
           hashCacheRef.current.chk = strChk
@@ -604,26 +645,37 @@ function App() {
         }
       }
     } catch {
-      setBackendOnline(false)
+      if (respostaDaSessaoAtual()) setBackendOnline(false)
     } finally {
-      if (forcarIndicador) setSincronizando(false)
+      if (forcarIndicador && tokenSessaoRef.current === tokenDestaSessao) setSincronizando(false)
     }
   }
 
   useEffect(() => {
-    if (usuarioLogado) {
-      if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
-        setPagina('checklist')
-      }
-      carregarDados(false)
-      const int = setInterval(() => {
-        if (document.visibilityState === 'visible') {
-          carregarDados(false)
-        }
-      }, 12000)
-      return () => clearInterval(int)
+    if (!usuarioLogado?.token) return
+    if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
+      setPagina('checklist')
     }
-  }, [usuarioLogado])
+    carregarDados(false)
+    const atualizarSeVisivel = () => {
+      if (document.visibilityState === 'visible') carregarDados(false)
+    }
+    const intervalo = setInterval(atualizarSeVisivel, 12000)
+    document.addEventListener('visibilitychange', atualizarSeVisivel)
+    window.addEventListener('focus', atualizarSeVisivel)
+    return () => {
+      clearInterval(intervalo)
+      document.removeEventListener('visibilitychange', atualizarSeVisivel)
+      window.removeEventListener('focus', atualizarSeVisivel)
+    }
+  }, [usuarioLogado?.token])
+
+  // Ao entrar no Checklist ou voltar da Gestão de Zeladores, sincroniza sem F5.
+  useEffect(() => {
+    if (usuarioLogado?.token && pagina === 'checklist' && abaChecklist === 'vistorias') {
+      carregarDados(false)
+    }
+  }, [usuarioLogado?.token, pagina, abaChecklist])
 
   function renderBadge(sol) {
     if (!sol) return null
