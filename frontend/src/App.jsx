@@ -2011,9 +2011,6 @@ function App() {
               </span>
             </div>
           </div>
-          <button onClick={() => setMostrarTrocaSenha(true)} className="logout-btn" style={{ background: 'rgba(37,99,235,.12)', color: '#bfdbfe', borderColor: 'rgba(37,99,235,.22)' }}>
-            <span>🔐</span> Alterar minha senha
-          </button>
           <button onClick={fazerLogout} className="logout-btn">
             <span>🚪</span> Encerrar Sessão
           </button>
