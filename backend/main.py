@@ -117,6 +117,7 @@ async def proteger_api(request: Request, call_next):
             request.state.auth_user_id = user.id
             request.state.auth_user_name = user.nome
             request.state.auth_user_role = user.perfil
+            request.state.auth_condominio_id = user.condominio_id
             perfil = user.perfil
     except Exception:
         return JSONResponse(status_code=401, content={'detail': 'Sessão inválida ou expirada. Entre novamente.'})
@@ -205,6 +206,18 @@ def executar_migracoes_automaticas():
     finally:
         db.close()
 
+    # Migração crítica de isolamento: se falhar, o serviço não deve abrir
+    # com proteção parcial dos condomínios.
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
+        conn.execute(text('ALTER TABLE checklist_itens ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_usuarios_condominio_id ON usuarios(condominio_id)'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_checklist_itens_condominio_id ON checklist_itens(condominio_id)'))
+        # Garante também no PostgreSQL que não existam dois zeladores do mesmo condomínio.
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_usuarios_checklist_condominio ON usuarios(condominio_id) WHERE perfil = 'Checklist' AND condominio_id IS NOT NULL"))
+        # Migração dos checklists antigos associados pelo nome.
+        conn.execute(text("UPDATE checklist_itens AS i SET condominio_id = c.id FROM condominios AS c WHERE i.condominio_id IS NULL AND LOWER(TRIM(i.condominio)) = LOWER(TRIM(c.nome))"))
+
 
 # =========================================================================
 # UTILITÁRIOS DE SENHA E USUÁRIOS PADRÃO
@@ -272,7 +285,7 @@ def login(dados: schemas.LoginRequest, db: Session = Depends(get_db)):
         'access_token': auth_utils.create_token(usuario),
         'token_type': 'bearer',
         'expires_in': auth_utils.SESSION_HOURS * 3600,
-        'usuario': {'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email, 'perfil': usuario.perfil},
+        'usuario': {'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email, 'perfil': usuario.perfil, 'condominio_id': usuario.condominio_id},
     }
 
 
@@ -314,13 +327,47 @@ def criar_usuario(user: schemas.UsuarioCreate, db: Session = Depends(get_db)):
         senha_hash = auth_utils.hash_password(user.senha)
     except ValueError as erro:
         raise HTTPException(status_code=400, detail=str(erro))
+    if not user.nome.strip():
+        raise HTTPException(status_code=400, detail='Informe o nome do usuário.')
+    condominio_id = None
+    if user.perfil == 'Checklist':
+        if user.condominio_id is None:
+            raise HTTPException(status_code=400, detail='Selecione o condomínio do zelador.')
+        condominio = db.query(models.Condominio).filter(models.Condominio.id == user.condominio_id).first()
+        if not condominio:
+            raise HTTPException(status_code=400, detail='Condomínio inválido.')
+        condominio_id = condominio.id
+        # Um zelador por condomínio, conforme a operação informada pela Haize.
+        if db.query(models.Usuario).filter(models.Usuario.perfil == 'Checklist', models.Usuario.condominio_id == condominio_id).first():
+            raise HTTPException(status_code=409, detail='Este condomínio já possui um zelador vinculado.')
     novo = models.Usuario(nome=user.nome.strip(), email=email_limpo,
-                          senha=senha_hash, perfil=user.perfil)
+                          senha=senha_hash, perfil=user.perfil, condominio_id=condominio_id)
     db.add(novo)
     db.commit()
     db.refresh(novo)
     return novo
 
+
+
+@app.put('/usuarios/{usuario_id}/condominio', response_model=schemas.UsuarioResponse)
+def vincular_zelador(usuario_id: int, dados: schemas.UsuarioCondominioUpdate, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario or usuario.perfil != 'Checklist':
+        raise HTTPException(status_code=404, detail='Zelador não encontrado.')
+    cond = db.query(models.Condominio).filter(models.Condominio.id == dados.condominio_id).first()
+    if not cond:
+        raise HTTPException(status_code=400, detail='Condomínio inválido.')
+    ocupado = db.query(models.Usuario).filter(
+        models.Usuario.id != usuario_id,
+        models.Usuario.perfil == 'Checklist',
+        models.Usuario.condominio_id == cond.id,
+    ).first()
+    if ocupado:
+        raise HTTPException(status_code=409, detail='Este condomínio já possui um zelador vinculado.')
+    usuario.condominio_id = cond.id
+    db.commit()
+    db.refresh(usuario)
+    return usuario
 
 @app.put('/usuarios/{usuario_id}/senha')
 def alterar_senha_usuario(usuario_id: int, dados: schemas.SenhaUpdate, db: Session = Depends(get_db)):
@@ -351,8 +398,13 @@ def excluir_usuario(usuario_id: int, request: Request, db: Session = Depends(get
 # CONDOMÍNIOS, UNIDADES E RATEIO POR FRAÇÃO IDEAL
 # =========================================================================
 @app.get("/condominios", response_model=List[schemas.CondominioResponse])
-def listar_condominios(db: Session = Depends(get_db)):
-    return db.query(models.Condominio).order_by(models.Condominio.nome.asc()).all()
+def listar_condominios(request: Request, db: Session = Depends(get_db)):
+    query = db.query(models.Condominio)
+    if request.state.auth_user_role == 'Checklist':
+        if request.state.auth_condominio_id is None:
+            return []  # Sem vínculo = nenhum condomínio visível.
+        query = query.filter(models.Condominio.id == request.state.auth_condominio_id)
+    return query.order_by(models.Condominio.nome.asc()).all()
 
 
 @app.post("/condominios", response_model=schemas.CondominioResponse)
@@ -404,6 +456,8 @@ def excluir_condominio(condominio_id: int, db: Session = Depends(get_db)):
     db_cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not db_cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
+    if db.query(models.Usuario).filter(models.Usuario.condominio_id == condominio_id).first():
+        raise HTTPException(status_code=409, detail='Desvincule o zelador antes de excluir este condomínio.')
     db.delete(db_cond)
     db.commit()
     return {"mensagem": "Condomínio excluído com sucesso."}
@@ -978,6 +1032,7 @@ def formatar_item_checklist(db: Session, item: models.ChecklistItem):
     return {
         "id": item.id,
         "condominio": item.condominio,
+        "condominio_id": item.condominio_id,
         "titulo": item.titulo,
         "descricao_orientacao": item.descricao_orientacao,
         "frequencia": item.frequencia,
@@ -989,15 +1044,49 @@ def formatar_item_checklist(db: Session, item: models.ChecklistItem):
 
 
 @app.get("/checklists")
-def listar_checklists(db: Session = Depends(get_db)):
-    itens = db.query(models.ChecklistItem).order_by(models.ChecklistItem.id.desc()).all()
+def listar_checklists(request: Request, db: Session = Depends(get_db)):
+    query = db.query(models.ChecklistItem)
+    if request.state.auth_user_role == 'Checklist':
+        if request.state.auth_condominio_id is None:
+            return []
+        query = query.filter(models.ChecklistItem.condominio_id == request.state.auth_condominio_id)
+    itens = query.order_by(models.ChecklistItem.id.desc()).all()
     return [formatar_item_checklist(db, item) for item in itens]
+
+
+def _condominio_para_atividade(db: Session, dados: schemas.ChecklistItemCreate):
+    # A API deriva o nome pelo ID cadastrado; nunca confia apenas em um nome
+    # recebido do navegador para definir o condomínio de uma vistoria.
+    if dados.condominio_id is not None:
+        cond = db.query(models.Condominio).filter(models.Condominio.id == dados.condominio_id).first()
+    else:
+        cond = db.query(models.Condominio).filter(models.Condominio.nome == dados.condominio.strip()).first()
+    if not cond:
+        raise HTTPException(status_code=400, detail='Condomínio não encontrado para a atividade.')
+    return cond
+
+
+def _validar_acesso_item(request: Request, item: models.ChecklistItem) -> None:
+    if request.state.auth_user_role == 'Checklist':
+        if (request.state.auth_condominio_id is None or
+                item.condominio_id != request.state.auth_condominio_id):
+            # Não divulga a existência de atividades de outros condomínios.
+            raise HTTPException(status_code=404, detail='Atividade não encontrada.')
+
+
+def _validar_acesso_condominio(request: Request, condominio_id: int) -> None:
+    if request.state.auth_user_role == 'Checklist':
+        if (request.state.auth_condominio_id is None or
+                condominio_id != request.state.auth_condominio_id):
+            raise HTTPException(status_code=404, detail='Condomínio não encontrado.')
 
 
 @app.post("/checklists")
 def criar_checklist(item: schemas.ChecklistItemCreate, db: Session = Depends(get_db)):
+    cond = _condominio_para_atividade(db, item)
     novo = models.ChecklistItem(
-        condominio=item.condominio,
+        condominio=cond.nome,
+        condominio_id=cond.id,
         titulo=item.titulo.strip(),
         descricao_orientacao=item.descricao_orientacao,
         frequencia=item.frequencia,
@@ -1015,7 +1104,9 @@ def atualizar_checklist(item_id: int, dados: schemas.ChecklistItemCreate, db: Se
     if not item:
         raise HTTPException(status_code=404, detail="Atividade não encontrada.")
 
-    item.condominio = dados.condominio
+    cond = _condominio_para_atividade(db, dados)
+    item.condominio = cond.nome
+    item.condominio_id = cond.id
     item.titulo = dados.titulo.strip()
     item.descricao_orientacao = dados.descricao_orientacao
     item.frequencia = dados.frequencia
@@ -1058,6 +1149,7 @@ def executar_checklist(
     item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
+    _validar_acesso_item(request, item)
 
     nome_foto = None
     caminho_foto = None
@@ -1084,10 +1176,16 @@ def executar_checklist(
 
 
 @app.get("/checklists/execucoes/{execucao_id}/foto")
-def ver_foto_execucao(execucao_id: int, db: Session = Depends(get_db)):
+def ver_foto_execucao(execucao_id: int, request: Request, db: Session = Depends(get_db)):
     ex = db.query(models.ChecklistExecucao).filter(models.ChecklistExecucao.id == execucao_id).first()
-    if not ex or not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
-        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    if not ex:
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
+    item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == ex.item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
+    _validar_acesso_item(request, item)
+    if not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
     return FileResponse(ex.caminho_foto)
 
 
@@ -1269,14 +1367,16 @@ def enviar_relatorio_google_apps_script(dados: dict) -> None:
 @app.get("/condominios/{condominio_id}/checklist-relatorio-divergencias")
 def relatorio_divergencias_checklist(
     condominio_id: int,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Consulta dados do relatório. GET não envia e-mail para evitar disparos acidentais."""
+    _validar_acesso_condominio(request, condominio_id)
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
 
-    itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio == cond.nome).all()
+    itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio_id == cond.id).all()
     divergencias = []
     for item in itens:
         ultima = (
@@ -1307,10 +1407,12 @@ def relatorio_divergencias_checklist(
 @app.post("/condominios/{condominio_id}/checklist-relatorio-divergencias/enviar")
 def enviar_relatorio_divergencias_checklist(
     condominio_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Gera PDF e solicita envio por HTTPS aos dois destinatários."""
-    dados = relatorio_divergencias_checklist(condominio_id, db)
+    _validar_acesso_condominio(request, condominio_id)
+    dados = relatorio_divergencias_checklist(condominio_id, request, db)
     enviar_relatorio_google_apps_script(dados)
     return {
         "status": "enviado_pelo_apps_script",

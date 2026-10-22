@@ -192,10 +192,17 @@ function App() {
   const [sincronizando, setSincronizando] = useState(false)
 
   const [solicitacoes, setSolicitacoes] = useState(() => lerCache('solicitacoes', []))
-  const [condominios, setCondominios] = useState(() => lerCache('condominios', []))
+  const [condominios, setCondominios] = useState([])
   const [fornecedores, setFornecedores] = useState(() => lerCache('fornecedores', []))
   const [categorias, setCategorias] = useState(() => lerCache('categorias', []))
-  const [checklists, setChecklists] = useState(() => lerCache('checklists', []))
+  const [checklists, setChecklists] = useState([])
+
+  // Cadastro e vinculação dos zeladores (somente Controladoria).
+  const [zeladores, setZeladores] = useState([])
+  const [carregandoZeladores, setCarregandoZeladores] = useState(false)
+  const [salvandoZelador, setSalvandoZelador] = useState(false)
+  const [formZelador, setFormZelador] = useState({ nome: '', email: '', senha: '', condominio_id: '' })
+  const [atribuicoesZeladores, setAtribuicoesZeladores] = useState({})
 
   // GESTÃO DE UNIDADES E RATEIO POR FRAÇÃO
   const [condominioUnidades, setCondominioUnidades] = useState(null)
@@ -553,6 +560,10 @@ function App() {
 
       if (resCond.ok) {
         const dadosCond = await resCond.json()
+        if (usuarioLogado.perfil === 'Checklist') {
+          // A API envia somente o condomínio ao qual o usuário está vinculado.
+          setFiltroCondominioChecklist(dadosCond[0]?.nome || 'todos')
+        }
         const strCond = JSON.stringify(dadosCond)
         if (strCond !== hashCacheRef.current.cond) {
           hashCacheRef.current.cond = strCond
@@ -2047,6 +2058,70 @@ function App() {
   function atualizarCampoCategoria(campo, valor) { setFormularioCategoria(atual => ({ ...atual, [campo]: valor })) }
   function atualizarCampoFornecedor(campo, valor) { setFormularioFornecedor(atual => ({ ...atual, [campo]: valor })) }
 
+  useEffect(() => {
+    if (pagina === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
+  }, [pagina, usuarioLogado?.perfil, usuarioLogado?.token])
+
+  async function carregarZeladores() {
+    if (usuarioLogado?.perfil !== 'Controladoria') return
+    setCarregandoZeladores(true)
+    try {
+      const res = await fetch(`${API_URL}/usuarios`, { headers: getAuthHeaders() })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível consultar os zeladores.'))
+      const lista = (await res.json()).filter(u => u.perfil === 'Checklist')
+      setZeladores(lista)
+      setAtribuicoesZeladores(Object.fromEntries(lista.map(u => [u.id, String(u.condominio_id || '')])))
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally { setCarregandoZeladores(false) }
+  }
+
+  async function criarContaZelador(e) {
+    e.preventDefault()
+    if (!formZelador.condominio_id) { mostrarToast('Selecione um condomínio.', 'error'); return }
+    setSalvandoZelador(true)
+    try {
+      const payload = {
+        nome: formZelador.nome.trim(), email: formZelador.email.trim().toLowerCase(),
+        senha: formZelador.senha, perfil: 'Checklist', condominio_id: Number(formZelador.condominio_id)
+      }
+      const res = await fetch(`${API_URL}/usuarios`, {
+        method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload)
+      })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível criar a conta.'))
+      setFormZelador({ nome: '', email: '', senha: '', condominio_id: '' })
+      await carregarZeladores()
+      mostrarToast('Conta do zelador criada e vinculada ao condomínio.', 'success')
+    } catch (err) { mostrarToast(err.message, 'error') }
+    finally { setSalvandoZelador(false) }
+  }
+
+  async function atualizarCondominioZelador(z) {
+    const numero = Number(atribuicoesZeladores[z.id])
+    if (!Number.isInteger(numero) || numero < 1) { mostrarToast('Selecione um condomínio.', 'error'); return }
+    setSalvandoZelador(true)
+    try {
+      const res = await fetch(`${API_URL}/usuarios/${z.id}/condominio`, {
+        method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ condominio_id: numero })
+      })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível alterar o vínculo.'))
+      await carregarZeladores()
+      mostrarToast('Condomínio do zelador atualizado.', 'success')
+    } catch (err) { mostrarToast(err.message, 'error') }
+    finally { setSalvandoZelador(false) }
+  }
+
+  function excluirContaZelador(z) {
+    confirmarAcao('Excluir conta de zelador', `Remover o acesso de ${z.nome}? O histórico de vistorias será preservado.`, async () => {
+      try {
+        const res = await fetch(`${API_URL}/usuarios/${z.id}`, { method: 'DELETE', headers: getAuthHeaders() })
+        if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível remover a conta.'))
+        await carregarZeladores()
+        mostrarToast('Conta de zelador removida.', 'success')
+      } catch (err) { mostrarToast(err.message, 'error') }
+    }, true)
+  }
+
   if (!usuarioLogado) {
     return (
       <div className="login-screen">
@@ -2208,6 +2283,9 @@ function App() {
 
               <span className="sidebar-section-label">Cadastros Base</span>
               {ehControladoria && <>
+                <button className={pagina === 'zeladores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('zeladores'); setSidebarAberta(false); }}>
+                  <span className="nav-icon"><IconeHaize nome="suppliers" /></span><span>Gestão de Zeladores</span>
+                </button>
                 <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="buildings" /></span><span>Condomínios</span>
                 </button>
@@ -2251,7 +2329,7 @@ function App() {
                 Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina === 'zeladores' ? 'Gestão de Zeladores' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
@@ -2313,6 +2391,79 @@ function App() {
           </div>
         </header>
 
+        {pagina === 'zeladores' && ehControladoria && (
+          <div className="page page-zeladores">
+            <section className="checklist-intro">
+              <div>
+                <span className="eyebrow">PERMISSÕES POR CONDOMÍNIO</span>
+                <h2>Gestão de zeladores</h2>
+                <p>Crie uma conta para cada zelador e limite o acesso ao checklist do condomínio correspondente. Cada condomínio possui um número interno único.</p>
+              </div>
+              <button type="button" className="button-secondary" onClick={carregarZeladores} disabled={carregandoZeladores}>
+                <IconeHaize nome="refresh" tamanho={16} /> {carregandoZeladores ? 'Atualizando...' : 'Atualizar lista'}
+              </button>
+            </section>
+            <div className="zeladores-layout">
+              <section className="panel zeladores-cadastro">
+                <div className="panel-header"><h3>Nova conta de zelador</h3></div>
+                <form onSubmit={criarContaZelador} className="zeladores-form">
+                  <label className="form-group"><span>Nome completo</span>
+                    <input required maxLength={120} value={formZelador.nome} onChange={e => setFormZelador(p => ({ ...p, nome: e.target.value }))} placeholder="Nome do zelador" />
+                  </label>
+                  <label className="form-group"><span>E-mail de acesso</span>
+                    <input required type="email" autoComplete="off" value={formZelador.email} onChange={e => setFormZelador(p => ({ ...p, email: e.target.value }))} placeholder="zelador@exemplo.com" />
+                  </label>
+                  <label className="form-group"><span>Senha inicial (mínimo 10 caracteres)</span>
+                    <input required type="password" minLength={10} autoComplete="new-password" value={formZelador.senha} onChange={e => setFormZelador(p => ({ ...p, senha: e.target.value }))} placeholder="Senha provisória segura" />
+                  </label>
+                  <label className="form-group"><span>Condomínio autorizado</span>
+                    <select required value={formZelador.condominio_id} onChange={e => setFormZelador(p => ({ ...p, condominio_id: e.target.value }))}>
+                      <option value="">Selecione um condomínio</option>
+                      {condominios.map(c => {
+                        const ocupado = zeladores.some(z => z.condominio_id === c.id)
+                        return <option key={c.id} value={c.id} disabled={ocupado}>Nº {c.id} — {c.nome}{ocupado ? ' (já vinculado)' : ''}</option>
+                      })}
+                    </select>
+                  </label>
+                  <p className="zeladores-ajuda">O número corresponde ao ID permanente do condomínio no cadastro. O zelador verá somente as atividades, fotografias e relatórios desse condomínio.</p>
+                  <button className="button-primary" type="submit" disabled={salvandoZelador || !condominios.length}>
+                    <IconeHaize nome="plus" tamanho={16} /> {salvandoZelador ? 'Salvando...' : 'Criar conta e vincular'}
+                  </button>
+                </form>
+              </section>
+              <section className="panel zeladores-lista">
+                <div className="panel-header"><h3>Zeladores cadastrados</h3><span className="badge neutral">{zeladores.length} contas</span></div>
+                {zeladores.length === 0 ? <p className="zeladores-vazio">Nenhum zelador cadastrado com o perfil Checklist.</p> : (
+                  <div className="zeladores-cards">
+                    {zeladores.map(z => {
+                      const cond = condominios.find(c => c.id === z.condominio_id)
+                      return (
+                        <article className="zelador-card" key={z.id}>
+                          <div className="zelador-card-top"><span className="zelador-avatar">{z.nome?.charAt(0)?.toUpperCase()}</span><div><strong>{z.nome}</strong><small>{z.email}</small></div></div>
+                          <div className="zelador-vinculo">Acesso atual: <strong>{cond ? `Nº ${cond.id} — ${cond.nome}` : 'Sem condomínio vinculado'}</strong></div>
+                          <label className="form-group"><span>Alterar condomínio autorizado</span>
+                            <select value={atribuicoesZeladores[z.id] ?? ''} onChange={e => setAtribuicoesZeladores(p => ({ ...p, [z.id]: e.target.value }))}>
+                              <option value="">Selecione um condomínio</option>
+                              {condominios.map(c => {
+                                const ocupado = zeladores.some(outro => outro.id !== z.id && outro.condominio_id === c.id)
+                                return <option key={c.id} value={c.id} disabled={ocupado}>Nº {c.id} — {c.nome}{ocupado ? ' (ocupado)' : ''}</option>
+                              })}
+                            </select>
+                          </label>
+                          <div className="zelador-card-actions">
+                            <button className="button-secondary" disabled={salvandoZelador || !atribuicoesZeladores[z.id] || Number(atribuicoesZeladores[z.id]) === z.condominio_id} onClick={() => atualizarCondominioZelador(z)}>Salvar vínculo</button>
+                            <button className="button-danger" onClick={() => excluirContaZelador(z)}>Excluir conta</button>
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
+
         {/* =========================================================================
             ABA DE CHECKLIST OPERACIONAL E VISTORIAS
            ========================================================================= */}
@@ -2338,6 +2489,15 @@ function App() {
               </div>
             </section>
 
+            {ehChecklist && (
+              <div className={`checklist-acesso-condominio ${!condominios.length ? 'sem-vinculo' : ''}`}>
+                <IconeHaize nome="buildings" tamanho={20} />
+                <div>
+                  <strong>{condominios[0] ? `Condomínio Nº ${condominios[0].id} — ${condominios[0].nome}` : 'Condomínio não vinculado'}</strong>
+                  <span>{condominios[0] ? 'Seu acesso está limitado às vistorias deste condomínio.' : 'Solicite à Controladoria que vincule sua conta a um condomínio.'}</span>
+                </div>
+              </div>
+            )}
             <section className="checklist-indicadores" aria-label="Resumo das vistorias">
               {[
                 { chave: 'todos', titulo: 'Todas', descricao: 'Atividades cadastradas', icone: 'checklist' },
@@ -2374,13 +2534,15 @@ function App() {
                   <span>Buscar atividade</span>
                   <input type="search" value={buscaChecklist} onChange={e => setBuscaChecklist(e.target.value)} placeholder="Nome, condomínio ou instruções" aria-label="Buscar atividade do checklist" />
                 </label>
-                <label className="checklist-campo">
-                  <span>Condomínio</span>
-                  <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
-                    <option value="todos">Todos os condomínios</option>
-                    {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
-                  </select>
-                </label>
+                {ehControladoria && (
+                  <label className="checklist-campo">
+                    <span>Condomínio</span>
+                    <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
+                      <option value="todos">Todos os condomínios</option>
+                      {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                    </select>
+                  </label>
+                )}
                 <label className="checklist-campo">
                   <span>Frequência</span>
                   <select value={filtroFrequenciaChecklist} onChange={e => setFiltroFrequenciaChecklist(e.target.value)}>
@@ -2902,7 +3064,7 @@ function App() {
               {condominiosCadastroFiltrados.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="buildings" tamanho={28}/><strong>{condominios.length ? 'Nenhum condomínio encontrado' : 'Nenhum condomínio cadastrado'}</strong><p>{condominios.length ? 'Experimente outro termo de busca.' : 'Cadastre um condomínio para começar a organizar as solicitações.'}</p>{condominios.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaCondominioCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{condominiosCadastroFiltrados.map(condominio => {
                 const nome = condominio.nome || 'Sem nome'
                 const qtd = solicitacoes.filter(s => s.condominio === nome).length
-                return <article className="cadastro-card" key={condominio.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="buildings" tamanho={20}/></span><span className="cadastro-chip">Cadastrado</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{condominio.cnpj || 'Não informado'}</strong></span><span>Código: <strong>{condominio.codigo || 'Não informado'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button><button type="button" className="button-secondary" onClick={() => editarCondominio(condominio)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button></div></article>
+                return <article className="cadastro-card" key={condominio.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="buildings" tamanho={20}/></span><span className="cadastro-chip">Condomínio Nº {condominio.id}</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{condominio.cnpj || 'Não informado'}</strong></span><span>Código: <strong>{condominio.codigo || 'Não informado'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button><button type="button" className="button-secondary" onClick={() => editarCondominio(condominio)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button></div></article>
               })}</div>}
             </section>
           </div>
