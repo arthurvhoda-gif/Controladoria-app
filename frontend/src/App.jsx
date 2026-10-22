@@ -186,6 +186,7 @@ function App() {
   const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const [abaChecklist, setAbaChecklist] = useState('vistorias')
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
   const [backendOnline, setBackendOnline] = useState(true)
@@ -2059,8 +2060,8 @@ function App() {
   function atualizarCampoFornecedor(campo, valor) { setFormularioFornecedor(atual => ({ ...atual, [campo]: valor })) }
 
   useEffect(() => {
-    if (pagina === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
-  }, [pagina, usuarioLogado?.perfil, usuarioLogado?.token])
+    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
+  }, [pagina, abaChecklist, usuarioLogado?.perfil, usuarioLogado?.token])
 
   async function carregarZeladores() {
     if (usuarioLogado?.perfil !== 'Controladoria') return
@@ -2252,7 +2253,7 @@ function App() {
           {ehChecklist ? (
             <>
               <span className="sidebar-section-label">Operacional</span>
-              <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+              <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
                 <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
               </button>
             </>
@@ -2276,16 +2277,13 @@ function App() {
               </button>
 
               {ehControladoria && (
-                <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+                <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
                 </button>
               )}
 
               <span className="sidebar-section-label">Cadastros Base</span>
               {ehControladoria && <>
-                <button className={pagina === 'zeladores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('zeladores'); setSidebarAberta(false); }}>
-                  <span className="nav-icon"><IconeHaize nome="suppliers" /></span><span>Gestão de Zeladores</span>
-                </button>
                 <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="buildings" /></span><span>Condomínios</span>
                 </button>
@@ -2329,7 +2327,7 @@ function App() {
                 Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina === 'zeladores' ? 'Gestão de Zeladores' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
@@ -2391,8 +2389,26 @@ function App() {
           </div>
         </header>
 
-        {pagina === 'zeladores' && ehControladoria && (
-          <div className="page page-zeladores">
+
+        {/* =========================================================================
+            ABA DE CHECKLIST OPERACIONAL E VISTORIAS
+           ========================================================================= */}
+        {pagina === 'checklist' && (
+          <div className="page page-checklist">
+            {ehControladoria && (
+              <nav className="checklist-abas" aria-label="Áreas do Checklist">
+                <button type="button" className={`checklist-aba ${abaChecklist === 'vistorias' ? 'active' : ''}`}
+                  onClick={() => setAbaChecklist('vistorias')} aria-current={abaChecklist === 'vistorias' ? 'page' : undefined}>
+                  <IconeHaize nome="checklist" tamanho={17} /> Vistorias e atividades
+                </button>
+                <button type="button" className={`checklist-aba ${abaChecklist === 'zeladores' ? 'active' : ''}`}
+                  onClick={() => setAbaChecklist('zeladores')} aria-current={abaChecklist === 'zeladores' ? 'page' : undefined}>
+                  <IconeHaize nome="suppliers" tamanho={17} /> Gestão de Zeladores
+                </button>
+              </nav>
+            )}
+            {ehControladoria && abaChecklist === 'zeladores' ? (
+              <div className="checklist-gestao-zeladores">
             <section className="checklist-intro">
               <div>
                 <span className="eyebrow">PERMISSÕES POR CONDOMÍNIO</span>
@@ -2461,14 +2477,9 @@ function App() {
                 )}
               </section>
             </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            ABA DE CHECKLIST OPERACIONAL E VISTORIAS
-           ========================================================================= */}
-        {pagina === 'checklist' && (
-          <div className="page page-checklist">
+              </div>
+            ) : (
+              <>
             <section className="checklist-intro">
               <div>
                 <span className="eyebrow">OPERAÇÃO E MANUTENÇÃO PREVENTIVA</span>
@@ -2629,6 +2640,8 @@ function App() {
                 </div>
               )}
             </section>
+              </>
+            )}
           </div>
         )}
 
