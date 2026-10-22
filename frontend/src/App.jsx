@@ -105,6 +105,17 @@ function realizado(item) { return numero(item?.valor_realizado) }
 function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
 function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
 
+function escaparHtml(valor) {
+  return String(valor ?? '').replace(/[&<>"']/g, caractere => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[caractere]))
+}
+
+function dataLocalISO(data) {
+  const dois = valor => String(valor).padStart(2, '0')
+  return `${data.getFullYear()}-${dois(data.getMonth() + 1)}-${dois(data.getDate())}`
+}
+
 function formatarDataHora(dataStr) {
   if (!dataStr) return '-'
   const d = parseDataSegura(dataStr)
@@ -822,6 +833,52 @@ function App() {
     }
   }, [solicitacoes, filtroCondominioAnalise, filtroDataInicio, filtroDataFim])
 
+  // Indicadores baseados na mesma agregação do gráfico e da tabela financeira.
+  // Não alteram valores persistidos, status nem as regras do backend.
+  const resumoFinanceiro = useMemo(() => {
+    const totalSolicitado = solicitacoesAnaliseFiltradas.reduce((total, sol) => total + solicitado(sol), 0)
+    const totalAprovado = listaOrcamentoCondominio.reduce((total, item) => total + item.aprovado, 0)
+    const totalRealizado = listaOrcamentoCondominio.reduce((total, item) => total + item.realizado, 0)
+    return {
+      totalSolicitado,
+      totalAprovado,
+      totalRealizado,
+      saldo: totalAprovado - totalRealizado,
+      pedidos: solicitacoesAnaliseFiltradas.length,
+      condominios: listaOrcamentoCondominio.length
+    }
+  }, [solicitacoesAnaliseFiltradas, listaOrcamentoCondominio])
+
+  const categoriasFinanceiras = useMemo(() => {
+    const mapa = new Map()
+    for (const sol of solicitacoesAnaliseFiltradas) {
+      if (textoStatus(sol.status) !== 'Finalizada') continue
+      const nome = sol.categoria || 'Sem categoria'
+      // Mantém o critério legado dos totais apresentados no gráfico financeiro.
+      const valor = realizado(sol) || aprovado(sol) || solicitado(sol)
+      mapa.set(nome, (mapa.get(nome) || 0) + valor)
+    }
+    return [...mapa.entries()]
+      .map(([nome, valor]) => ({ nome, valor }))
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 6)
+  }, [solicitacoesAnaliseFiltradas])
+
+  function aplicarPeriodoAnalise(tipo) {
+    if (tipo === 'todos') {
+      setFiltroDataInicio('')
+      setFiltroDataFim('')
+      return
+    }
+    const hoje = new Date()
+    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())
+    if (tipo === '30dias') inicio.setDate(inicio.getDate() - 29)
+    if (tipo === 'mes') inicio.setDate(1)
+    if (tipo === 'ano') { inicio.setMonth(0); inicio.setDate(1) }
+    setFiltroDataInicio(dataLocalISO(inicio))
+    setFiltroDataFim(dataLocalISO(hoje))
+  }
+
   // A contagem acompanha condomínio, frequência e busca, sem depender da aba de situação.
   const checklistsNoEscopo = useMemo(() => {
     const busca = normalizarTexto(buscaChecklist)
@@ -1399,7 +1456,7 @@ function App() {
 
     const linhasResumo = listaOrcamentoCondominio.map((item, idx) => `
       <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
-        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${item.nome}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${escaparHtml(item.nome)}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; font-weight: 600;">${item.qtdSolicitacoes || 0}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
@@ -1409,10 +1466,10 @@ function App() {
 
     const linhasSols = solicitacoesAnaliseFiltradas.map((s, idx) => `
       <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${s.numero || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${s.condominio || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; color: #475569;">${s.categoria || '-'}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.descricao || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${escaparHtml(s.numero || '')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${escaparHtml(s.condominio || '')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; color: #475569;">${escaparHtml(s.categoria || '-')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${escaparHtml(s.descricao || '')}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor)}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600;">${formatarValor(s.valor_realizado || s.valor_aprovado || s.valor)}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600; font-size: 11px;">${textoStatus(s.status)}</td>
@@ -1445,8 +1502,8 @@ function App() {
             <div class="subtitle">Relatório Consolidado de Fecho Orçamentário</div>
           </div>
           <div class="meta" style="text-align: right;">
-            <div><strong>Filtro:</strong> ${condFormatado}</div>
-            <div><strong>Período:</strong> ${periodoFormatado}</div>
+            <div><strong>Filtro:</strong> ${escaparHtml(condFormatado)}</div>
+            <div><strong>Período:</strong> ${escaparHtml(periodoFormatado)}</div>
             <div><strong>Emissão:</strong> ${new Date().toLocaleDateString('pt-BR')}</div>
           </div>
         </div>
@@ -2482,130 +2539,139 @@ function App() {
         )}
 
         {pagina === 'analises' && !ehChecklist && (
-          <div className="page">
-            <section className="welcome" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-              <div><span className="eyebrow">INTELIGÊNCIA E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)}>
-                  <option value="todos">Todos os Condomínios</option>
-                  {condominios?.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
-                </select>
+          <div className="page page-analises">
+            <section className="analise-hero">
+              <div className="analise-hero-texto">
+                <span className="analise-hero-eyebrow">INTELIGÊNCIA FINANCEIRA • HAIZE</span>
+                <h2>Visão analítica da controladoria</h2>
+                <p>Acompanhe solicitações, aprovações e despesas por condomínio em uma única visão.</p>
+                <span className="analise-hero-contagem">{resumoFinanceiro.pedidos} solicitações • {resumoFinanceiro.condominios} condomínios no filtro</span>
+              </div>
+              <span className="analise-hero-simbolo" aria-hidden="true"><IconeHaize nome="analyses" tamanho={58}/></span>
+            </section>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '9px', padding: '4px 10px' }}>
-                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>De:</span>
-                  <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
-                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>Até:</span>
-                  <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
-                  {(filtroDataInicio || filtroDataFim) && (
-                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} className="text-button" style={{ fontSize: '11px' }}>Limpar</button>
-                  )}
+            <section className="panel analise-filtros-painel" aria-label="Filtros dos relatórios financeiros">
+              <div className="analise-painel-titulo">
+                <div><span className="eyebrow">RECORTE DOS DADOS</span><h3>Filtros e período</h3></div>
+                <div className="analise-exportar" role="group" aria-label="Exportar dados filtrados">
+                  <button type="button" className="button-secondary" onClick={exportarRelatorioExcel} disabled={resumoFinanceiro.pedidos === 0}><IconeHaize nome="file" tamanho={16}/> Exportar Excel</button>
+                  <button type="button" className="button-secondary" onClick={exportarRelatorioPDF} disabled={resumoFinanceiro.pedidos === 0}><IconeHaize nome="file" tamanho={16}/> Imprimir PDF</button>
                 </div>
-
-                <button className="button-secondary" onClick={exportarRelatorioExcel}>
-                  <span>📊</span> Excel (.xlsx)
-                </button>
-                <button className="button-secondary" onClick={exportarRelatorioPDF}>
-                  <span>🖨️</span> Imprimir PDF
-                </button>
+              </div>
+              <div className="analise-filtros-grade">
+                <label className="analise-campo analise-campo-condominio"><span>Condomínio</span>
+                  <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)}>
+                    <option value="todos">Todos os condomínios</option>
+                    {condominios.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                  </select>
+                </label>
+                <label className="analise-campo"><span>Data inicial</span>
+                  <input type="date" value={filtroDataInicio} max={filtroDataFim || undefined} onChange={e => setFiltroDataInicio(e.target.value)} />
+                </label>
+                <label className="analise-campo"><span>Data final</span>
+                  <input type="date" value={filtroDataFim} min={filtroDataInicio || undefined} onChange={e => setFiltroDataFim(e.target.value)} />
+                </label>
+              </div>
+              <div className="analise-periodos" role="group" aria-label="Selecionar período rápido">
+                <span>Período rápido:</span>
+                <button type="button" className={!filtroDataInicio && !filtroDataFim ? 'active' : ''} aria-pressed={!filtroDataInicio && !filtroDataFim} onClick={() => aplicarPeriodoAnalise('todos')}>Todo o período</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('30dias')}>Últimos 30 dias</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('mes')}>Este mês</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('ano')}>Este ano</button>
+                {(filtroDataInicio || filtroDataFim || filtroCondominioAnalise !== 'todos') && <button type="button" className="analise-limpar" onClick={() => { setFiltroCondominioAnalise('todos'); aplicarPeriodoAnalise('todos') }}>Limpar tudo</button>}
               </div>
             </section>
 
-            {filtroCondominioAnalise !== 'todos' && (
-              <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-                <div className="panel">
-                  <div className="panel-header">
-                    <div>
-                      <span className="eyebrow">RATEIO AUTOMÁTICO</span>
-                      <h3>Distribuição por Fração Ideal — {filtroCondominioAnalise}</h3>
-                    </div>
-                    {rateioDados && (
-                      <span className="badge approved" style={{ fontSize: '12.5px', padding: '6px 12px' }}>
-                        Despesas Finalizadas: {formatarValor(rateioDados.total_gasto_condominio)} ({rateioDados.quantidade_solicitacoes} itens)
-                      </span>
-                    )}
-                  </div>
+            <section className="analise-kpis" aria-label="Indicadores financeiros filtrados">
+              <article className="analise-kpi"><span className="analise-kpi-simbolo solicitado"><IconeHaize nome="requests" tamanho={19}/></span><div><span>Valor solicitado</span><strong>{formatarValor(resumoFinanceiro.totalSolicitado)}</strong><small>Pedidos do período</small></div></article>
+              <article className="analise-kpi"><span className="analise-kpi-simbolo aprovado"><IconeHaize nome="approved" tamanho={19}/></span><div><span>Valor aprovado</span><strong>{formatarValor(resumoFinanceiro.totalAprovado)}</strong><small>Solicitações aprovadas</small></div></article>
+              <article className="analise-kpi"><span className="analise-kpi-simbolo realizado"><IconeHaize nome="wallet" tamanho={19}/></span><div><span>Valor realizado</span><strong>{formatarValor(resumoFinanceiro.totalRealizado)}</strong><small>Despesas finalizadas</small></div></article>
+              <article className={`analise-kpi ${resumoFinanceiro.saldo < 0 ? 'analise-kpi-negativo' : ''}`}><span className="analise-kpi-simbolo saldo"><IconeHaize nome="savings" tamanho={19}/></span><div><span>Saldo entre aprovado e realizado</span><strong>{formatarValor(resumoFinanceiro.saldo)}</strong><small>{resumoFinanceiro.saldo < 0 ? 'Realizado supera aprovado' : 'Diferença ainda não realizada'}</small></div></article>
+            </section>
 
-                  {carregandoRateio ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Calculando rateio de despesas...</div>
-                  ) : !rateioDados || rateioDados.rateio_unidades.length === 0 ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
-                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>Unidades</strong> para configurar.
+            {resumoFinanceiro.pedidos === 0 ? (
+              <section className="panel analise-vazio"><IconeHaize nome="analyses" tamanho={33}/><strong>Sem dados para os filtros selecionados</strong><p>Experimente outro condomínio ou amplie o período da pesquisa.</p><button type="button" className="button-secondary" onClick={() => { setFiltroCondominioAnalise('todos'); aplicarPeriodoAnalise('todos') }}>Limpar filtros</button></section>
+            ) : (
+              <>
+                <div className="analise-duas-colunas">
+                  <section className="panel analise-grafico-painel">
+                    <div className="analise-secao-cabecalho"><div><span className="eyebrow">VISÃO COMPARATIVA</span><h3>Solicitado × Aprovado × Realizado</h3><p>Até 10 condomínios com maior valor solicitado no período.</p></div></div>
+                    <div className="analise-chart" style={{ height: Math.max(275, Math.min(510, dadosGraficoCondominios.length * 48 + 95)) }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart layout="vertical" data={dadosGraficoCondominios} margin={{ top: 8, right: 12, left: 3, bottom: 6 }} barCategoryGap="25%">
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3eaf4" />
+                          <XAxis type="number" tickFormatter={v => `R$ ${v >= 1000000 ? `${(v / 1000000).toFixed(1)}mi` : v >= 1000 ? `${Math.round(v / 1000)}mil` : v}`} fontSize={10} tickLine={false} axisLine={false} stroke="#8190a2" />
+                          <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 10, fill: '#50647e' }} tickFormatter={nome => String(nome).length > 19 ? `${String(nome).slice(0, 18)}…` : nome} tickLine={false} axisLine={false} />
+                          <RechartsTooltip formatter={valor => formatarValor(valor)} cursor={{ fill: '#f4f7fc' }} />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '9px' }} />
+                          <Bar name="Solicitado" dataKey="Solicitado" fill="#9aacc7" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                          <Bar name="Aprovado" dataKey="Aprovado" fill="#356ae6" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                          <Bar name="Realizado" dataKey="Realizado" fill="#059669" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                  ) : (
-                    <div className="table">
-                      <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
-                        <span>Unidade / Apartamento</span>
-                        <span>Fração Ideal (%)</span>
-                        <span style={{ textAlign: 'right' }}>Valor Rateado (R$)</span>
+                  </section>
+
+                  <section className="panel analise-categorias-painel">
+                    <div className="analise-secao-cabecalho"><div><span className="eyebrow">DESPESAS FINALIZADAS</span><h3>Principais categorias</h3><p>Distribuição de despesas nas solicitações finalizadas.</p></div></div>
+                    {categoriasFinanceiras.length === 0 ? <div className="analise-categorias-vazio">Ainda não há despesas finalizadas neste período.</div> : (
+                      <div className="analise-categorias-lista">
+                        {categoriasFinanceiras.map(item => (
+                          <div key={item.nome} className="analise-categoria">
+                            <div className="analise-categoria-topo"><span title={item.nome}>{item.nome}</span><strong>{formatarValor(item.valor)}</strong></div>
+                            <div className="analise-categoria-trilha"><span style={{ width: `${categoriasFinanceiras[0].valor > 0 ? Math.min(100, (item.valor / categoriasFinanceiras[0].valor) * 100) : 0}%` }} /></div>
+                          </div>
+                        ))}
                       </div>
-                      {rateioDados.rateio_unidades.map((u, i) => (
-                        <div className="table-row" key={i} style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
-                          <strong style={{ color: '#0f172a' }}>{u.unidade}</strong>
-                          <span style={{ fontWeight: '700' }}>{formatarNumero(u.fracao_ideal)}%</span>
-                          <strong style={{ textAlign: 'right', color: '#059669' }}>{formatarValor(u.valor_devido)}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                    )}
+                  </section>
                 </div>
-              </section>
+
+                <section className="panel analise-centros-painel">
+                  <div className="analise-secao-cabecalho"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Execução orçamentária por condomínio</h3><p>O saldo representa aprovado menos realizado, não necessariamente economia definitiva.</p></div><span className="analise-contagem">{listaOrcamentoCondominio.length} condomínio(s)</span></div>
+                  <div className="analise-tabela-rolagem">
+                    <table className="analise-tabela">
+                      <thead><tr><th>Condomínio</th><th>Aprovado</th><th>Realizado</th><th>Saldo</th><th>Situação</th></tr></thead>
+                      <tbody>
+                        {listaOrcamentoCondominio.map(item => {
+                          const semOrcamento = item.aprovado === 0
+                          const estourado = item.saldo < 0 && !semOrcamento
+                          const situacao = semOrcamento ? 'Sem aprovação' : estourado ? 'Acima do aprovado' : item.saldo === 0 ? 'Sem saldo' : 'Saldo disponível'
+                          return <tr key={item.nome}>
+                            <td><strong>{item.nome}</strong><small>{item.qtdSolicitacoes} pedido(s)</small></td>
+                            <td>{formatarValor(item.aprovado)}</td>
+                            <td>{formatarValor(item.realizado)}</td>
+                            <td className={item.saldo < 0 ? 'analise-saldo-negativo' : 'analise-saldo-positivo'}>{formatarValor(item.saldo)}</td>
+                            <td><span className={`analise-situacao ${semOrcamento ? 'sem-aprovacao' : estourado ? 'estourado' : 'disponivel'}`}>{situacao}</span></td>
+                          </tr>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
             )}
 
-            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-              <div className="panel">
-                <div className="panel-header">
-                  <div><span className="eyebrow">COMPARATIVO ORÇAMENTÁRIO</span><h3>Solicitado × Aprovado × Realizado</h3></div>
-                </div>
-                <div style={{ width: '100%', height: 360 }}>
-                  {dadosGraficoCondominios.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>Sem dados para gerar gráfico no filtro selecionado.</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dadosGraficoCondominios} margin={{ top: 16, right: 24, left: 12, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                        <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
-                        <RechartsTooltip formatter={v => formatarValor(v)} cursor={{ fill: '#f8fafc' }} />
-                        <Legend wrapperStyle={{ paddingTop: '16px' }} />
-                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                        <Bar dataKey="Aprovado" fill="#2563eb" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                        <Bar dataKey="Realizado" fill="#10b981" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-              <div className="panel">
-                <div className="panel-header"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Execução Orçamentária por Condomínio</h3></div></div>
-                <div className="table">
-                  <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
-                    <span>Condomínio</span><span>Teto Aprovado</span><span>Gasto Realizado</span><span>Saldo (R$)</span><span>Status</span>
-                  </div>
-                  {listaOrcamentoCondominio.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Nenhuma solicitação encontrada para o filtro.</div>
-                  ) : (
-                    listaOrcamentoCondominio.map(item => {
-                      let sBadge = 'neutral'; let sTexto = 'No Limite'
-                      if (item.saldo > 0) { sBadge = 'positive'; sTexto = 'Economia' }
-                      if (item.saldo < 0) { sBadge = 'negative'; sTexto = 'Estourado' }
-                      if (item.aprovado === 0) { sBadge = 'neutral'; sTexto = 'Sem Orçamento' }
-                      return (
-                        <div className="table-row" key={item.nome} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
-                          <strong style={{ color: '#0f172a' }}>{item.nome}</strong>
-                          <span>{formatarValor(item.aprovado)}</span>
-                          <span>{formatarValor(item.realizado)}</span>
-                          <strong className={classeVariacao(item.saldo)}>{formatarValor(item.saldo)}</strong>
-                          <span className={`badge ${sBadge}`}>{sTexto}</span>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-            </section>
+            {filtroCondominioAnalise !== 'todos' && (
+              <section className="panel analise-rateio-painel">
+                <div className="analise-secao-cabecalho"><div><span className="eyebrow">DISTRIBUIÇÃO POR FRAÇÃO IDEAL</span><h3>Rateio — {filtroCondominioAnalise}</h3><p>Rateio de solicitações finalizadas; consulte as unidades cadastradas para revisar as frações.</p></div></div>
+                <div className="analise-aviso" role="note"><IconeHaize nome="clock" tamanho={18}/><span>O rateio utiliza <strong>{filtroDataInicio ? `o mês ${filtroDataInicio.slice(0, 7).split('-').reverse().join('/')}` : 'todo o histórico'}</strong> conforme a API atual. Ele não aplica o intervalo exato de datas selecionado acima.</span></div>
+                {carregandoRateio ? <div className="analise-rateio-estado">Calculando rateio...</div> : !rateioDados || (rateioDados.rateio_unidades || []).length === 0 ? (
+                  <div className="analise-rateio-estado">Nenhuma unidade ou fração cadastrada para este condomínio. Configure as unidades no cadastro de condomínios.</div>
+                ) : (
+                  <>
+                    <div className="analise-rateio-total"><span>Total considerado pelo rateio</span><strong>{formatarValor(rateioDados.total_gasto_condominio)}</strong><small>{rateioDados.quantidade_solicitacoes} solicitação(ões) finalizada(s)</small></div>
+                    <div className="analise-tabela-rolagem">
+                      <table className="analise-tabela analise-rateio-tabela">
+                        <thead><tr><th>Unidade</th><th>Fração ideal</th><th>Valor rateado</th></tr></thead>
+                        <tbody>{rateioDados.rateio_unidades.map(u => <tr key={u.unidade_id}><td><strong>{u.unidade}</strong></td><td>{formatarNumero(u.fracao_ideal)}%</td><td className="analise-saldo-positivo">{formatarValor(u.valor_devido)}</td></tr>)}</tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
+            <p className="analise-nota">Observação: indicadores seguem os valores informados nas solicitações; em registros antigos finalizados sem valor realizado, o critério legado pode considerar o valor aprovado ou solicitado. Revise os lançamentos antes de utilizar os relatórios em decisões contábeis.</p>
           </div>
         )}
 
