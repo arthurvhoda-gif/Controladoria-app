@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import hashlib
+import re
 import base64
 import io
 import logging
@@ -12,9 +13,9 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
 from reportlab.lib import colors
@@ -27,20 +28,117 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, 
 import models
 import schemas
 from database import engine, SessionLocal
+from pydantic import BaseModel
+import auth_utils
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Controladoria Haize API")
 
-# Configuração aberta de CORS para evitar bloqueios e erros de "Failed to fetch"
+# A autenticação é validada no servidor, inclusive em downloads e fotografias.
+# OPTIONS é liberado para permitir o preflight do navegador (CORS).
+
+
+def _permissao_rota(method: str, path: str, perfil: str) -> bool:
+    """Matriz de acesso explícita; rotas desconhecidas são negadas."""
+    gestor = perfil == 'Controladoria'
+    solicitante = perfil == 'Solicitante'
+    vistoriador = perfil == 'Checklist'
+    if path == '/usuarios/me' and method == 'GET':
+        return True
+    if path == '/usuarios/me/senha' and method == 'PUT':
+        return True
+    if path.startswith('/usuarios'):
+        return gestor
+    if path == '/condominios':
+        return method == 'GET' or gestor
+    if re.fullmatch(r'/condominios/\d+', path):
+        return gestor
+    if re.fullmatch(r'/condominios/\d+/(?:unidades|rateio)', path):
+        return gestor
+    if path.startswith('/unidades/'):
+        return gestor
+    if re.fullmatch(r'/condominios/\d+/checklist-relatorio-divergencias(?:/enviar)?', path):
+        return gestor or vistoriador
+    if path in ('/categorias', '/fornecedores'):
+        return gestor or ((solicitante) and method == 'GET')
+    if re.fullmatch(r'/(?:categorias|fornecedores)/\d+', path):
+        return gestor
+    if path == '/solicitacoes':
+        return (gestor or solicitante) and method in ('GET', 'POST')
+    if re.fullmatch(r'/solicitacoes/\d+', path):
+        return gestor or (solicitante and method in ('PUT', 'DELETE'))
+    if re.fullmatch(r'/solicitacoes/\d+/(?:status|iniciar-execucao|finalizar)', path):
+        return gestor
+    if re.fullmatch(r'/solicitacoes/\d+/(?:anexos|historico)', path):
+        return gestor or solicitante
+    if re.fullmatch(r'/anexos/\d+/download', path):
+        return gestor or solicitante
+    if path == '/checklists':
+        return gestor or (vistoriador and method == 'GET')
+    if re.fullmatch(r'/checklists/\d+', path):
+        return gestor
+    if re.fullmatch(r'/checklists/\d+/executar', path):
+        return gestor or vistoriador
+    if re.fullmatch(r'/checklists/execucoes/\d+/foto', path):
+        return gestor or vistoriador
+    return False
+
+
+def _solicitacao_visivel(db: Session, user, sol_id: int):
+    sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == sol_id).first()
+    if not sol:
+        raise HTTPException(status_code=404, detail='Solicitação não encontrada.')
+    if user.auth_user_role != 'Controladoria' and sol.solicitante != user.auth_user_name:
+        raise HTTPException(status_code=403, detail='Você não tem acesso a esta solicitação.')
+    return sol
+
+
+@app.middleware('http')
+async def proteger_api(request: Request, call_next):
+    path, method = request.url.path, request.method.upper()
+    if method == 'OPTIONS' or (method == 'GET' and path in ('/', '/status', '/docs', '/openapi.json', '/redoc')) or (method == 'POST' and path == '/login'):
+        return await call_next(request)
+
+    authorization = request.headers.get('authorization', '')
+    if not authorization.lower().startswith('bearer '):
+        return JSONResponse(status_code=401, content={'detail': 'Faça login para continuar.'})
+    token = authorization[7:].strip()
+    try:
+        claims = auth_utils.decode_token(token)
+        uid = int(claims['sub'])
+        if uid <= 0:
+            raise ValueError('ID inválido')
+        with SessionLocal() as session:
+            user = session.query(models.Usuario).filter(models.Usuario.id == uid).first()
+            if not user or not auth_utils.token_matches_user(claims, user):
+                raise ValueError('Usuário inválido')
+            request.state.auth_user_id = user.id
+            request.state.auth_user_name = user.nome
+            request.state.auth_user_role = user.perfil
+            perfil = user.perfil
+    except Exception:
+        return JSONResponse(status_code=401, content={'detail': 'Sessão inválida ou expirada. Entre novamente.'})
+
+    if not _permissao_rota(method, path, perfil):
+        return JSONResponse(status_code=403, content={'detail': 'Seu perfil não tem permissão para esta operação.'})
+    return await call_next(request)
+
+
+# Middleware CORS externo à autenticação, inclusive para respostas 401 e 403.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        origin.strip() for origin in os.getenv(
+            'FRONTEND_ORIGINS', 'https://controladoria-app-lilac.vercel.app,http://localhost:5173'
+        ).split(',') if origin.strip()
+    ],
+    allow_credentials=False,
+    allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allow_headers=['Authorization', 'Content-Type'],
 )
+
 
 # Diretórios para salvar anexos de solicitações e fotos de vistorias
 UPLOAD_DIR = "uploads"
@@ -112,61 +210,35 @@ def executar_migracoes_automaticas():
 # UTILITÁRIOS DE SENHA E USUÁRIOS PADRÃO
 # =========================================================================
 def verificar_senha(senha_digitada: str, senha_banco: str) -> bool:
-    if not senha_banco:
-        return False
-    # 1. Comparação direta (texto plano)
-    if senha_digitada == senha_banco:
-        return True
-    # 2. Comparação SHA-256
-    hash_sha256 = hashlib.sha256(senha_digitada.encode("utf-8")).hexdigest()
-    if hash_sha256 == senha_banco:
-        return True
-    # 3. Comparação Bcrypt (caso existam senhas antigas criptografadas com passlib/bcrypt)
-    try:
-        import bcrypt
-        if senha_banco.startswith("$2"):
-            return bcrypt.checkpw(senha_digitada.encode("utf-8"), senha_banco.encode("utf-8"))
-    except Exception:
-        pass
-    return False
+    return auth_utils.verify_password(senha_digitada, senha_banco)[0]
 
 
 def criar_usuarios_iniciais():
+    """Nunca cria contas públicas com senhas padrão como '123'."""
     db = SessionLocal()
     try:
-        qtd = db.query(models.Usuario).count()
-        if qtd == 0:
-            usuarios_padrao = [
-                models.Usuario(
-                    nome="Controladoria Haize",
-                    email="controladoria@haize.com.br",
-                    senha="123",
-                    perfil="Controladoria"
-                ),
-                models.Usuario(
-                    nome="Solicitante Padrão",
-                    email="solicitante@haize.com.br",
-                    senha="123",
-                    perfil="Solicitante"
-                ),
-                models.Usuario(
-                    nome="Vistoriador Checklist",
-                    email="checklist@haize.com.br",
-                    senha="123",
-                    perfil="Checklist"
-                )
-            ]
-            db.add_all(usuarios_padrao)
-            db.commit()
-    except Exception as e:
+        if db.query(models.Usuario).count() != 0:
+            return
+        email = os.getenv('INITIAL_ADMIN_EMAIL', '').strip().lower()
+        password = os.getenv('INITIAL_ADMIN_PASSWORD', '')
+        if not email or not password:
+            logging.warning('Banco sem usuários. Configure INITIAL_ADMIN_EMAIL e INITIAL_ADMIN_PASSWORD para criar o primeiro administrador.')
+            return
+        if len(password) < 12:
+            raise RuntimeError('INITIAL_ADMIN_PASSWORD deve conter ao menos 12 caracteres.')
+        db.add(models.Usuario(nome='Administrador Haize', email=email,
+                              senha=auth_utils.hash_password(password), perfil='Controladoria'))
+        db.commit()
+    except Exception:
         db.rollback()
-        print("Aviso ao verificar usuarios iniciais:", e)
+        raise
     finally:
         db.close()
 
 
 @app.on_event("startup")
 def startup_event():
+    auth_utils.get_secret()  # Fail closed: Render precisa ter AUTH_SECRET_KEY configurada.
     executar_migracoes_automaticas()
     criar_usuarios_iniciais()
 
@@ -188,68 +260,91 @@ def status():
 def login(dados: schemas.LoginRequest, db: Session = Depends(get_db)):
     email_limpo = dados.email.strip().lower()
     usuario = db.query(models.Usuario).filter(models.Usuario.email == email_limpo).first()
-
-    if not usuario or not verificar_senha(dados.senha, usuario.senha):
-        raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
-
-    token_simples = hashlib.sha256(f"{usuario.email}-{usuario.id}".encode()).hexdigest()
+    valido, atualizar_hash = auth_utils.verify_password(dados.senha, usuario.senha if usuario else '')
+    if not usuario or not valido:
+        raise HTTPException(status_code=401, detail='E-mail ou senha incorretos.')
+    if atualizar_hash:
+        # Migração transparente de senhas antigas (texto, SHA256 e bcrypt) para Argon2id.
+        usuario.senha = auth_utils.hash_password(dados.senha) if len(dados.senha) >= 10 else auth_utils.hasher.hash(dados.senha)
+        db.commit()
+        db.refresh(usuario)
     return {
-        "access_token": token_simples,
-        "token_type": "bearer",
-        "usuario": {
-            "id": usuario.id,
-            "nome": usuario.nome,
-            "email": usuario.email,
-            "perfil": usuario.perfil
-        }
+        'access_token': auth_utils.create_token(usuario),
+        'token_type': 'bearer',
+        'expires_in': auth_utils.SESSION_HOURS * 3600,
+        'usuario': {'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email, 'perfil': usuario.perfil},
     }
 
 
-# =========================================================================
-# GESTÃO DE USUÁRIOS
-# =========================================================================
-@app.get("/usuarios", response_model=List[schemas.UsuarioResponse])
+@app.get('/usuarios/me', response_model=schemas.UsuarioResponse)
+def usuario_me(request: Request, db: Session = Depends(get_db)):
+    return db.query(models.Usuario).filter(models.Usuario.id == request.state.auth_user_id).first()
+
+
+class AlterarMinhaSenha(BaseModel):
+    senha_atual: str
+    nova_senha: str
+
+
+@app.put('/usuarios/me/senha')
+def trocar_minha_senha(dados: AlterarMinhaSenha, request: Request, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == request.state.auth_user_id).first()
+    if not verificar_senha(dados.senha_atual, usuario.senha):
+        raise HTTPException(status_code=400, detail='A senha atual está incorreta.')
+    if len(dados.nova_senha) < 10 or dados.nova_senha == dados.senha_atual:
+        raise HTTPException(status_code=400, detail='Use uma senha nova, diferente, com pelo menos 10 caracteres.')
+    usuario.senha = auth_utils.hash_password(dados.nova_senha)
+    db.commit()
+    return {'mensagem': 'Senha atualizada. Entre novamente para continuar.'}
+
+
+@app.get('/usuarios', response_model=List[schemas.UsuarioResponse])
 def listar_usuarios(db: Session = Depends(get_db)):
     return db.query(models.Usuario).order_by(models.Usuario.nome.asc()).all()
 
 
-@app.post("/usuarios", response_model=schemas.UsuarioResponse)
+@app.post('/usuarios', response_model=schemas.UsuarioResponse)
 def criar_usuario(user: schemas.UsuarioCreate, db: Session = Depends(get_db)):
     email_limpo = user.email.strip().lower()
-    existente = db.query(models.Usuario).filter(models.Usuario.email == email_limpo).first()
-    if existente:
-        raise HTTPException(status_code=400, detail="Já existe um usuário com este e-mail.")
-
-    novo = models.Usuario(
-        nome=user.nome.strip(),
-        email=email_limpo,
-        senha=user.senha,
-        perfil=user.perfil or "Solicitante"
-    )
+    if user.perfil not in ('Controladoria', 'Solicitante', 'Checklist'):
+        raise HTTPException(status_code=400, detail='Perfil inválido.')
+    if db.query(models.Usuario).filter(models.Usuario.email == email_limpo).first():
+        raise HTTPException(status_code=400, detail='Já existe um usuário com este e-mail.')
+    try:
+        senha_hash = auth_utils.hash_password(user.senha)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro))
+    novo = models.Usuario(nome=user.nome.strip(), email=email_limpo,
+                          senha=senha_hash, perfil=user.perfil)
     db.add(novo)
     db.commit()
     db.refresh(novo)
     return novo
 
 
-@app.put("/usuarios/{usuario_id}/senha")
+@app.put('/usuarios/{usuario_id}/senha')
 def alterar_senha_usuario(usuario_id: int, dados: schemas.SenhaUpdate, db: Session = Depends(get_db)):
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
-    usuario.senha = dados.nova_senha
+        raise HTTPException(status_code=404, detail='Usuário não encontrado.')
+    try:
+        usuario.senha = auth_utils.hash_password(dados.nova_senha)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro))
     db.commit()
-    return {"mensagem": "Senha atualizada com sucesso."}
+    return {'mensagem': 'Senha atualizada com sucesso.'}
 
 
-@app.delete("/usuarios/{usuario_id}")
-def excluir_usuario(usuario_id: int, db: Session = Depends(get_db)):
+@app.delete('/usuarios/{usuario_id}')
+def excluir_usuario(usuario_id: int, request: Request, db: Session = Depends(get_db)):
+    if usuario_id == request.state.auth_user_id:
+        raise HTTPException(status_code=400, detail='Não é possível excluir seu próprio usuário.')
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        raise HTTPException(status_code=404, detail='Usuário não encontrado.')
     db.delete(usuario)
     db.commit()
-    return {"mensagem": "Usuário removido com sucesso."}
+    return {'mensagem': 'Usuário removido com sucesso.'}
 
 
 # =========================================================================
@@ -572,12 +667,15 @@ def registrar_historico_seguro(db: Session, solicitacao_id: int, acao: str, resp
 
 
 @app.get("/solicitacoes")
-def listar_solicitacoes(db: Session = Depends(get_db)):
-    return db.query(models.Solicitacao).order_by(models.Solicitacao.id.desc()).all()
+def listar_solicitacoes(request: Request, db: Session = Depends(get_db)):
+    query = db.query(models.Solicitacao)
+    if request.state.auth_user_role == 'Solicitante':
+        query = query.filter(models.Solicitacao.solicitante == request.state.auth_user_name)
+    return query.order_by(models.Solicitacao.id.desc()).all()
 
 
 @app.post("/solicitacoes")
-def criar_solicitacao(sol: schemas.SolicitacaoCreate, db: Session = Depends(get_db)):
+def criar_solicitacao(sol: schemas.SolicitacaoCreate, request: Request, db: Session = Depends(get_db)):
     valor_servico = float(sol.valor_servico or 0.0)
     valor_produto = float(sol.valor_produto or 0.0)
     valor_total = valor_servico + valor_produto
@@ -605,7 +703,7 @@ def criar_solicitacao(sol: schemas.SolicitacaoCreate, db: Session = Depends(get_
         valor=valor_total,
         valor_aprovado=valor_aprovado_inicial,
         valor_realizado=0.0,
-        solicitante=sol.solicitante or "Usuário",
+        solicitante=request.state.auth_user_name,
         status=status_inicial,
         observacao=sol.observacao
     )
@@ -618,16 +716,20 @@ def criar_solicitacao(sol: schemas.SolicitacaoCreate, db: Session = Depends(get_
         if aprovado_auto
         else "Solicitação criada e enviada para análise da Controladoria"
     )
-    registrar_historico_seguro(db, nova_sol.id, acao_txt, sol.solicitante or "Sistema")
+    registrar_historico_seguro(db, nova_sol.id, acao_txt, request.state.auth_user_name)
 
     return nova_sol
 
 
 @app.put("/solicitacoes/{solicitacao_id}")
-def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, db: Session = Depends(get_db)):
+def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, request: Request, db: Session = Depends(get_db)):
     db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not db_sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+    if request.state.auth_user_role == 'Solicitante':
+        _solicitacao_visivel(db, request.state, solicitacao_id)
+        if db_sol.status not in ('Aprovação pendente', 'Ajuste solicitado'):
+            raise HTTPException(status_code=403, detail='Este pedido não pode mais ser editado.')
 
     valor_servico = float(sol.valor_servico or 0.0)
     valor_produto = float(sol.valor_produto or 0.0)
@@ -659,7 +761,7 @@ def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, d
         db,
         db_sol.id,
         "Solicitação editada/corrigida pelo solicitante",
-        sol.solicitante or db_sol.solicitante
+        request.state.auth_user_name
     )
     return db_sol
 
@@ -724,10 +826,15 @@ def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, d
 
 
 @app.delete("/solicitacoes/{solicitacao_id}")
-def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
+def excluir_solicitacao(solicitacao_id: int, request: Request, db: Session = Depends(get_db)):
     db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not db_sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+
+    if request.state.auth_user_role == 'Solicitante':
+        _solicitacao_visivel(db, request.state, solicitacao_id)
+        if db_sol.status not in ('Aprovação pendente', 'Ajuste solicitado'):
+            raise HTTPException(status_code=403, detail='Este pedido não pode mais ser excluído.')
 
     # Não apague os arquivos antes de o banco confirmar a exclusão.
     try:
@@ -776,7 +883,8 @@ def excluir_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/solicitacoes/{solicitacao_id}/historico")
-def listar_historico_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
+def listar_historico_solicitacao(solicitacao_id: int, request: Request, db: Session = Depends(get_db)):
+    _solicitacao_visivel(db, request.state, solicitacao_id)
     return (
         db.query(models.HistoricoSolicitacao)
         .filter(models.HistoricoSolicitacao.solicitacao_id == solicitacao_id)
@@ -786,7 +894,8 @@ def listar_historico_solicitacao(solicitacao_id: int, db: Session = Depends(get_
 
 
 @app.get("/solicitacoes/{solicitacao_id}/anexos")
-def listar_anexos_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)):
+def listar_anexos_solicitacao(solicitacao_id: int, request: Request, db: Session = Depends(get_db)):
+    _solicitacao_visivel(db, request.state, solicitacao_id)
     return (
         db.query(models.Anexo)
         .filter(models.Anexo.solicitacao_id == solicitacao_id)
@@ -798,6 +907,7 @@ def listar_anexos_solicitacao(solicitacao_id: int, db: Session = Depends(get_db)
 @app.post("/solicitacoes/{solicitacao_id}/anexos")
 def upload_anexo_solicitacao(
     solicitacao_id: int,
+    request: Request,
     arquivo: UploadFile = File(...),
     tipo: str = Form("Orçamento"),
     responsavel: str = Form("Usuário"),
@@ -806,6 +916,7 @@ def upload_anexo_solicitacao(
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+    _solicitacao_visivel(db, request.state, solicitacao_id)
 
     nome_seguro = f"{solicitacao_id}_{uuid.uuid4().hex[:8]}_{arquivo.filename}"
     caminho_completo = os.path.join(UPLOAD_DIR, nome_seguro)
@@ -818,7 +929,7 @@ def upload_anexo_solicitacao(
         nome_arquivo=arquivo.filename,
         caminho=caminho_completo,
         tipo=tipo,
-        responsavel=responsavel
+        responsavel=request.state.auth_user_name
     )
     db.add(novo_anexo)
     db.commit()
@@ -828,16 +939,17 @@ def upload_anexo_solicitacao(
         db,
         solicitacao_id,
         f"Arquivo anexado ({tipo}): {arquivo.filename}",
-        responsavel
+        request.state.auth_user_name
     )
     return novo_anexo
 
 
 @app.get("/anexos/{anexo_id}/download")
-def download_anexo(anexo_id: int, db: Session = Depends(get_db)):
+def download_anexo(anexo_id: int, request: Request, db: Session = Depends(get_db)):
     anexo = db.query(models.Anexo).filter(models.Anexo.id == anexo_id).first()
     if not anexo or not os.path.exists(anexo.caminho):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor.")
+    _solicitacao_visivel(db, request.state, anexo.solicitacao_id)
     return FileResponse(anexo.caminho, filename=anexo.nome_arquivo)
 
 
@@ -936,6 +1048,7 @@ def excluir_checklist(item_id: int, db: Session = Depends(get_db)):
 @app.post("/checklists/{item_id}/executar")
 def executar_checklist(
     item_id: int,
+    request: Request,
     responsavel: str = Form(...),
     status_conformidade: str = Form("Conforme"),
     observacao: Optional[str] = Form(""),
@@ -958,7 +1071,7 @@ def executar_checklist(
 
     execucao = models.ChecklistExecucao(
         item_id=item_id,
-        responsavel=responsavel,
+        responsavel=request.state.auth_user_name,
         status_conformidade=status_conformidade,
         observacao=observacao,
         nome_foto=nome_foto,

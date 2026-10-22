@@ -9,7 +9,7 @@ const API_URL = 'https://controladoria-api.onrender.com'
 
 function lerCache(chave, padrao = []) {
   try {
-    const item = localStorage.getItem(`haize_cache_${chave}`)
+    const item = sessionStorage.getItem(`haize_cache_${chave}`)
     return item ? JSON.parse(item) : padrao
   } catch {
     return padrao
@@ -18,7 +18,7 @@ function lerCache(chave, padrao = []) {
 
 function salvarCache(chave, dados) {
   try {
-    localStorage.setItem(`haize_cache_${chave}`, JSON.stringify(dados))
+    sessionStorage.setItem(`haize_cache_${chave}`, JSON.stringify(dados))
   } catch { }
 }
 
@@ -128,8 +128,10 @@ function textoStatus(status) {
 
 function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(() => {
-    const salvo = localStorage.getItem('usuarioControladoria')
-    return salvo ? JSON.parse(salvo) : null
+    try {
+      const salvo = sessionStorage.getItem('usuarioControladoria')
+      return salvo ? JSON.parse(salvo) : null
+    } catch { return null }
   })
 
   function paginaInicialPorPerfil(perfil) {
@@ -140,6 +142,10 @@ function App() {
 
   const [emailLogin, setEmailLogin] = useState('')
   const [senhaLogin, setSenhaLogin] = useState('')
+  const [mostrarTrocaSenha, setMostrarTrocaSenha] = useState(false)
+  const [senhaAtual, setSenhaAtual] = useState('')
+  const [senhaNova, setSenhaNova] = useState('')
+  const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
   const [sidebarAberta, setSidebarAberta] = useState(false)
@@ -246,6 +252,85 @@ function App() {
     return headers
   }
 
+  async function abrirArquivoProtegido(caminho, nome = 'documento') {
+    const resposta = await fetch(`${API_URL}${caminho}`, { headers: getAuthHeaders() })
+    if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Não foi possível abrir o arquivo.'))
+    const blob = await resposta.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.download = nome
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  }
+
+  function limparCacheLocal() {
+    for (const chave of Object.keys(sessionStorage)) {
+      if (chave.startsWith('haize_cache_')) sessionStorage.removeItem(chave)
+    }
+    for (const chave of Object.keys(localStorage)) {
+      if (chave.startsWith('haize_cache_')) localStorage.removeItem(chave)
+    }
+    localStorage.removeItem('usuarioControladoria')
+  }
+
+  useEffect(() => {
+    // Descarta tokens e caches legados do localStorage, anteriores à autenticação segura.
+    for (const chave of Object.keys(localStorage)) {
+      if (chave.startsWith('haize_cache_') || chave === 'usuarioControladoria') localStorage.removeItem(chave)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!usuarioLogado?.token) return
+    let canceled = false
+    fetch(`${API_URL}/usuarios/me`, { headers: { Authorization: `Bearer ${usuarioLogado.token}` } })
+      .then(async res => {
+        if (!res.ok) throw new Error('Sessão expirada. Faça login novamente.')
+        return await res.json()
+      })
+      .then(perfil => {
+        if (!canceled) setUsuarioLogado(atual => atual ? { ...atual, ...perfil } : null)
+      })
+      .catch(() => {
+        if (!canceled) {
+          sessionStorage.removeItem('usuarioControladoria')
+          limparCacheLocal()
+          setUsuarioLogado(null)
+        }
+      })
+    return () => { canceled = true }
+  }, [usuarioLogado?.token])
+
+  async function trocarMinhaSenha(e) {
+    e.preventDefault()
+    if (senhaNova.length < 10) {
+      mostrarToast('A nova senha deve conter ao menos 10 caracteres.', 'error')
+      return
+    }
+    setTrocandoSenha(true)
+    try {
+      const res = await fetch(`${API_URL}/usuarios/me/senha`, {
+        method: 'PUT', headers: getAuthHeaders(),
+        body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: senhaNova })
+      })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível trocar a senha.'))
+      setMostrarTrocaSenha(false)
+      setSenhaAtual('')
+      setSenhaNova('')
+      fazerLogout()
+      mostrarToast('Senha atualizada. Faça login com a nova senha.', 'success')
+    } catch (erro) {
+      mostrarToast(erro.message, 'error')
+    } finally {
+      setTrocandoSenha(false)
+    }
+  }
+
   async function extrairErro(res, mensagemPadrao) {
     try {
       const data = await res.json()
@@ -317,7 +402,9 @@ function App() {
       const dados = await res.json()
       const dadosUsuario = { ...dados.usuario, token: dados.access_token }
       setUsuarioLogado(dadosUsuario)
-      localStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
+      limparCacheLocal()
+      sessionStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
+      setSenhaLogin('')
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
       setPagina(paginaInicialPorPerfil(dadosUsuario.perfil))
     } catch (err) {
@@ -329,7 +416,16 @@ function App() {
 
   function fazerLogout() {
     setUsuarioLogado(null)
-    localStorage.removeItem('usuarioControladoria')
+    sessionStorage.removeItem('usuarioControladoria')
+    limparCacheLocal()
+    setSolicitacoes([])
+    setCondominios([])
+    setFornecedores([])
+    setCategorias([])
+    setChecklists([])
+    hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
+    setSolicitacaoSelecionada(null)
+    setPagina('dashboard')
     setEmailLogin('')
     setSenhaLogin('')
   }
@@ -374,6 +470,11 @@ function App() {
         fetch(`${API_URL}/checklists`, { headers: getAuthHeaders() })
       ])
 
+      if ([resSol, resCond, resForn, resCat, resChk].some(r => r.status === 401)) {
+        fazerLogout()
+        mostrarToast('Sua sessão expirou. Faça login novamente.', 'error')
+        return
+      }
       setBackendOnline(true)
 
       if (resSol.ok) {
@@ -1858,12 +1959,14 @@ function App() {
           ) : (
             <>
               <span className="sidebar-section-label">Gestão & Controle</span>
-              <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}>
-                <span className="nav-icon">◈</span><span>Dashboard</span>
-              </button>
-              <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}>
-                <span className="nav-icon">◠</span><span>Análises & Rateio</span>
-              </button>
+              {ehControladoria && <>
+                <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">◈</span><span>Dashboard</span>
+                </button>
+                <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">◠</span><span>Análises & Rateio</span>
+                </button>
+              </>}
               <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}>
                 <span className="nav-icon">▣</span><span>Solicitações</span>
                 {ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}
@@ -1879,15 +1982,17 @@ function App() {
               )}
 
               <span className="sidebar-section-label">Cadastros Base</span>
-              <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
-                <span className="nav-icon">🏢</span><span>Condomínios</span>
-              </button>
-              <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}>
-                <span className="nav-icon">🏷️</span><span>Categorias & Alçadas</span>
-              </button>
-              <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}>
-                <span className="nav-icon">🤝</span><span>Fornecedores</span>
-              </button>
+              {ehControladoria && <>
+                <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">🏢</span><span>Condomínios</span>
+                </button>
+                <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">🏷️</span><span>Categorias & Alçadas</span>
+                </button>
+                <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}>
+                  <span className="nav-icon">🤝</span><span>Fornecedores</span>
+                </button>
+              </>}
             </>
           )}
         </nav>
@@ -1906,6 +2011,9 @@ function App() {
               </span>
             </div>
           </div>
+          <button onClick={() => setMostrarTrocaSenha(true)} className="logout-btn" style={{ background: 'rgba(37,99,235,.12)', color: '#bfdbfe', borderColor: 'rgba(37,99,235,.22)' }}>
+            <span>🔐</span> Alterar minha senha
+          </button>
           <button onClick={fazerLogout} className="logout-btn">
             <span>🚪</span> Encerrar Sessão
           </button>
@@ -2094,7 +2202,7 @@ function App() {
                                 )}
                                 {ult.tem_foto && ult.id && (
                                   <a
-                                    href={`${API_URL}/checklists/execucoes/${ult.id}/foto`}
+                                    href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/checklists/execucoes/${ult.id}/foto`, `foto-vistoria-${ult.id}.jpg`).catch(err => mostrarToast(err.message, 'error')) }}
                                     target="_blank"
                                     rel="noreferrer"
                                     style={{ color: '#2563eb', fontWeight: '700', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}
@@ -2740,7 +2848,7 @@ function App() {
                           </div>
                           {ex.tem_foto && (
                             <a
-                              href={`${API_URL}/checklists/execucoes/${ex.id}/foto`}
+                              href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/checklists/execucoes/${ex.id}/foto`, `foto-vistoria-${ex.id}.jpg`).catch(err => mostrarToast(err.message, 'error')) }}
                               target="_blank"
                               rel="noreferrer"
                               className="button-secondary"
@@ -2907,7 +3015,7 @@ function App() {
                               <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>{String(anexo.tipo || '').toUpperCase()} • {formatarDataHora(anexo.data_upload)}</span>
                             </div>
                           </div>
-                          <a href={`${API_URL}/anexos/${anexo.id}/download`} target="_blank" rel="noreferrer" className="button-secondary" style={{ padding: '6px 12px', fontSize: '12px', textDecoration: 'none' }}>Baixar</a>
+                          <a href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/anexos/${anexo.id}/download`, anexo.nome_arquivo || `anexo-${anexo.id}`).catch(err => mostrarToast(err.message, 'error')) }} target="_blank" rel="noreferrer" className="button-secondary" style={{ padding: '6px 12px', fontSize: '12px', textDecoration: 'none' }}>Baixar</a>
                         </div>
                       ))
                     )}
@@ -3203,6 +3311,28 @@ function App() {
           </div>
         )}
 
+        {mostrarTrocaSenha && (
+          <div className="modal-overlay" style={{ zIndex: 99999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarTrocaSenha(false) }}>
+            <div className="modal" style={{ maxWidth: 430 }} role="dialog" aria-modal="true" aria-label="Alterar senha">
+              <div className="modal-header"><h3>Alterar minha senha</h3>
+                <button className="modal-close" onClick={() => setMostrarTrocaSenha(false)} aria-label="Fechar">×</button>
+              </div>
+              <form onSubmit={trocarMinhaSenha}>
+                <div className="modal-body" style={{ display: 'grid', gap: 14 }}>
+                  <div className="form-group"><label>Senha atual</label>
+                    <input type="password" autoComplete="current-password" value={senhaAtual} onChange={e => setSenhaAtual(e.target.value)} required /></div>
+                  <div className="form-group"><label>Nova senha (mínimo 10 caracteres)</label>
+                    <input type="password" autoComplete="new-password" value={senhaNova} onChange={e => setSenhaNova(e.target.value)} required minLength={10} /></div>
+                  <p style={{ fontSize: 12, color: '#64748b' }}>Após alterar, você entrará novamente com a nova senha.</p>
+                </div>
+                <div className="modal-actions">
+                  <button type="button" className="button-secondary" onClick={() => setMostrarTrocaSenha(false)}>Cancelar</button>
+                  <button type="submit" className="button-primary" disabled={trocandoSenha}>{trocandoSenha ? 'Atualizando...' : 'Salvar nova senha'}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )
