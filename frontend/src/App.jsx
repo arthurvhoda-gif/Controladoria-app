@@ -191,6 +191,9 @@ function App() {
 
   const [backendOnline, setBackendOnline] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
+  const [carregandoChecklist, setCarregandoChecklist] = useState(false)
+  const [erroChecklist, setErroChecklist] = useState('')
+  const [ultimaAtualizacaoChecklist, setUltimaAtualizacaoChecklist] = useState(null)
 
   const [solicitacoes, setSolicitacoes] = useState(() => lerCache('solicitacoes', []))
   const [condominios, setCondominios] = useState([])
@@ -308,7 +311,10 @@ function App() {
   })
   // Impede que uma resposta iniciada na conta anterior atualize a nova sessão.
   const tokenSessaoRef = useRef(usuarioLogado?.token || null)
-  const sequenciaCarregamentoRef = useRef(0)
+  // Impede que atualizações periódicas se cancelem mutuamente quando a API está lenta.
+  const carregamentoGeralRef = useRef(null)
+  // A sincronização do checklist tem requisição independente dos demais módulos.
+  const requisicaoChecklistRef = useRef(null)
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -347,7 +353,11 @@ function App() {
   // Toda troca de conta começa com dados e filtros limpos, sem pedir F5.
   function reiniciarDadosDaSessao(proximoToken = null) {
     tokenSessaoRef.current = proximoToken
-    sequenciaCarregamentoRef.current += 1
+    carregamentoGeralRef.current = null
+    if (requisicaoChecklistRef.current) {
+      requisicaoChecklistRef.current.controller.abort()
+      requisicaoChecklistRef.current = null
+    }
     limparCacheLocal()
     hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
     qtdSolicitacoesRef.current = 0
@@ -356,6 +366,9 @@ function App() {
     setFornecedores([])
     setCategorias([])
     setChecklists([])
+    setCarregandoChecklist(false)
+    setErroChecklist('')
+    setUltimaAtualizacaoChecklist(null)
     setZeladores([])
     setAtribuicoesZeladores({})
     setFiltroCondominioChecklist('todos')
@@ -545,31 +558,92 @@ function App() {
     }
   }
 
+  // Consulta isolada: o carregamento lento de solicitações/fornecedores não bloqueia vistorias.
+  // Uma nova sessão sempre invalida e aborta solicitações feitas na conta anterior.
+  async function carregarChecklists({ forcar = false, notificarErro = false } = {}) {
+    const token = usuarioLogado?.token
+    if (!token || tokenSessaoRef.current !== token) return false
+
+    const anterior = requisicaoChecklistRef.current
+    if (anterior?.token === token) {
+      if (!forcar) return anterior.promise
+      anterior.controller.abort()
+    }
+
+    const controller = new AbortController()
+    const requisicao = { token, controller, promise: null }
+    requisicaoChecklistRef.current = requisicao
+    setCarregandoChecklist(true)
+
+    const promise = (async () => {
+      try {
+        const resposta = await fetch(`${API_URL}/checklists`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        if (tokenSessaoRef.current !== token || requisicaoChecklistRef.current !== requisicao) return false
+        if (resposta.status === 401) {
+          fazerLogout()
+          mostrarToast('Sua sessão expirou. Faça login novamente.', 'error')
+          return false
+        }
+        if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Não foi possível atualizar as atividades.'))
+        const dados = await resposta.json()
+        if (!Array.isArray(dados)) throw new Error('A API retornou uma lista de checklists inválida.')
+        if (tokenSessaoRef.current !== token || requisicaoChecklistRef.current !== requisicao) return false
+
+        // Recebe a lista completa que o servidor autorizou para esta conta;
+        // não reaproveita a lista do zelador ao retornar para a Controladoria.
+        setChecklists(dados)
+        setItemChecklistHistorico(prev => prev ? (dados.find(c => c.id === prev.id) || null) : null)
+        setErroChecklist('')
+        setUltimaAtualizacaoChecklist(new Date().toISOString())
+        setBackendOnline(true)
+        return true
+      } catch (erro) {
+        if (erro.name === 'AbortError') return false
+        if (tokenSessaoRef.current === token && requisicaoChecklistRef.current === requisicao) {
+          const mensagem = erro.message || 'Não foi possível sincronizar o Checklist.'
+          setErroChecklist(mensagem)
+          if (notificarErro) mostrarToast(mensagem, 'error')
+        }
+        return false
+      } finally {
+        if (requisicaoChecklistRef.current === requisicao) {
+          requisicaoChecklistRef.current = null
+          setCarregandoChecklist(false)
+        }
+      }
+    })()
+    requisicao.promise = promise
+    return promise
+  }
+
   async function carregarDados(forcarIndicador = false) {
     const tokenDestaSessao = usuarioLogado?.token
-    if (!tokenDestaSessao) return
-    const sequencia = ++sequenciaCarregamentoRef.current
-    const respostaDaSessaoAtual = () =>
-      tokenSessaoRef.current === tokenDestaSessao &&
-      sequenciaCarregamentoRef.current === sequencia
+    if (!tokenDestaSessao || tokenSessaoRef.current !== tokenDestaSessao) return
+    // Somente uma consulta geral simultânea por conta: intervalos de 12s não
+    // invalidam a consulta anterior se o Render demorar para responder.
+    if (carregamentoGeralRef.current === tokenDestaSessao) return
+    carregamentoGeralRef.current = tokenDestaSessao
+    const respostaDaSessaoAtual = () => tokenSessaoRef.current === tokenDestaSessao
 
     if (forcarIndicador) setSincronizando(true)
     try {
-      // Não reutilizar respostas armazenadas pelo navegador para uma lista sensível a permissões.
       const opcoes = {
         headers: { Authorization: `Bearer ${tokenDestaSessao}` },
         cache: 'no-store'
       }
-      const [resSol, resCond, resForn, resCat, resChk] = await Promise.all([
+      const [resSol, resCond, resForn, resCat] = await Promise.all([
         fetch(`${API_URL}/solicitacoes`, opcoes),
         fetch(`${API_URL}/condominios`, opcoes),
         fetch(`${API_URL}/fornecedores`, opcoes),
-        fetch(`${API_URL}/categorias`, opcoes),
-        fetch(`${API_URL}/checklists`, opcoes)
+        fetch(`${API_URL}/categorias`, opcoes)
       ])
       if (!respostaDaSessaoAtual()) return
 
-      if ([resSol, resCond, resForn, resCat, resChk].some(r => r.status === 401)) {
+      if ([resSol, resCond, resForn, resCat].some(r => r.status === 401)) {
         fazerLogout()
         mostrarToast('Sua sessão expirou. Faça login novamente.', 'error')
         return
@@ -600,7 +674,6 @@ function App() {
         const dadosCond = await resCond.json()
         if (!respostaDaSessaoAtual()) return
         if (usuarioLogado.perfil === 'Checklist') {
-          // Apenas o zelador fica com o condomínio da sua conta selecionado.
           setFiltroCondominioChecklist(dadosCond[0]?.nome || 'todos')
         }
         const strCond = JSON.stringify(dadosCond)
@@ -632,22 +705,11 @@ function App() {
           salvarCache('categorias', dadosCat)
         }
       }
-
-      if (resChk.ok) {
-        const dadosChk = await resChk.json()
-        if (!respostaDaSessaoAtual()) return
-        const strChk = JSON.stringify(dadosChk)
-        if (strChk !== hashCacheRef.current.chk) {
-          hashCacheRef.current.chk = strChk
-          setChecklists(dadosChk)
-          salvarCache('checklists', dadosChk)
-          setItemChecklistHistorico(prev => prev ? (dadosChk.find(c => c.id === prev.id) || null) : null)
-        }
-      }
     } catch {
       if (respostaDaSessaoAtual()) setBackendOnline(false)
     } finally {
-      if (forcarIndicador && tokenSessaoRef.current === tokenDestaSessao) setSincronizando(false)
+      if (carregamentoGeralRef.current === tokenDestaSessao) carregamentoGeralRef.current = null
+      if (forcarIndicador && respostaDaSessaoAtual()) setSincronizando(false)
     }
   }
 
@@ -657,8 +719,12 @@ function App() {
       setPagina('checklist')
     }
     carregarDados(false)
+    if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
+
     const atualizarSeVisivel = () => {
-      if (document.visibilityState === 'visible') carregarDados(false)
+      if (document.visibilityState !== 'visible') return
+      carregarDados(false)
+      if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
     }
     const intervalo = setInterval(atualizarSeVisivel, 12000)
     document.addEventListener('visibilitychange', atualizarSeVisivel)
@@ -667,13 +733,6 @@ function App() {
       clearInterval(intervalo)
       document.removeEventListener('visibilitychange', atualizarSeVisivel)
       window.removeEventListener('focus', atualizarSeVisivel)
-    }
-  }, [usuarioLogado?.token])
-
-  // Ao entrar no Checklist ou voltar da Gestão de Zeladores, sincroniza sem F5.
-  useEffect(() => {
-    if (usuarioLogado?.token && pagina === 'checklist' && abaChecklist === 'vistorias') {
-      carregarDados(false)
     }
   }, [usuarioLogado?.token, pagina, abaChecklist])
 
@@ -1087,7 +1146,7 @@ function App() {
       setChecklistEditando(null)
       setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária', plano_acao_padrao: '' })
       mostrarToast(editando ? 'Atividade atualizada com sucesso!' : 'Atividade adicionada ao checklist!', 'success')
-      carregarDados(false)
+      carregarChecklists({ forcar: true, notificarErro: true })
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -1232,7 +1291,7 @@ function App() {
         if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível excluir a atividade.'))
         setChecklists(prev => prev.filter(c => c.id !== item.id))
         mostrarToast('Atividade excluída com sucesso.', 'success')
-        carregarDados(false)
+        carregarChecklists({ forcar: true, notificarErro: true })
       } catch (erro) {
         mostrarToast(erro.message || 'Não foi possível excluir a atividade. Tente novamente.', 'error')
       }
@@ -1286,7 +1345,7 @@ function App() {
       } else {
         mostrarToast('Vistoria registrada com sucesso!', 'success')
       }
-      carregarDados(false)
+      carregarChecklists({ forcar: true, notificarErro: true })
     } catch (erro) {
       mostrarToast(erro.message || 'Falha na conexão. A vistoria não foi salva.', 'error')
     } finally {
@@ -2590,7 +2649,12 @@ function App() {
                   <h3>Atividades e vistorias</h3>
                   <p>Os prazos seguem a frequência cadastrada; a conformidade mostra o resultado da última vistoria.</p>
                 </div>
-                <span className="checklist-resultados">{checklistsFiltrados.length} de {checklistsNoEscopo.length} atividades</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'right' }}>
+                  <span className="checklist-resultados">{checklistsFiltrados.length} de {checklistsNoEscopo.length} atividades</span>
+                  <small role="status" style={{ color: erroChecklist ? '#b91c1c' : '#64748b' }}>
+                    {carregandoChecklist ? 'Sincronizando vistorias...' : erroChecklist ? `Erro ao atualizar: ${erroChecklist}` : ultimaAtualizacaoChecklist ? `Atualizado às ${new Date(ultimaAtualizacaoChecklist).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Aguardando sincronização'}
+                  </small>
+                </div>
               </div>
               <div className="checklist-controles">
                 <label className="checklist-campo checklist-campo-busca">
@@ -2631,7 +2695,20 @@ function App() {
                   <button type="button" onClick={() => { setBuscaChecklist(''); setFiltroCondominioChecklist('todos'); setFiltroFrequenciaChecklist('todas'); setFiltroSLAChecklist('todos') }}>Limpar filtros</button>
                 </div>
               )}
-              {checklistsFiltrados.length === 0 ? (
+              {carregandoChecklist && !ultimaAtualizacaoChecklist && checklists.length === 0 ? (
+                <div className="checklist-vazio" role="status">
+                  <IconeHaize nome="clock" tamanho={30} />
+                  <strong>Buscando atividades no servidor...</strong>
+                  <p>O checklist será exibido automaticamente assim que os dados chegarem.</p>
+                </div>
+              ) : erroChecklist && checklists.length === 0 ? (
+                <div className="checklist-vazio" role="alert">
+                  <IconeHaize nome="clock" tamanho={30} />
+                  <strong>Não foi possível sincronizar as atividades.</strong>
+                  <p>{erroChecklist}</p>
+                  <button type="button" className="button-secondary" onClick={() => carregarChecklists({ forcar: true, notificarErro: true })}>Tentar novamente</button>
+                </div>
+              ) : checklistsFiltrados.length === 0 ? (
                 <div className="checklist-vazio">
                   <IconeHaize nome="checklist" tamanho={30} />
                   <strong>Nenhuma atividade encontrada</strong>
