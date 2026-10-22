@@ -251,6 +251,12 @@ function App() {
 
   const [filtroSolicitacao, setFiltroSolicitacao] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [filtroCondominioSolicitacao, setFiltroCondominioSolicitacao] = useState('todos')
+  const [filtroCategoriaSolicitacao, setFiltroCategoriaSolicitacao] = useState('todos')
+  const [filtroInicioSolicitacao, setFiltroInicioSolicitacao] = useState('')
+  const [filtroFimSolicitacao, setFiltroFimSolicitacao] = useState('')
+  const [ordenacaoSolicitacao, setOrdenacaoSolicitacao] = useState('recentes')
+  const [paginaSolicitacoes, setPaginaSolicitacoes] = useState(1)
   const [filtroCompra, setFiltroCompra] = useState('')
   const [salvando, setSalvando] = useState(false)
 
@@ -680,17 +686,73 @@ function App() {
     return ordem.map(item => ({ ...item, total: contagem[item.status] || 0 }))
   }, [solicitacoes])
 
+  // Filtros da Central de Solicitações: não alteram nem gravam dados no servidor.
+  const opcoesCondominiosSolicitacoes = useMemo(() =>
+    [...new Set(solicitacoes.map(item => item.condominio).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [solicitacoes]
+  )
+  const opcoesCategoriasSolicitacoes = useMemo(() =>
+    [...new Set(solicitacoes.map(item => item.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [solicitacoes]
+  )
   const solicitacoesFiltradas = useMemo(() => {
     const buscaNorm = normalizarTexto(filtroSolicitacao)
-    return solicitacoes.filter(sol => {
-      const st = textoStatus(sol.status)
-      const matchStatus = filtroStatus === 'todos' || st === filtroStatus
-      if (!matchStatus) return false
+    const lista = solicitacoes.filter(sol => {
+      const status = textoStatus(sol.status)
+      if (filtroStatus !== 'todos' && status !== filtroStatus) return false
+      if (filtroCondominioSolicitacao !== 'todos' && sol.condominio !== filtroCondominioSolicitacao) return false
+      if (filtroCategoriaSolicitacao !== 'todos' && sol.categoria !== filtroCategoriaSolicitacao) return false
+      const data = String(sol.data || '').slice(0, 10)
+      if (filtroInicioSolicitacao && (!data || data < filtroInicioSolicitacao)) return false
+      if (filtroFimSolicitacao && (!data || data > filtroFimSolicitacao)) return false
       if (!buscaNorm) return true
-      const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''} ${st}`)
-      return t.includes(buscaNorm)
+      const campos = `${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''} ${sol.fornecedor || ''} ${sol.solicitante || ''} ${status}`
+      return normalizarTexto(campos).includes(buscaNorm)
     })
-  }, [solicitacoes, filtroSolicitacao, filtroStatus])
+    return lista.sort((a, b) => {
+      if (ordenacaoSolicitacao === 'maior_valor') return solicitado(b) - solicitado(a) || numero(b.id) - numero(a.id)
+      if (ordenacaoSolicitacao === 'menor_valor') return solicitado(a) - solicitado(b) || numero(b.id) - numero(a.id)
+      if (ordenacaoSolicitacao === 'condominio') return String(a.condominio || '').localeCompare(String(b.condominio || ''), 'pt-BR') || numero(b.id) - numero(a.id)
+      const delta = String(b.data || '').localeCompare(String(a.data || '')) || numero(b.id) - numero(a.id)
+      return ordenacaoSolicitacao === 'antigas' ? -delta : delta
+    })
+  }, [solicitacoes, filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao, filtroCategoriaSolicitacao, filtroInicioSolicitacao, filtroFimSolicitacao, ordenacaoSolicitacao])
+
+  const filtrosSolicitacoesAtivos = Boolean(
+    filtroSolicitacao || filtroStatus !== 'todos' || filtroCondominioSolicitacao !== 'todos' ||
+    filtroCategoriaSolicitacao !== 'todos' || filtroInicioSolicitacao || filtroFimSolicitacao
+  )
+  const solicitacoesPorPagina = 10
+  const totalPaginasSolicitacoes = Math.max(1, Math.ceil(solicitacoesFiltradas.length / solicitacoesPorPagina))
+  const paginaAtualSolicitacoes = Math.min(paginaSolicitacoes, totalPaginasSolicitacoes)
+  const inicioSolicitacoes = (paginaAtualSolicitacoes - 1) * solicitacoesPorPagina
+  const solicitacoesPaginadas = solicitacoesFiltradas.slice(inicioSolicitacoes, inicioSolicitacoes + solicitacoesPorPagina)
+
+  useEffect(() => { setPaginaSolicitacoes(1) }, [
+    filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao, filtroCategoriaSolicitacao,
+    filtroInicioSolicitacao, filtroFimSolicitacao, ordenacaoSolicitacao
+  ])
+
+  function limparFiltrosSolicitacoes() {
+    setFiltroSolicitacao('')
+    setFiltroStatus('todos')
+    setFiltroCondominioSolicitacao('todos')
+    setFiltroCategoriaSolicitacao('todos')
+    setFiltroInicioSolicitacao('')
+    setFiltroFimSolicitacao('')
+    setOrdenacaoSolicitacao('recentes')
+    setPaginaSolicitacoes(1)
+  }
+
+  const resumoSolicitacoes = useMemo(() => {
+    const status = solicitacoes.map(sol => textoStatus(sol.status))
+    return {
+      total: status.length,
+      pendentes: status.filter(st => ['Aprovação pendente', 'Em análise', 'Ajuste solicitado'].includes(st)).length,
+      emExecucao: status.filter(st => st === 'Em execução').length,
+      finalizadas: status.filter(st => st === 'Finalizada').length
+    }
+  }, [solicitacoes])
 
   const comprasFiltradas = useMemo(() => {
     const buscaNorm = normalizarTexto(filtroCompra)
@@ -2534,7 +2596,113 @@ function App() {
           </div>
         )}
 
-        {(pagina === 'solicitacoes' || pagina === 'compras') && !ehChecklist && (
+        {pagina === 'solicitacoes' && !ehChecklist && (
+          <div className="page page-central-solicitacoes">
+            <section className="central-heading" aria-label="Central de Solicitações">
+              <div>
+                <span className="eyebrow">CONTROLADORIA / FLUXO DE COMPRAS</span>
+                <h2>{ehControladoria ? 'Central de Solicitações' : 'Minhas Solicitações'}</h2>
+                <p>Consulte pedidos, acompanhe aprovações e encontre rapidamente as informações de cada compra.</p>
+              </div>
+              <span className="central-heading-count">{resumoSolicitacoes.total} {resumoSolicitacoes.total === 1 ? 'registro' : 'registros'}</span>
+            </section>
+
+            <section className="central-resumo" aria-label="Resumo das solicitações">
+              <article className="central-resumo-card"><div className="central-resumo-icon total"><IconeHaize nome="requests" /></div><div><span>Total de solicitações</span><strong>{resumoSolicitacoes.total}</strong></div></article>
+              <article className="central-resumo-card"><div className="central-resumo-icon pendente"><IconeHaize nome="clock" /></div><div><span>Aguardando ação</span><strong>{resumoSolicitacoes.pendentes}</strong></div></article>
+              <article className="central-resumo-card"><div className="central-resumo-icon execucao"><IconeHaize nome="shopping" /></div><div><span>Em execução</span><strong>{resumoSolicitacoes.emExecucao}</strong></div></article>
+              <article className="central-resumo-card"><div className="central-resumo-icon finalizada"><IconeHaize nome="approved" /></div><div><span>Finalizadas</span><strong>{resumoSolicitacoes.finalizadas}</strong></div></article>
+            </section>
+
+            <section className="panel central-panel" aria-label="Consultar solicitações">
+              <div className="central-toolbar-heading">
+                <div><span className="eyebrow">CONSULTA E ACOMPANHAMENTO</span><h3>Lista de solicitações</h3><p>Filtre por condomínio, categoria, status ou data.</p></div>
+                {filtrosSolicitacoesAtivos && <button className="central-limpar" type="button" onClick={limparFiltrosSolicitacoes}>Limpar filtros</button>}
+              </div>
+
+              <div className="central-filtros">
+                <label className="central-campo central-busca">
+                  <span>Pesquisar</span>
+                  <input type="search" value={filtroSolicitacao} onChange={e => setFiltroSolicitacao(e.target.value)} placeholder="Código, descrição, fornecedor..." aria-label="Pesquisar solicitações" />
+                </label>
+                <label className="central-campo">
+                  <span>Condomínio</span>
+                  <select value={filtroCondominioSolicitacao} onChange={e => setFiltroCondominioSolicitacao(e.target.value)}>
+                    <option value="todos">Todos os condomínios</option>
+                    {opcoesCondominiosSolicitacoes.map(nome => <option key={nome} value={nome}>{nome}</option>)}
+                  </select>
+                </label>
+                <label className="central-campo">
+                  <span>Categoria</span>
+                  <select value={filtroCategoriaSolicitacao} onChange={e => setFiltroCategoriaSolicitacao(e.target.value)}>
+                    <option value="todos">Todas as categorias</option>
+                    {opcoesCategoriasSolicitacoes.map(nome => <option key={nome} value={nome}>{nome}</option>)}
+                  </select>
+                </label>
+                <label className="central-campo central-ordenacao">
+                  <span>Ordenar por</span>
+                  <select value={ordenacaoSolicitacao} onChange={e => setOrdenacaoSolicitacao(e.target.value)}>
+                    <option value="recentes">Mais recentes</option>
+                    <option value="antigas">Mais antigas</option>
+                    <option value="maior_valor">Maior valor</option>
+                    <option value="menor_valor">Menor valor</option>
+                    <option value="condominio">Condomínio (A–Z)</option>
+                  </select>
+                </label>
+                <label className="central-campo central-data"><span>Data inicial</span><input type="date" value={filtroInicioSolicitacao} max={filtroFimSolicitacao || undefined} onChange={e => setFiltroInicioSolicitacao(e.target.value)} /></label>
+                <label className="central-campo central-data"><span>Data final</span><input type="date" value={filtroFimSolicitacao} min={filtroInicioSolicitacao || undefined} onChange={e => setFiltroFimSolicitacao(e.target.value)} /></label>
+              </div>
+
+              <div className="central-status-filtros" role="group" aria-label="Filtrar solicitações por status">
+                {[
+                  { id: 'todos', label: 'Todas' },
+                  { id: 'Aprovação pendente', label: 'Pendentes' },
+                  { id: 'Em análise', label: 'Em análise' },
+                  { id: 'Ajuste solicitado', label: 'Em ajuste' },
+                  { id: 'Aprovada', label: 'Aprovadas' },
+                  { id: 'Em execução', label: 'Em execução' },
+                  { id: 'Finalizada', label: 'Finalizadas' },
+                  { id: 'Reprovada', label: 'Reprovadas' }
+                ].map(item => (
+                  <button type="button" key={item.id} aria-pressed={filtroStatus === item.id} className={`central-status-pill ${filtroStatus === item.id ? 'active' : ''}`} onClick={() => setFiltroStatus(item.id)}>{item.label}</button>
+                ))}
+              </div>
+
+              <div className="central-resultado-barra" aria-live="polite">
+                <span><strong>{solicitacoesFiltradas.length}</strong> {solicitacoesFiltradas.length === 1 ? 'solicitação encontrada' : 'solicitações encontradas'}</span>
+                <span>{solicitacoesFiltradas.length ? `Mostrando ${inicioSolicitacoes + 1}–${Math.min(inicioSolicitacoes + solicitacoesPorPagina, solicitacoesFiltradas.length)}` : 'Nenhum resultado'}</span>
+              </div>
+
+              <div className="central-tabela" role="table" aria-label="Solicitações filtradas">
+                <div className="central-tabela-cabecalho" role="row"><span role="columnheader">Solicitação</span><span role="columnheader">Condomínio</span><span role="columnheader">Descrição / Categoria</span><span role="columnheader">Valor</span><span role="columnheader">Status</span><span role="columnheader">Data</span></div>
+                {solicitacoesPaginadas.length === 0 ? (
+                  <div className="central-vazio"><IconeHaize nome="requests" tamanho={28} /><strong>{resumoSolicitacoes.total === 0 ? 'Nenhuma solicitação cadastrada' : 'Nenhum resultado para os filtros selecionados'}</strong><p>{resumoSolicitacoes.total === 0 ? 'Os pedidos registrados aparecerão nesta lista.' : 'Tente alterar a busca, o período ou o status.'}</p>{filtrosSolicitacoesAtivos && <button className="button-secondary" onClick={limparFiltrosSolicitacoes}>Limpar filtros</button>}</div>
+                ) : solicitacoesPaginadas.map(sol => (
+                  <div className="central-solicitacao-linha" role="row" key={sol.id}>
+                    <div role="cell" className="central-cell-codigo"><span className="central-mobile-label">Solicitação</span><button type="button" className="central-codigo-botao" onClick={() => abrirSolicitacao(sol)} aria-label={`Abrir solicitação ${sol.numero || sol.id}`}>{sol.numero || `#${sol.id}`}</button></div>
+                    <div role="cell" className="central-cell-condominio"><span className="central-mobile-label">Condomínio</span><strong>{sol.condominio}</strong></div>
+                    <div role="cell" className="central-cell-descricao"><span className="central-mobile-label">Descrição</span><strong title={sol.descricao || ''}>{sol.descricao || 'Sem descrição'}</strong><small>{[sol.categoria, sol.fornecedor].filter(Boolean).join(' • ') || 'Sem categoria informada'}</small></div>
+                    <div role="cell" className="central-cell-valor"><span className="central-mobile-label">Valor</span><strong>{formatarValor(sol.valor)}</strong>{aprovado(sol) > 0 && aprovado(sol) < solicitado(sol) && <small>Aprovado: {formatarValor(aprovado(sol))}</small>}</div>
+                    <div role="cell" className="central-cell-status"><span className="central-mobile-label">Status</span>{renderBadge(sol)}</div>
+                    <div role="cell" className="central-cell-data"><span className="central-mobile-label">Data</span><span>{sol.data ? formatarDataHora(sol.data).split(',')[0] : '—'}</span><button type="button" className="central-abrir" onClick={() => abrirSolicitacao(sol)} aria-label={`Ver detalhes da solicitação ${sol.numero || sol.id}`} title="Ver detalhes"><IconeHaize nome="arrow" tamanho={17} /></button></div>
+                  </div>
+                ))}
+              </div>
+
+              {totalPaginasSolicitacoes > 1 && (
+                <nav className="central-paginacao" aria-label="Paginação de solicitações">
+                  <span>Página {paginaAtualSolicitacoes} de {totalPaginasSolicitacoes}</span>
+                  <div>
+                    <button type="button" className="button-secondary" disabled={paginaAtualSolicitacoes <= 1} onClick={() => setPaginaSolicitacoes(p => Math.max(1, p - 1))}>Anterior</button>
+                    <button type="button" className="button-secondary" disabled={paginaAtualSolicitacoes >= totalPaginasSolicitacoes} onClick={() => setPaginaSolicitacoes(p => Math.min(totalPaginasSolicitacoes, p + 1))}>Próxima</button>
+                  </div>
+                </nav>
+              )}
+            </section>
+          </div>
+        )}
+
+        {pagina === 'compras' && !ehChecklist && (
           <div className="page">
             <section className="panel">
               <div className="panel-header">
@@ -3034,10 +3202,10 @@ function App() {
 
         {solicitacaoSelecionada && (
           <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharSolicitacao() }}>
-            <div className="modal modal-large">
+            <div className="modal modal-large modal-solicitacao">
               <div className="modal-header">
-                <div><span className="eyebrow">DETALHES DO PEDIDO</span><h3>{solicitacaoSelecionada.numero} • {solicitacaoSelecionada.condominio}</h3></div>
-                <button className="modal-close" onClick={fecharSolicitacao}>×</button>
+                <div><span className="eyebrow">SOLICITAÇÃO / DETALHES</span><h3>{solicitacaoSelecionada.numero} • {solicitacaoSelecionada.condominio}</h3><p className="solicitacao-modal-subtitulo">Confira os valores, os anexos e o histórico antes de tomar uma decisão.</p></div>
+                <button className="modal-close" onClick={fecharSolicitacao} aria-label="Fechar detalhes da solicitação">×</button>
               </div>
               <div className="modal-body">
                 {(() => {
