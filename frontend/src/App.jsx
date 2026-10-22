@@ -126,6 +126,33 @@ function textoStatus(status) {
   return 'Aprovação pendente'
 }
 
+// Ícones vetoriais locais: não exigem instalação de bibliotecas.
+const iconesHaize = {
+  dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></>,
+  analyses: <><path d="M4 19V11M10 19V5M16 19v-8M22 19V8"/><path d="M2 21h20"/></>,
+  requests: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
+  shopping: <><path d="M3 5h2l2.2 10.5a2 2 0 0 0 2 1.5H19a2 2 0 0 0 2-1.5L22 9H6"/><circle cx="10" cy="21" r="1"/><circle cx="19" cy="21" r="1"/></>,
+  checklist: <><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3v3M15 3v3M9 11l1.5 1.5L14 9M9 17h6"/></>,
+  buildings: <><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 7h2M14 7h2M9 11h2M14 11h2M9 15h2M14 15h2M11 21v-3h3v3"/></>,
+  categories: <><path d="M3 12V5a2 2 0 0 1 2-2h7l9 9-9 9-9-9Z"/><circle cx="8" cy="8" r="1"/></>,
+  suppliers: <><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/></>,
+  trending: <><path d="m3 17 6-6 4 4 8-8M15 7h6v6"/></>,
+  approved: <><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></>,
+  wallet: <><rect x="3" y="6" width="18" height="15" rx="2"/><path d="M3 9h18M7 3h11"/></>,
+  savings: <><path d="M12 3v18M17 7c-1-2-9-2-9 2s8 2 8 6-7 4-9 1"/></>,
+  bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>,
+  refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 9a8 8 0 0 1 14-2l1 5M4 12l1 5a8 8 0 0 0 14-2"/></>,
+  plus: <path d="M12 5v14M5 12h14"/>,
+  arrow: <path d="M5 12h14m-6-6 6 6-6 6"/>,
+  menu: <path d="M4 6h16M4 12h16M4 18h16"/>,
+  logout: <><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 8l4 4-4 4M9 12h10"/></>,
+  clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+  file: <><path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2"/><path d="M14 3v5h4"/></>
+}
+function IconeHaize({ nome, tamanho = 18, className = '' }) {
+  return <svg aria-hidden="true" className={className} width={tamanho} height={tamanho} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round">{iconesHaize[nome] || iconesHaize.file}</svg>
+}
+
 function App() {
   const [usuarioLogado, setUsuarioLogado] = useState(() => {
     try {
@@ -633,6 +660,24 @@ function App() {
       maioresSolicitacoes: maiores,
       solicitacoesPendentesLista: listaPend
     }
+  }, [solicitacoes])
+
+  const indicadoresStatusDashboard = useMemo(() => {
+    const ordem = [
+      { status: 'Aprovação pendente', label: 'Pendentes', tom: 'amber' },
+      { status: 'Em análise', label: 'Em análise', tom: 'blue' },
+      { status: 'Ajuste solicitado', label: 'Em ajuste', tom: 'violet' },
+      { status: 'Aprovada', label: 'Aprovadas', tom: 'blue' },
+      { status: 'Em execução', label: 'Em execução', tom: 'indigo' },
+      { status: 'Finalizada', label: 'Finalizadas', tom: 'green' },
+      { status: 'Reprovada', label: 'Reprovadas', tom: 'red' }
+    ]
+    const contagem = {}
+    for (const sol of solicitacoes) {
+      const st = textoStatus(sol.status)
+      contagem[st] = (contagem[st] || 0) + 1
+    }
+    return ordem.map(item => ({ ...item, total: contagem[item.status] || 0 }))
   }, [solicitacoes])
 
   const solicitacoesFiltradas = useMemo(() => {
@@ -1953,7 +1998,7 @@ function App() {
             <>
               <span className="sidebar-section-label">Operacional</span>
               <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-                <span className="nav-icon">⊡</span><span>Checklist Predial</span>
+                <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
               </button>
             </>
           ) : (
@@ -1961,36 +2006,36 @@ function App() {
               <span className="sidebar-section-label">Gestão & Controle</span>
               {ehControladoria && <>
                 <button className={pagina === 'dashboard' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('dashboard'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">◈</span><span>Dashboard</span>
+                  <span className="nav-icon"><IconeHaize nome="dashboard" /></span><span>Dashboard</span>
                 </button>
                 <button className={pagina === 'analises' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('analises'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">◠</span><span>Análises & Rateio</span>
+                  <span className="nav-icon"><IconeHaize nome="analyses" /></span><span>Análises & Rateio</span>
                 </button>
               </>}
               <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}>
-                <span className="nav-icon">▣</span><span>Solicitações</span>
+                <span className="nav-icon"><IconeHaize nome="requests" /></span><span>Solicitações</span>
                 {ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}
               </button>
               <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}>
-                <span className="nav-icon">◫</span><span>Compras</span>
+                <span className="nav-icon"><IconeHaize nome="shopping" /></span><span>Compras</span>
               </button>
 
               {ehControladoria && (
                 <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">⊡</span><span>Checklist Predial</span>
+                  <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
                 </button>
               )}
 
               <span className="sidebar-section-label">Cadastros Base</span>
               {ehControladoria && <>
                 <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">🏢</span><span>Condomínios</span>
+                  <span className="nav-icon"><IconeHaize nome="buildings" /></span><span>Condomínios</span>
                 </button>
                 <button className={pagina === 'categorias' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('categorias'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">🏷️</span><span>Categorias & Alçadas</span>
+                  <span className="nav-icon"><IconeHaize nome="categories" /></span><span>Categorias & Alçadas</span>
                 </button>
                 <button className={pagina === 'fornecedores' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('fornecedores'); setSidebarAberta(false); }}>
-                  <span className="nav-icon">🤝</span><span>Fornecedores</span>
+                  <span className="nav-icon"><IconeHaize nome="suppliers" /></span><span>Fornecedores</span>
                 </button>
               </>}
             </>
@@ -2012,7 +2057,7 @@ function App() {
             </div>
           </div>
           <button onClick={fazerLogout} className="logout-btn">
-            <span>🚪</span> Encerrar Sessão
+            <IconeHaize nome="logout" tamanho={16} /> Encerrar Sessão
           </button>
         </div>
       </aside>
@@ -2020,7 +2065,7 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)}>☰</button>
+            <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)} aria-label="Abrir menu de navegação"><IconeHaize nome="menu" /></button>
             <div>
               <span className="breadcrumb">
                 Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
@@ -2044,7 +2089,7 @@ function App() {
                   onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
                   title="Central de Alertas e Notificações"
                 >
-                  🔔
+                  <IconeHaize nome="bell" tamanho={18} />
                   {quantidadePendentes > 0 && (
                     <span className="notification-badge">{quantidadePendentes}</span>
                   )}
@@ -2081,9 +2126,9 @@ function App() {
               </div>
             )}
 
-            <button className="icon-button" onClick={() => carregarDados(true)} title="Sincronizar agora">↻</button>
+            <button className="icon-button" onClick={() => carregarDados(true)} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
             {!ehChecklist && (
-              <button className="new-request" onClick={() => setMostrarFormulario(true)}>+ Nova Solicitação</button>
+              <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
           </div>
         </header>
@@ -2247,58 +2292,114 @@ function App() {
         )}
 
         {pagina === 'dashboard' && !ehChecklist && (
-          <div className="page">
-            <section className="kpi-grid">
-              <div className="kpi-card">
-                <div className="kpi-top"><span>Total Solicitado</span><span className="kpi-icon">$</span></div>
-                <strong>{formatarValor(valorTotalSolicitado)}</strong>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>{solicitacoes.length} pedidos registrados</span>
+          <div className="page page-executiva">
+            <section className="executive-hero" aria-label="Resumo da Controladoria">
+              <div className="executive-hero-main">
+                <span className="hero-eyebrow"><span className="hero-eyebrow-dot" /> VISÃO CONSOLIDADA</span>
+                <h2>Gestão clara. Decisões melhores.</h2>
+                <p>Acompanhe as solicitações, os valores e o andamento dos processos em um só lugar.</p>
+                <div className="executive-hero-meta">
+                  <span><IconeHaize nome="file" tamanho={15} /> {solicitacoes.length} solicitações</span>
+                  <span><IconeHaize nome="buildings" tamanho={15} /> {condominios.length} condomínios cadastrados</span>
+                </div>
               </div>
-              <div className="kpi-card">
-                <div className="kpi-top"><span>Total Aprovado</span><span className="kpi-icon success">✓</span></div>
-                <strong>{formatarValor(valorTotalAprovado)}</strong>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>{quantidadePendentes} aguardando análise</span>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-top"><span>Total Realizado</span><span className="kpi-icon">◫</span></div>
-                <strong>{formatarValor(valorTotalRealizado)}</strong>
-                <span style={{ fontSize: '12px', color: '#64748b' }}>Compras concluídas</span>
-              </div>
-              <div className="kpi-card highlight">
-                <div className="kpi-top"><span>Economia Gerada</span><span className="kpi-icon success">↓</span></div>
-                <strong style={{ color: '#059669' }}>{formatarValor(economiaTotal)}</strong>
-                <span style={{ fontSize: '12px', color: '#047857', fontWeight: '600' }}>Eficiência da Controladoria</span>
+              <div className="executive-hero-actions">
+                <button className="hero-button-primary" onClick={() => { setFiltroStatus('Aprovação pendente'); setPagina('solicitacoes') }}>
+                  Analisar pendências <IconeHaize nome="arrow" tamanho={16} />
+                </button>
+                <button className="hero-button-secondary" onClick={() => setPagina('analises')}>
+                  Ver análises <IconeHaize nome="analyses" tamanho={16} />
+                </button>
               </div>
             </section>
 
-            <section className="dashboard-grid">
-              <div className="panel">
+            <section className="executive-section" aria-label="Indicadores financeiros">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">RESULTADOS E CONTROLE</span>
+                  <h2>Resumo financeiro</h2>
+                </div>
+                <span className="period-indicator">Todos os registros</span>
+              </div>
+              <div className="kpi-grid executive-kpi-grid">
+                <article className="kpi-card kpi-solicitado">
+                  <div className="kpi-top"><span>Total solicitado</span><span className="kpi-icon"><IconeHaize nome="wallet" tamanho={20} /></span></div>
+                  <strong>{formatarValor(valorTotalSolicitado)}</strong>
+                  <span className="kpi-footnote">{solicitacoes.length} pedidos registrados</span>
+                </article>
+                <article className="kpi-card kpi-aprovado">
+                  <div className="kpi-top"><span>Total aprovado</span><span className="kpi-icon"><IconeHaize nome="approved" tamanho={20} /></span></div>
+                  <strong>{formatarValor(valorTotalAprovado)}</strong>
+                  <span className="kpi-footnote">Solicitações com aprovação</span>
+                </article>
+                <article className="kpi-card kpi-realizado">
+                  <div className="kpi-top"><span>Total realizado</span><span className="kpi-icon"><IconeHaize nome="trending" tamanho={20} /></span></div>
+                  <strong>{formatarValor(valorTotalRealizado)}</strong>
+                  <span className="kpi-footnote">Solicitações finalizadas</span>
+                </article>
+                <article className="kpi-card highlight kpi-economia">
+                  <div className="kpi-top"><span>Economia apurada</span><span className="kpi-icon success"><IconeHaize nome="savings" tamanho={20} /></span></div>
+                  <strong>{formatarValor(economiaTotal)}</strong>
+                  <span className="kpi-footnote">Diferença entre solicitado e realizado nas finalizadas</span>
+                </article>
+              </div>
+            </section>
+
+            <section className="executive-bottom-grid" aria-label="Solicitações e andamento">
+              <div className="panel executive-table-panel">
                 <div className="panel-header">
                   <div>
-                    <span className="eyebrow">DESTAQUES FINANCEIROS</span>
-                    <h3>Solicitações de Maior Impacto</h3>
+                    <span className="eyebrow">FOCO DA CONTROLADORIA</span>
+                    <h3>Solicitações de maior impacto</h3>
+                    <p className="section-helper">Pedidos ordenados pelo maior valor solicitado.</p>
                   </div>
-                  <button className="button-secondary" onClick={() => setPagina('solicitacoes')}>
-                    Ver todas →
+                  <button className="button-secondary" onClick={() => { setFiltroStatus('todos'); setPagina('solicitacoes') }}>
+                    Ver todas <IconeHaize nome="arrow" tamanho={15} />
                   </button>
                 </div>
-                <div className="table">
-                  <div className="table-header">
-                    <span>Código</span><span>Condomínio</span><span>Descrição</span><span>Valor</span><span>Status</span>
-                  </div>
-                  {maioresSolicitacoes.map(sol => (
-                    <div className="table-row clickable" key={sol.id} onClick={() => abrirSolicitacao(sol)}>
+                <div className="table executive-table">
+                  <div className="table-header"><span>Código</span><span>Condomínio</span><span>Descrição</span><span>Valor</span><span>Status</span></div>
+                  {maioresSolicitacoes.length === 0 ? (
+                    <div className="dashboard-empty-state">
+                      <IconeHaize nome="requests" tamanho={24} />
+                      <strong>Nenhuma solicitação registrada</strong>
+                      <span>Os pedidos aparecerão aqui assim que forem cadastrados.</span>
+                    </div>
+                  ) : maioresSolicitacoes.map(sol => (
+                    <div className="table-row clickable" role="button" tabIndex={0} key={sol.id} onClick={() => abrirSolicitacao(sol)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirSolicitacao(sol) } }}>
                       <span className="id">{sol.numero}</span>
-                      <strong style={{ color: '#0f172a' }}>{sol.condominio}</strong>
-                      <span>{sol.descricao}</span>
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <strong style={{ color: '#0f172a' }}>{formatarValor(sol.valor)}</strong>
-                        {aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '700' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
-                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '700' }}>Pago: {formatarValor(realizado(sol))}</span>)}
+                      <strong className="table-condominio">{sol.condominio}</strong>
+                      <span className="table-descricao" title={sol.descricao}>{sol.descricao}</span>
+                      <div className="table-valor"><strong>{formatarValor(sol.valor)}</strong>
+                        {aprovado(sol) > 0 && aprovado(sol) < solicitado(sol) && <small>Aprovado: {formatarValor(aprovado(sol))}</small>}
                       </div>
                       {renderBadge(sol)}
                     </div>
                   ))}
+                </div>
+              </div>
+              <div className="panel executive-status-panel">
+                <div className="panel-header">
+                  <div>
+                    <span className="eyebrow">ACOMPANHAMENTO</span>
+                    <h3>Status das solicitações</h3>
+                    <p className="section-helper">Distribuição de todos os pedidos registrados.</p>
+                  </div>
+                </div>
+                <div className="status-overview">
+                  <div className="status-overview-total">
+                    <div><span>Total de solicitações</span><strong>{solicitacoes.length}</strong></div>
+                    <span className="status-total-icon"><IconeHaize nome="requests" tamanho={24} /></span>
+                  </div>
+                  <div className="status-progress-list">
+                    {indicadoresStatusDashboard.filter(item => item.status !== 'Em análise' || item.total > 0).map(item => (
+                      <button type="button" className="status-progress-item" key={item.status} title={`Ver solicitações: ${item.label}`} onClick={() => { setFiltroStatus(item.status); setPagina('solicitacoes') }}>
+                        <span className="status-progress-top"><span className="status-progress-label"><i className={`status-progress-dot ${item.tom}`} />{item.label}</span><strong>{item.total}</strong></span>
+                        <span className="status-progress-track"><span className={`status-progress-fill ${item.tom}`} style={{ width: `${solicitacoes.length ? (item.total / solicitacoes.length) * 100 : 0}%` }} /></span>
+                      </button>
+                    ))}
+                  </div>
+                  <button className="status-all-link" onClick={() => { setFiltroStatus('todos'); setPagina('solicitacoes') }}>Abrir central de solicitações <IconeHaize nome="arrow" tamanho={16} /></button>
                 </div>
               </div>
             </section>
@@ -2458,6 +2559,7 @@ function App() {
                     {[
                       { id: 'todos', label: 'Todas' },
                       { id: 'Aprovação pendente', label: '⏳ Pendentes' },
+                      { id: 'Em análise', label: 'Em análise' },
                       { id: 'Ajuste solicitado', label: '📌 Em Ajuste' },
                       { id: 'Aprovada', label: '✓ Aprovadas' },
                       { id: 'Em execução', label: '▶ Em Execução' },
