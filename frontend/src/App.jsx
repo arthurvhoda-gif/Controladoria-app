@@ -35,8 +35,8 @@ function parseDataSegura(dataStr) {
 function calcularStatusSLA(frequencia, ultimaExecucao) {
   if (!ultimaExecucao || !ultimaExecucao.data_execucao) {
     return {
-      status: 'atrasado',
-      label: '⏳ Pendente',
+      status: 'pendente',
+      label: 'Pendente',
       bg: '#f1f5f9',
       color: '#475569',
       border: '#cbd5e1'
@@ -46,11 +46,11 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
   const dataUltima = parseDataSegura(ultimaExecucao.data_execucao)
   if (!dataUltima) {
     return {
-      status: 'em_dia',
-      label: '✓ Registrado',
-      bg: '#ecfdf5',
-      color: '#059669',
-      border: '#a7f3d0'
+      status: 'indefinido',
+      label: 'Data indisponível',
+      bg: '#f1f5f9',
+      color: '#64748b',
+      border: '#cbd5e1'
     }
   }
 
@@ -73,7 +73,7 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
   if (diffHoras > limite) {
     return {
       status: 'atrasado',
-      label: '🚨 Atrasado',
+      label: 'Atrasada',
       bg: '#fef2f2',
       color: '#dc2626',
       border: '#fecaca'
@@ -82,7 +82,7 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
 
   return {
     status: 'em_dia',
-    label: '✓ Em dia',
+    label: 'Em dia',
     bg: '#ecfdf5',
     color: '#059669',
     border: '#a7f3d0'
@@ -198,6 +198,9 @@ function App() {
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
   const [filtroFrequenciaChecklist, setFiltroFrequenciaChecklist] = useState('todas')
   const [filtroSLAChecklist, setFiltroSLAChecklist] = useState('todos')
+  const [buscaChecklist, setBuscaChecklist] = useState('')
+  const [ordenacaoChecklist, setOrdenacaoChecklist] = useState('prioridade')
+  const [salvandoExecucaoChecklist, setSalvandoExecucaoChecklist] = useState(false)
   const [enviandoRelatorio, setEnviandoRelatorio] = useState(false)
   const [mostrarModalNovoChecklist, setMostrarModalNovoChecklist] = useState(false)
   const [checklistEditando, setChecklistEditando] = useState(null)
@@ -294,7 +297,8 @@ function App() {
     link.href = url
     link.target = '_blank'
     link.rel = 'noopener noreferrer'
-    link.download = nome
+    const extensaoPorTipo = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }
+    link.download = /\.[a-z0-9]{2,7}$/i.test(nome) ? nome : `${nome}${extensaoPorTipo[blob.type] || ''}`
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -378,7 +382,7 @@ function App() {
       if (e.key === 'Escape') {
         if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
         if (dialog.isOpen) { fecharDialog(); return }
-        if (itemChecklistExecutando) { setItemChecklistExecutando(null); return }
+        if (itemChecklistExecutando) { if (!salvandoExecucaoChecklist) setItemChecklistExecutando(null); return }
         if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
         if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
         if (condominioUnidades) { setCondominioUnidades(null); return }
@@ -393,7 +397,7 @@ function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
-    alertaPlanoAcao, dialog.isOpen, itemChecklistExecutando, itemChecklistHistorico,
+    alertaPlanoAcao, dialog.isOpen, itemChecklistExecutando, salvandoExecucaoChecklist, itemChecklistHistorico,
     mostrarModalNovoChecklist, condominioUnidades, mostrarFormularioCondominio,
     mostrarFormularioCategoria, mostrarFormularioFornecedor, mostrarFormulario,
     solicitacaoSelecionada, mostrarMenuNotificacoes
@@ -818,21 +822,51 @@ function App() {
     }
   }, [solicitacoes, filtroCondominioAnalise, filtroDataInicio, filtroDataFim])
 
-  const checklistsFiltrados = useMemo(() => {
+  // A contagem acompanha condomínio, frequência e busca, sem depender da aba de situação.
+  const checklistsNoEscopo = useMemo(() => {
+    const busca = normalizarTexto(buscaChecklist)
     return checklists.filter(item => {
-      const matchCond = filtroCondominioChecklist === 'todos' || item.condominio === filtroCondominioChecklist
-      const matchFreq = filtroFrequenciaChecklist === 'todas' || item.frequencia === filtroFrequenciaChecklist
-      if (!matchCond || !matchFreq) return false
-      if (filtroSLAChecklist === 'atrasados') {
-        const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
-        return sla.status === 'atrasado'
-      }
-      if (filtroSLAChecklist === 'divergencias') {
-        return item.ultima_execucao?.status_conformidade === 'Não Conforme'
-      }
+      if (filtroCondominioChecklist !== 'todos' && item.condominio !== filtroCondominioChecklist) return false
+      if (filtroFrequenciaChecklist !== 'todas' && item.frequencia !== filtroFrequenciaChecklist) return false
+      if (!busca) return true
+      return [item.titulo, item.condominio, item.descricao_orientacao, item.frequencia, item.plano_acao_padrao]
+        .some(valor => normalizarTexto(valor).includes(busca))
+    })
+  }, [checklists, filtroCondominioChecklist, filtroFrequenciaChecklist, buscaChecklist])
+
+  const indicadoresChecklist = useMemo(() => ({
+    todos: checklistsNoEscopo.length,
+    em_dia: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'em_dia').length,
+    atrasados: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'atrasado').length,
+    pendentes: checklistsNoEscopo.filter(item => !item.ultima_execucao).length,
+    divergencias: checklistsNoEscopo.filter(item => item.ultima_execucao?.status_conformidade === 'Não Conforme').length
+  }), [checklistsNoEscopo])
+
+  const checklistsFiltrados = useMemo(() => {
+    const listagem = checklistsNoEscopo.filter(item => {
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
+      if (filtroSLAChecklist === 'atrasados') return sla.status === 'atrasado'
+      if (filtroSLAChecklist === 'pendentes') return !item.ultima_execucao
+      if (filtroSLAChecklist === 'em_dia') return sla.status === 'em_dia'
+      if (filtroSLAChecklist === 'divergencias') return item.ultima_execucao?.status_conformidade === 'Não Conforme'
       return true
     })
-  }, [checklists, filtroCondominioChecklist, filtroFrequenciaChecklist, filtroSLAChecklist])
+    const ordemPrioridade = item => {
+      if (item.ultima_execucao?.status_conformidade === 'Não Conforme') return 0
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao).status
+      if (sla === 'atrasado') return 1
+      if (sla === 'pendente') return 2
+      if (sla === 'indefinido') return 3
+      return 4
+    }
+    return [...listagem].sort((a, b) => {
+      if (ordenacaoChecklist === 'titulo') return a.titulo.localeCompare(b.titulo, 'pt-BR')
+      if (ordenacaoChecklist === 'recentes') {
+        return (parseDataSegura(b.ultima_execucao?.data_execucao)?.getTime() || 0) - (parseDataSegura(a.ultima_execucao?.data_execucao)?.getTime() || 0)
+      }
+      return ordemPrioridade(a) - ordemPrioridade(b) || a.titulo.localeCompare(b.titulo, 'pt-BR')
+    })
+  }, [checklistsNoEscopo, filtroSLAChecklist, ordenacaoChecklist])
 
   // =========================================================================
   // FUNÇÕES DE CHECKLIST, EDIÇÃO, PLANO DE AÇÃO E PDF AUTOMÁTICO POR E-MAIL
@@ -1022,18 +1056,17 @@ function App() {
 
   function excluirItemChecklist(item) {
     confirmarAcao('Excluir Atividade', `Deseja realmente excluir "${item.titulo}" do condomínio ${item.condominio}?`, async () => {
-      setChecklists(prev => prev.filter(c => c.id !== item.id))
-      mostrarToast('Atividade removida do checklist.', 'success')
       try {
         const res = await fetch(`${API_URL}/checklists/${item.id}`, {
           method: 'DELETE',
           headers: getAuthHeaders()
         })
-        if (!res.ok) throw new Error('Erro ao excluir atividade.')
+        if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível excluir a atividade.'))
+        setChecklists(prev => prev.filter(c => c.id !== item.id))
+        mostrarToast('Atividade excluída com sucesso.', 'success')
         carregarDados(false)
-      } catch (e) {
-        mostrarToast(e.message, 'error')
-        carregarDados(false)
+      } catch (erro) {
+        mostrarToast(erro.message || 'Não foi possível excluir a atividade. Tente novamente.', 'error')
       }
     }, true)
   }
@@ -1048,67 +1081,48 @@ function App() {
   }
 
   async function confirmarExecucaoChecklist(e) {
-    e.preventDefault()
+    e?.preventDefault?.()
+    if (salvandoExecucaoChecklist || !itemChecklistExecutando) return
     if (formExecucaoChecklist.status_conformidade === 'Não Conforme' && !formExecucaoChecklist.observacao.trim()) {
-      mostrarToast('Para itens fora dos conformes, descreva o problema nas observações.', 'error')
+      mostrarToast('Descreva o problema antes de registrar uma vistoria não conforme.', 'error')
       return
     }
 
     const itemAtual = itemChecklistExecutando
     const statusEscolhido = formExecucaoChecklist.status_conformidade
     const relatoDigitado = formExecucaoChecklist.observacao.trim()
-    const temFoto = Boolean(formExecucaoChecklist.foto)
-
     const formData = new FormData()
     formData.append('responsavel', usuarioLogado.nome)
     formData.append('status_conformidade', statusEscolhido)
     formData.append('observacao', relatoDigitado)
-    if (formExecucaoChecklist.foto) {
-      formData.append('foto', formExecucaoChecklist.foto)
-    }
+    if (formExecucaoChecklist.foto) formData.append('foto', formExecucaoChecklist.foto)
 
-    const novaExecOtimista = {
-      id: Date.now(),
-      responsavel: usuarioLogado.nome,
-      status_conformidade: statusEscolhido,
-      observacao: relatoDigitado,
-      data_execucao: new Date().toISOString(),
-      tem_foto: temFoto
-    }
-
-    setChecklists(prev => prev.map(c => c.id === itemAtual.id ? {
-      ...c,
-      ultima_execucao: novaExecOtimista,
-      historico_execucoes: [novaExecOtimista, ...(c.historico_execucoes || [])]
-    } : c))
-
-    setItemChecklistExecutando(null)
-
-    if (statusEscolhido === 'Não Conforme') {
-      setAlertaPlanoAcao({
-        condominio: itemAtual.condominio,
-        titulo: itemAtual.titulo,
-        relato: relatoDigitado,
-        plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
-      })
-    } else {
-      mostrarToast('Checklist registrado com sucesso!', 'success')
-    }
-
+    setSalvandoExecucaoChecklist(true)
     try {
       const res = await fetch(`${API_URL}/checklists/${itemAtual.id}/executar`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         body: formData
       })
-      if (!res.ok) {
-        const err = await extrairErro(res, 'Erro ao registrar vistoria no servidor.')
-        throw new Error(err)
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível registrar a vistoria.'))
+      const itemAtualizado = await res.json()
+      setChecklists(prev => prev.map(item => item.id === itemAtual.id ? itemAtualizado : item))
+      setItemChecklistExecutando(null)
+      if (statusEscolhido === 'Não Conforme') {
+        setAlertaPlanoAcao({
+          condominio: itemAtual.condominio,
+          titulo: itemAtual.titulo,
+          relato: relatoDigitado,
+          plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
+        })
+      } else {
+        mostrarToast('Vistoria registrada com sucesso!', 'success')
       }
       carregarDados(false)
-    } catch (err) {
-      mostrarToast(err.message, 'error')
-      carregarDados(false)
+    } catch (erro) {
+      mostrarToast(erro.message || 'Falha na conexão. A vistoria não foi salva.', 'error')
+    } finally {
+      setSalvandoExecucaoChecklist(false)
     }
   }
 
@@ -2199,152 +2213,151 @@ function App() {
             ABA DE CHECKLIST OPERACIONAL E VISTORIAS
            ========================================================================= */}
         {pagina === 'checklist' && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
+          <div className="page page-checklist">
+            <section className="checklist-intro">
+              <div>
+                <span className="eyebrow">OPERAÇÃO E MANUTENÇÃO PREVENTIVA</span>
+                <h2>Checklist predial</h2>
+                <p>Acompanhe as rotinas, registre vistorias e identifique rapidamente as atividades que precisam de atenção.</p>
+              </div>
+              <div className="checklist-intro-actions">
+                {ehControladoria && (
+                  <button type="button" className="button-primary" onClick={abrirModalCriarChecklist}>
+                    <IconeHaize nome="plus" tamanho={16} /> Nova atividade
+                  </button>
+                )}
+                {filtroCondominioChecklist !== 'todos' && (
+                  <button type="button" className="button-secondary" onClick={gerarRelatorioDivergenciasPDF} disabled={enviandoRelatorio}>
+                    <IconeHaize nome="file" tamanho={16} /> {enviandoRelatorio ? 'Enviando relatório...' : 'Gerar e enviar PDF'}
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="checklist-indicadores" aria-label="Resumo das vistorias">
+              {[
+                { chave: 'todos', titulo: 'Todas', descricao: 'Atividades cadastradas', icone: 'checklist' },
+                { chave: 'em_dia', titulo: 'Em dia', descricao: 'Dentro da frequência', icone: 'approved' },
+                { chave: 'atrasados', titulo: 'Atrasadas', descricao: 'Prazo ultrapassado', icone: 'clock' },
+                { chave: 'pendentes', titulo: 'Nunca vistoriadas', descricao: 'Aguardam 1º registro', icone: 'file' },
+                { chave: 'divergencias', titulo: 'Não conformes', descricao: 'Última vistoria com problema', icone: 'bell' }
+              ].map(indicador => (
+                <button
+                  type="button"
+                  key={indicador.chave}
+                  className={`checklist-indicador checklist-indicador--${indicador.chave} ${filtroSLAChecklist === indicador.chave ? 'is-active' : ''}`}
+                  onClick={() => setFiltroSLAChecklist(indicador.chave)}
+                  aria-pressed={filtroSLAChecklist === indicador.chave}
+                >
+                  <span className="checklist-indicador-top"><span>{indicador.titulo}</span><IconeHaize nome={indicador.icone} tamanho={18} /></span>
+                  <strong>{indicadoresChecklist[indicador.chave]}</strong>
+                  <small>{indicador.descricao}</small>
+                </button>
+              ))}
+            </section>
+
+            <section className="panel checklist-painel" aria-label="Atividades do checklist">
+              <div className="checklist-painel-cabecalho">
                 <div>
-                  <span className="eyebrow">ROTINAS E MANUTENÇÃO PREVENTIVA</span>
-                  <h3>Atividades do Checklist</h3>
+                  <span className="eyebrow">ROTINAS CADASTRADAS</span>
+                  <h3>Atividades e vistorias</h3>
+                  <p>Os prazos seguem a frequência cadastrada; a conformidade mostra o resultado da última vistoria.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="checklist-resultados">{checklistsFiltrados.length} de {checklistsNoEscopo.length} atividades</span>
+              </div>
+              <div className="checklist-controles">
+                <label className="checklist-campo checklist-campo-busca">
+                  <span>Buscar atividade</span>
+                  <input type="search" value={buscaChecklist} onChange={e => setBuscaChecklist(e.target.value)} placeholder="Nome, condomínio ou instruções" aria-label="Buscar atividade do checklist" />
+                </label>
+                <label className="checklist-campo">
+                  <span>Condomínio</span>
                   <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
-                    <option value="todos">Todos os Condomínios</option>
+                    <option value="todos">Todos os condomínios</option>
                     {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
                   </select>
-
+                </label>
+                <label className="checklist-campo">
+                  <span>Frequência</span>
                   <select value={filtroFrequenciaChecklist} onChange={e => setFiltroFrequenciaChecklist(e.target.value)}>
-                    <option value="todas">Todas as Frequências</option>
+                    <option value="todas">Todas as frequências</option>
                     <option value="Diária">Diária</option>
                     <option value="Semanal">Semanal</option>
                     <option value="Quinzenal">Quinzenal</option>
                     <option value="Mensal">Mensal</option>
                   </select>
-
-                  {filtroCondominioChecklist !== 'todos' && (
-                    <button className="button-secondary" onClick={gerarRelatorioDivergenciasPDF} disabled={enviandoRelatorio}>
-                      <span>📄</span> {enviandoRelatorio ? 'Enviando relatório...' : 'Gerar e Enviar PDF'}
-                    </button>
-                  )}
-
-                  {ehControladoria && (
-                    <button className="button-primary" onClick={abrirModalCriarChecklist}>
-                      + Nova Atividade
-                    </button>
-                  )}
-                </div>
+                </label>
+                <label className="checklist-campo">
+                  <span>Ordenar por</span>
+                  <select value={ordenacaoChecklist} onChange={e => setOrdenacaoChecklist(e.target.value)}>
+                    <option value="prioridade">Prioridade</option>
+                    <option value="titulo">Nome da atividade</option>
+                    <option value="recentes">Vistorias recentes</option>
+                  </select>
+                </label>
               </div>
-
-              <div className="filter-bar">
-                <div className="pill-group">
-                  <button className={`filter-pill ${filtroSLAChecklist === 'todos' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('todos')}>
-                    Todas ({checklists.length})
-                  </button>
-                  <button className={`filter-pill ${filtroSLAChecklist === 'atrasados' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('atrasados')}>
-                    🚨 Em Atraso / Pendentes
-                  </button>
-                  <button className={`filter-pill ${filtroSLAChecklist === 'divergencias' ? 'active' : ''}`} onClick={() => setFiltroSLAChecklist('divergencias')}>
-                    ⚠️ Com Inconformidade
-                  </button>
+              {(buscaChecklist || filtroCondominioChecklist !== 'todos' || filtroFrequenciaChecklist !== 'todas' || filtroSLAChecklist !== 'todos') && (
+                <div className="checklist-filtro-ativo">
+                  <span>Os resultados consideram os filtros selecionados.</span>
+                  <button type="button" onClick={() => { setBuscaChecklist(''); setFiltroCondominioChecklist('todos'); setFiltroFrequenciaChecklist('todas'); setFiltroSLAChecklist('todos') }}>Limpar filtros</button>
                 </div>
-              </div>
-
+              )}
               {checklistsFiltrados.length === 0 ? (
-                <div style={{ padding: '48px 24px', textAlign: 'center', color: '#64748b' }}>
-                  Nenhuma atividade encontrada para o filtro selecionado.
-                  {ehControladoria && ' Clique em "+ Nova Atividade" para adicionar tarefas ao checklist.'}
+                <div className="checklist-vazio">
+                  <IconeHaize nome="checklist" tamanho={30} />
+                  <strong>Nenhuma atividade encontrada</strong>
+                  <p>Experimente outros filtros ou faça uma busca diferente.</p>
+                  <button type="button" className="button-secondary" onClick={() => { setBuscaChecklist(''); setFiltroCondominioChecklist('todos'); setFiltroFrequenciaChecklist('todas'); setFiltroSLAChecklist('todos') }}>Exibir todas as atividades</button>
                 </div>
               ) : (
-                <div className="company-grid">
+                <div className="checklist-grade">
                   {checklistsFiltrados.map(item => {
-                    const ult = item.ultima_execucao
-                    const naoConforme = ult && ult.status_conformidade === 'Não Conforme'
-                    const sla = calcularStatusSLA(item.frequencia, ult)
+                    const ultima = item.ultima_execucao
+                    const naoConforme = ultima?.status_conformidade === 'Não Conforme'
+                    const sla = calcularStatusSLA(item.frequencia, ultima)
                     return (
-                      <div className="company-card" key={item.id} style={{ borderLeft: ult ? (naoConforme ? '4px solid #dc2626' : '4px solid #10b981') : '4px solid #cbd5e1' }}>
-                        <div>
-                          <div className="company-card-top" style={{ flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', background: '#eff6ff', color: '#1d4ed8', padding: '4px 10px', borderRadius: '999px' }}>
-                              🏢 {item.condominio}
-                            </span>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ fontSize: '11px', fontWeight: '700', background: '#f1f5f9', color: '#475569', padding: '3px 9px', borderRadius: '999px' }}>
-                                ⏱️ {item.frequencia}
-                              </span>
-                              <span style={{ fontSize: '11px', fontWeight: '700', background: sla.bg, color: sla.color, border: `1px solid ${sla.border}`, padding: '3px 8px', borderRadius: '999px' }}>
-                                {sla.label}
-                              </span>
-                            </div>
-                          </div>
-
+                      <article className={`checklist-atividade ${naoConforme ? 'tem-divergencia' : ''}`} key={item.id}>
+                        <div className="checklist-atividade-topo">
+                          <span className="checklist-condominio" title={item.condominio}><IconeHaize nome="buildings" tamanho={14} /> {item.condominio}</span>
+                          <span className="checklist-frequencia">{item.frequencia}</span>
+                        </div>
+                        <div className="checklist-atividade-corpo">
                           <h4>{item.titulo}</h4>
-                          {item.descricao_orientacao && (
-                            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px 0', lineHeight: '1.45' }}>
-                              {item.descricao_orientacao}
-                            </p>
-                          )}
-
-                          {item.plano_acao_padrao && (
-                            <div style={{ fontSize: '12px', background: '#fffbeb', border: '1px solid #fde68a', padding: '9px 11px', borderRadius: '8px', color: '#92400e', marginBottom: '10px' }}>
-                              <strong>Plano de Ação:</strong> {item.plano_acao_padrao}
-                            </div>
-                          )}
-
-                          <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '9px', border: '1px solid #e2e8f0', fontSize: '12px', marginTop: '10px' }}>
-                            {!ult ? (
-                              <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Ainda não realizado nenhuma vez.</span>
-                            ) : (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <strong style={{ color: naoConforme ? '#dc2626' : '#059669' }}>
-                                    {naoConforme ? '⚠️ Fora dos Conformes' : '✅ Conforme (OK)'}
-                                  </strong>
-                                  <span style={{ fontSize: '11px', color: '#64748b' }}>{formatarDataHora(ult.data_execucao)}</span>
-                                </div>
-                                <span style={{ color: '#475569' }}>Vistoriador: <strong>{ult.responsavel}</strong></span>
-                                {ult.observacao && (
-                                  <span style={{ color: '#334155', fontStyle: 'italic', marginTop: '2px' }}>"{ult.observacao}"</span>
-                                )}
-                                {ult.tem_foto && ult.id && (
-                                  <a
-                                    href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/checklists/execucoes/${ult.id}/foto`, `foto-vistoria-${ult.id}.jpg`).catch(err => mostrarToast(err.message, 'error')) }}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ color: '#2563eb', fontWeight: '700', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}
-                                  >
-                                    📷 Ver evidência anexada
-                                  </a>
-                                )}
-                              </div>
-                            )}
+                          {item.descricao_orientacao && <p className="checklist-orientacao">{item.descricao_orientacao}</p>}
+                          <div className="checklist-badges">
+                            <span className={`checklist-situacao ${sla.status}`}>{sla.label}</span>
+                            {naoConforme && <span className="checklist-situacao divergencia">Não conforme</span>}
                           </div>
-                        </div>
-
-                        <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                          <button
-                            className="button-primary"
-                            style={{ flex: 1, background: '#059669', borderColor: '#059669' }}
-                            onClick={() => abrirModalExecutarChecklist(item)}
-                          >
-                            ✓ Registrar Vistoria
-                          </button>
-
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <button className="text-button" onClick={() => setItemChecklistHistorico(item)}>
-                              Histórico ({item.historico_execucoes?.length || 0})
-                            </button>
-                            {ehControladoria && (
+                          <div className="checklist-ultima">
+                            <span className="checklist-ultima-label">Última vistoria</span>
+                            {ultima ? (
                               <>
-                                <button className="text-button" onClick={() => abrirModalEditarChecklist(item)}>
-                                  Editar
-                                </button>
-                                <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirItemChecklist(item)}>
-                                  Excluir
-                                </button>
+                                <strong>{formatarDataHora(ultima.data_execucao)}</strong>
+                                <span>Responsável: {ultima.responsavel}</span>
+                                {ultima.observacao && <p className="checklist-relato">{ultima.observacao}</p>}
+                                {ultima.tem_foto && ultima.id && (
+                                  <button type="button" className="checklist-link-evidencia" onClick={() => abrirArquivoProtegido(`/checklists/execucoes/${ultima.id}/foto`, `evidencia-vistoria-${ultima.id}`).catch(erro => mostrarToast(erro.message, 'error'))}>
+                                    Ver evidência anexada
+                                  </button>
+                                )}
                               </>
-                            )}
+                            ) : <span>Nenhuma vistoria registrada até agora.</span>}
+                          </div>
+                          {naoConforme && item.plano_acao_padrao && (
+                            <div className="checklist-plano"><strong>Plano de ação</strong><p>{item.plano_acao_padrao}</p></div>
+                          )}
+                        </div>
+                        <div className="checklist-atividade-acoes">
+                          <button type="button" className="checklist-registrar" onClick={() => abrirModalExecutarChecklist(item)}>
+                            <IconeHaize nome="checklist" tamanho={16} /> Registrar vistoria
+                          </button>
+                          <div className="checklist-atividade-links">
+                            <button type="button" onClick={() => setItemChecklistHistorico(item)}>Histórico ({item.historico_execucoes?.length || 0})</button>
+                            {ehControladoria && <button type="button" onClick={() => abrirModalEditarChecklist(item)}>Editar</button>}
+                            {ehControladoria && <button type="button" className="excluir" onClick={() => excluirItemChecklist(item)}>Excluir</button>}
                           </div>
                         </div>
-                      </div>
+                      </article>
                     )
                   })}
                 </div>
@@ -2996,44 +3009,36 @@ function App() {
 
         {/* MODAL: REGISTRAR EXECUÇÃO DO CHECKLIST */}
         {itemChecklistExecutando && (
-          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setItemChecklistExecutando(null) }}>
-            <div className="modal">
+          <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && !salvandoExecucaoChecklist) setItemChecklistExecutando(null) }}>
+            <div className="modal modal-checklist-execucao" role="dialog" aria-modal="true" aria-labelledby="titulo-modal-vistoria">
               <div className="modal-header">
                 <div>
                   <span className="eyebrow">{itemChecklistExecutando.condominio} • {itemChecklistExecutando.frequencia}</span>
-                  <h3>{itemChecklistExecutando.titulo}</h3>
+                  <h3 id="titulo-modal-vistoria">{itemChecklistExecutando.titulo}</h3>
                 </div>
-                <button className="modal-close" onClick={() => setItemChecklistExecutando(null)}>×</button>
+                <button className="modal-close" aria-label="Fechar registro de vistoria" disabled={salvandoExecucaoChecklist} onClick={() => setItemChecklistExecutando(null)}>×</button>
               </div>
               <div className="modal-body">
-                <form className="form" onSubmit={confirmarExecucaoChecklist}>
+                <form id="form-registrar-vistoria" className="form" onSubmit={confirmarExecucaoChecklist}>
                   <div className="form-grid">
                     <div className="form-group full">
                       <label>Resultado da Vistoria *</label>
-                      <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                      <div className="checklist-opcoes-resultado">
                         <button
                           type="button"
                           onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Conforme' }))}
-                          style={{
-                            flex: 1, padding: '12px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
-                            border: formExecucaoChecklist.status_conformidade === 'Conforme' ? '2px solid #059669' : '1px solid #cbd5e1',
-                            background: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#ecfdf5' : '#ffffff',
-                            color: formExecucaoChecklist.status_conformidade === 'Conforme' ? '#059669' : '#475569'
-                          }}
+                          className={`checklist-resultado-opcao conforme ${formExecucaoChecklist.status_conformidade === 'Conforme' ? 'selecionada' : ''}`}
+                          aria-pressed={formExecucaoChecklist.status_conformidade === 'Conforme'}
                         >
-                          ✅ Conforme (Tudo OK)
+                          Conforme
                         </button>
                         <button
                           type="button"
                           onClick={() => setFormExecucaoChecklist(p => ({ ...p, status_conformidade: 'Não Conforme' }))}
-                          style={{
-                            flex: 1, padding: '12px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', cursor: 'pointer',
-                            border: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '2px solid #dc2626' : '1px solid #cbd5e1',
-                            background: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#fef2f2' : '#ffffff',
-                            color: formExecucaoChecklist.status_conformidade === 'Não Conforme' ? '#dc2626' : '#475569'
-                          }}
+                          className={`checklist-resultado-opcao nao-conforme ${formExecucaoChecklist.status_conformidade === 'Não Conforme' ? 'selecionada' : ''}`}
+                          aria-pressed={formExecucaoChecklist.status_conformidade === 'Não Conforme'}
                         >
-                          ⚠️ Fora dos Conformes
+                          Não conforme
                         </button>
                       </div>
                     </div>
@@ -3068,9 +3073,9 @@ function App() {
                 </form>
               </div>
               <div className="modal-actions">
-                <button type="button" className="button-secondary" onClick={() => setItemChecklistExecutando(null)}>Cancelar</button>
-                <button type="button" className="button-primary" onClick={confirmarExecucaoChecklist} disabled={salvando}>
-                  Confirmar Vistoria
+                <button type="button" className="button-secondary" disabled={salvandoExecucaoChecklist} onClick={() => setItemChecklistExecutando(null)}>Cancelar</button>
+                <button type="submit" form="form-registrar-vistoria" className="button-primary" disabled={salvandoExecucaoChecklist}>
+                  {salvandoExecucaoChecklist ? 'Salvando vistoria...' : 'Confirmar vistoria'}
                 </button>
               </div>
             </div>
@@ -3115,7 +3120,7 @@ function App() {
                           </div>
                           {ex.tem_foto && (
                             <a
-                              href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/checklists/execucoes/${ex.id}/foto`, `foto-vistoria-${ex.id}.jpg`).catch(err => mostrarToast(err.message, 'error')) }}
+                              href="#" onClick={e => { e.preventDefault(); abrirArquivoProtegido(`/checklists/execucoes/${ex.id}/foto`, `evidencia-vistoria-${ex.id}`).catch(err => mostrarToast(err.message, 'error')) }}
                               target="_blank"
                               rel="noreferrer"
                               className="button-secondary"
