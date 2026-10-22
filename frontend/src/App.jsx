@@ -5,7 +5,7 @@ import {
 import XLSX from 'xlsx-js-style'
 import './App.css'
 
-const API_URL = 'https://controladoria-api.onrender.com'
+const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
 function lerCache(chave, padrao = []) {
   try {
