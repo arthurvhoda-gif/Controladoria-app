@@ -1,0 +1,33 @@
+# Segredos e configurações locais
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Banco de dados e anexos locais
+*.db
+*.sqlite
+*.sqlite3
+backend/uploads/
+
+# React / Vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE / Sistema operacional
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
