@@ -7,6 +7,7 @@ import base64
 import io
 import logging
 import hmac
+from math import isfinite
 import unicodedata
 from datetime import timedelta
 from html import escape
@@ -78,12 +79,12 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return (gestor or solicitante) and method in ('GET', 'POST')
     if re.fullmatch(r'/solicitacoes/\d+', path):
         return gestor or (solicitante and method in ('PUT', 'DELETE'))
-    # Solicitante pode iniciar a execução SOMENTE das próprias solicitações
-    # já aprovadas (validações adicionais na rota). Aprovação e finalização
-    # permanecem exclusivas da Controladoria.
-    if re.fullmatch(r'/solicitacoes/\d+/iniciar-execucao', path):
+    # Solicitante pode iniciar e finalizar SOMENTE as próprias solicitações,
+    # e somente nos status correspondentes (validados dentro de cada rota).
+    # Aprovação, reprovação e ajuste de status continuam só para Controladoria.
+    if re.fullmatch(r'/solicitacoes/\d+/(?:iniciar-execucao|finalizar)', path):
         return (gestor or solicitante) and method == 'PUT'
-    if re.fullmatch(r'/solicitacoes/\d+/(?:status|finalizar)', path):
+    if re.fullmatch(r'/solicitacoes/\d+/status', path):
         return gestor
     if re.fullmatch(r'/solicitacoes/\d+/(?:anexos|historico)', path):
         return gestor or solicitante
@@ -897,13 +898,29 @@ def iniciar_execucao_solicitacao(
 
 
 @app.put("/solicitacoes/{solicitacao_id}/finalizar")
-def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, db: Session = Depends(get_db)):
-    db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
-    if not db_sol:
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+def finalizar_solicitacao(
+    solicitacao_id: int,
+    dados: schemas.FinalizarUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # A Controladoria pode finalizar qualquer compra; o Solicitante,
+    # somente uma solicitação criada por ele. A checagem ocorre no servidor.
+    if request.state.auth_user_role not in ('Controladoria', 'Solicitante'):
+        raise HTTPException(status_code=403, detail='Perfil sem permissão para finalizar compras.')
+    db_sol = _solicitacao_visivel(db, request.state, solicitacao_id)
+    if db_sol.status != "Em execução":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente solicitações em execução podem ser finalizadas.",
+        )
+
+    valor = float(dados.valor_realizado or 0.0)
+    if not isfinite(valor) or valor <= 0:
+        raise HTTPException(status_code=422, detail="O valor realizado deve ser maior que zero.")
 
     db_sol.status = "Finalizada"
-    db_sol.valor_realizado = float(dados.valor_realizado or 0.0)
+    db_sol.valor_realizado = valor
     db.commit()
     db.refresh(db_sol)
 
@@ -911,7 +928,7 @@ def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, d
         db,
         db_sol.id,
         f"Solicitação finalizada (Valor Realizado: R$ {db_sol.valor_realizado:.2f})",
-        "Controladoria"
+        request.state.auth_user_name,
     )
     return db_sol
 

@@ -2032,11 +2032,7 @@ function App() {
   function finalizarSolicitacao(solicitacao) {
     pedirInput('Finalizar solicitação', 'Informe o valor realmente realizado/pago:', String(realizado(solicitacao) || aprovado(solicitacao) || solicitado(solicitacao) || ''), async v => {
       const vNum = numero(v)
-      if (vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
-
-      fecharSolicitacao()
-      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Finalizada', valor_realizado: vNum } : s))
-      mostrarToast('Solicitação finalizada!', 'success')
+      if (!Number.isFinite(vNum) || vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
 
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/finalizar`, {
@@ -2045,10 +2041,15 @@ function App() {
           body: JSON.stringify({ valor_realizado: vNum })
         })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao finalizar solicitação.'))
+        const atualizada = await res.json()
+        // Só altera o estado local depois que o servidor confirmou a compra.
+        setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, ...atualizada } : s))
+        fecharSolicitacao()
+        mostrarToast('Solicitação finalizada!', 'success')
         dispararNotificacaoNativa('Solicitação Finalizada', `O pedido ${solicitacao.numero} foi concluído com sucesso.`)
-        carregarDados(false)
       } catch (e) {
         mostrarToast(e.message, 'error')
+      } finally {
         carregarDados(false)
       }
     })
@@ -3728,10 +3729,10 @@ function App() {
                     {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
+                {(ehControladoria || (usuarioLogado.perfil === 'Solicitante' && solicitacaoSelecionada.solicitante === usuarioLogado.nome)) && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
                   <>
                     <button className="button-primary" style={{ background: '#059669', borderColor: '#059669' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Compra</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                    {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
                 {ehControladoria && ['Finalizada', 'Reprovada'].includes(textoStatus(solicitacaoSelecionada.status)) && (
