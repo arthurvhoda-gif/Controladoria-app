@@ -78,7 +78,12 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return (gestor or solicitante) and method in ('GET', 'POST')
     if re.fullmatch(r'/solicitacoes/\d+', path):
         return gestor or (solicitante and method in ('PUT', 'DELETE'))
-    if re.fullmatch(r'/solicitacoes/\d+/(?:status|iniciar-execucao|finalizar)', path):
+    # Solicitante pode iniciar a execução SOMENTE das próprias solicitações
+    # já aprovadas (validações adicionais na rota). Aprovação e finalização
+    # permanecem exclusivas da Controladoria.
+    if re.fullmatch(r'/solicitacoes/\d+/iniciar-execucao', path):
+        return (gestor or solicitante) and method == 'PUT'
+    if re.fullmatch(r'/solicitacoes/\d+/(?:status|finalizar)', path):
         return gestor
     if re.fullmatch(r'/solicitacoes/\d+/(?:anexos|historico)', path):
         return gestor or solicitante
@@ -866,16 +871,28 @@ def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdat
 
 
 @app.put("/solicitacoes/{solicitacao_id}/iniciar-execucao")
-def iniciar_execucao_solicitacao(solicitacao_id: int, dados: schemas.IniciarExecucaoUpdate, db: Session = Depends(get_db)):
-    db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
-    if not db_sol:
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+def iniciar_execucao_solicitacao(
+    solicitacao_id: int,
+    dados: schemas.IniciarExecucaoUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # Controladoria tem acesso a todas; Solicitante, apenas às próprias.
+    db_sol = _solicitacao_visivel(db, request.state, solicitacao_id)
+    if db_sol.status != "Aprovada":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente solicitações aprovadas podem iniciar a execução.",
+        )
 
     db_sol.status = "Em execução"
     db.commit()
     db.refresh(db_sol)
 
-    registrar_historico_seguro(db, db_sol.id, "Solicitação enviada para execução", "Controladoria")
+    registrar_historico_seguro(
+        db, db_sol.id, "Solicitação enviada para execução",
+        request.state.auth_user_name,
+    )
     return db_sol
 
 

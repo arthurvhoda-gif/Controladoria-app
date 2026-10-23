@@ -2010,10 +2010,6 @@ function App() {
 
   function iniciarExecucao(solicitacao) {
     confirmarAcao('Executar solicitação', `Deseja iniciar a execução da compra ${solicitacao.numero || ''}?`, async () => {
-      fecharSolicitacao()
-      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Em execução' } : s))
-      mostrarToast('Solicitação enviada para execução!', 'success')
-
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/iniciar-execucao`, {
           method: 'PUT',
@@ -2021,9 +2017,13 @@ function App() {
           body: JSON.stringify({ observacao_execucao: '' })
         })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao executar a solicitação.'))
-        carregarDados(false)
+        // Só confirmar visualmente após a API aceitar a operação.
+        setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Em execução' } : s))
+        fecharSolicitacao()
+        mostrarToast('Solicitação enviada para execução!', 'success')
       } catch (e) {
         mostrarToast(e.message, 'error')
+      } finally {
         carregarDados(false)
       }
     })
@@ -3722,10 +3722,10 @@ function App() {
                     <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
                   </>
                 )}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
+                {(ehControladoria || usuarioLogado.perfil === 'Solicitante') && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
                   <>
                     <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Iniciar Execução</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                    {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
                 {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
