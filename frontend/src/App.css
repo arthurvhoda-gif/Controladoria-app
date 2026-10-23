@@ -2299,6 +2299,31 @@ body { letter-spacing: -0.012em; }
 .executive-kpi-grid .kpi-economia .kpi-icon { background: #dcf5e7; color: #11805a; }
 .executive-kpi-grid .kpi-card strong { font-size: clamp(18px,1.7vw,25px); white-space: nowrap; letter-spacing: -.6px; }
 .executive-kpi-grid .kpi-economia strong { color: #147850; }
+
+/* Economia apurada: cor acompanha o sinal do valor, sem alterar o calculo. */
+.executive-kpi-grid .kpi-economia.kpi-economia-negative {
+  background: linear-gradient(135deg, #fff0f0, #ffffff);
+  border-color: #f3caca;
+}
+.executive-kpi-grid .kpi-economia.kpi-economia-negative .kpi-icon {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.executive-kpi-grid .kpi-economia.kpi-economia-negative strong {
+  color: #b91c1c;
+}
+.executive-kpi-grid .kpi-economia.kpi-economia-neutral {
+  background: linear-gradient(135deg, #f3f6fb, #ffffff);
+  border-color: #dfe6ef;
+}
+.executive-kpi-grid .kpi-economia.kpi-economia-neutral .kpi-icon {
+  background: #e8edf5;
+  color: #64748b;
+}
+.executive-kpi-grid .kpi-economia.kpi-economia-neutral strong {
+  color: #475569;
+}
+
 .kpi-footnote { font-size: 11px; color: #78869a; line-height: 1.55; }
 .executive-bottom-grid { display: grid; grid-template-columns: minmax(0,1.7fr) minmax(280px,1fr); gap: 18px; align-items: start; }
 .executive-bottom-grid .panel { padding: 22px; }

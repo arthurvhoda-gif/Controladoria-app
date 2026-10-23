@@ -2908,7 +2908,7 @@ function App() {
                   <strong>{formatarValor(valorTotalRealizado)}</strong>
                   <span className="kpi-footnote">Solicitações finalizadas</span>
                 </article>
-                <article className="kpi-card highlight kpi-economia">
+                <article className={`kpi-card highlight kpi-economia kpi-economia-${classeVariacao(economiaTotal)}`}>
                   <div className="kpi-top"><span>Economia apurada</span><span className="kpi-icon success"><IconeHaize nome="savings" tamanho={20} /></span></div>
                   <strong>{formatarValor(economiaTotal)}</strong>
                   <span className="kpi-footnote">Diferença entre solicitado e realizado nas finalizadas</span>
