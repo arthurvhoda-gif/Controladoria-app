@@ -6,6 +6,9 @@ import re
 import base64
 import io
 import logging
+import hmac
+import unicodedata
+from datetime import timedelta
 from html import escape
 from urllib import request as urllib_request, error as urllib_error
 from urllib.parse import urlparse
@@ -13,11 +16,11 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, or_, and_
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4, landscape
@@ -45,6 +48,12 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     gestor = perfil == 'Controladoria'
     solicitante = perfil == 'Solicitante'
     vistoriador = perfil == 'Checklist'
+    if path == '/checklists/alertas' and method == 'GET':
+        return gestor or vistoriador
+    if path == '/checklists/envios' and method == 'GET':
+        return gestor
+    if path == '/checklists/envios/reprocessar' and method == 'POST':
+        return gestor
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
@@ -99,6 +108,15 @@ def _solicitacao_visivel(db: Session, user, sol_id: int):
 async def proteger_api(request: Request, call_next):
     path, method = request.url.path, request.method.upper()
     if method == 'OPTIONS' or (method == 'GET' and path in ('/', '/status', '/docs', '/openapi.json', '/redoc')) or (method == 'POST' and path == '/login'):
+        return await call_next(request)
+
+    # Endpoint exclusivo do gatilho diário do Google Apps Script.
+    # Nenhum dado pessoal é retornado sem a chave forte do servidor.
+    if method == 'POST' and path == '/automacoes/checklists/atrasos':
+        chave = os.getenv('AUTOMATION_SECRET', '').strip()
+        recebida = request.headers.get('X-Haize-Automation', '')
+        if not chave or len(chave) < 32 or not hmac.compare_digest(recebida, chave):
+            return JSONResponse(status_code=403, content={'detail': 'Automação não autorizada.'})
         return await call_next(request)
 
     authorization = request.headers.get('authorization', '')
@@ -159,6 +177,8 @@ EMAILS_DESTINO_RELATORIO = [
 GAS_WEB_APP_URL = os.getenv("GAS_WEB_APP_URL", "").strip()
 HAIZE_SECRET = os.getenv("HAIZE_SECRET", "").strip()
 logger = logging.getLogger("haize.checklist.email")
+# Desativado por padrão para evitar envio real no ambiente Preview/testes.
+ENVIO_AUTOMATICO_CHECKLIST = os.getenv('ENABLE_CHECKLIST_EMAILS', 'false').strip().lower() in ('1', 'true', 'yes')
 
 
 # =========================================================================
@@ -1010,6 +1030,97 @@ def download_anexo(anexo_id: int, request: Request, db: Session = Depends(get_db
 # =========================================================================
 # CHECKLIST OPERACIONAL, VISTORIAS E ENVIO AUTOMÁTICO DE RELATÓRIO POR E-MAIL
 # =========================================================================
+# Prazos calculados no servidor (fonte única das notificações).
+# Primeira vistoria vence após a frequência contada da criação da atividade.
+def _data_checklist(valor):
+    if isinstance(valor, datetime):
+        return valor.replace(tzinfo=None)
+    try:
+        return datetime.fromisoformat(str(valor).strip().replace('Z', '+00:00')).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return None
+
+
+def _intervalo_checklist(frequencia):
+    nome = unicodedata.normalize('NFKD', str(frequencia or '').lower())
+    nome = ''.join(c for c in nome if not unicodedata.combining(c)).strip()
+    return timedelta(days={'diaria': 1, 'diario': 1, 'semanal': 7,
+                           'quinzenal': 15, 'mensal': 30}.get(nome, 1))
+
+
+def _alertas_atraso_checklist(db: Session, condominio_id=None):
+    itens_query = db.query(models.ChecklistItem)
+    if condominio_id is not None:
+        itens_query = itens_query.filter(models.ChecklistItem.condominio_id == condominio_id)
+    itens = itens_query.all()
+    ids = [i.id for i in itens]
+    ultimas = {}
+    # Uma consulta para o histórico, em vez de N consultas por atividade.
+    if ids:
+        for ex in db.query(models.ChecklistExecucao).filter(
+                models.ChecklistExecucao.item_id.in_(ids)).order_by(
+                    models.ChecklistExecucao.id.desc()).all():
+            ultimas.setdefault(ex.item_id, ex)
+    agora = datetime.now()
+    alertas = []
+    for item in itens:
+        ultima = ultimas.get(item.id)
+        referencia = _data_checklist(ultima.data_execucao if ultima else item.criado_em)
+        if referencia is None:
+            continue
+        vencimento = referencia + _intervalo_checklist(item.frequencia)
+        if agora <= vencimento:
+            continue
+        atraso_horas = round((agora - vencimento).total_seconds() / 3600, 1)
+        alertas.append({
+            'item_id': item.id,
+            'condominio_id': item.condominio_id,
+            'condominio': item.condominio,
+            'titulo': item.titulo,
+            'frequencia': item.frequencia,
+            'ultima_execucao': ultima.data_execucao if ultima else None,
+            'vencimento': vencimento.isoformat(timespec='seconds'),
+            'horas_atraso': atraso_horas,
+            'nunca_executado': ultima is None,
+        })
+    return sorted(alertas, key=lambda x: x['horas_atraso'], reverse=True)
+
+
+@app.get('/checklists/alertas')
+def listar_alertas_checklist(request: Request, db: Session = Depends(get_db)):
+    if request.state.auth_user_role == 'Checklist':
+        if not request.state.auth_condominio_id:
+            return {'total': 0, 'alertas': []}
+        condominio_id = request.state.auth_condominio_id
+    else:
+        condominio_id = None
+    dados = _alertas_atraso_checklist(db, condominio_id)
+    return {'total': len(dados), 'alertas': dados}
+
+
+@app.post('/automacoes/checklists/atrasos')
+def listar_destinatarios_atrasos(db: Session = Depends(get_db)):
+    """Consulta para gatilho diário GAS; a chave é verificada no middleware."""
+    alertas = _alertas_atraso_checklist(db)
+    por_condominio = {}
+    for a in alertas:
+        por_condominio.setdefault(a['condominio_id'], []).append(a)
+    destinatarios = []
+    usuarios = db.query(models.Usuario).filter(
+        models.Usuario.perfil.in_(['Controladoria', 'Checklist'])).all()
+    for usuario in usuarios:
+        if not usuario.email or '@' not in usuario.email:
+            continue
+        if usuario.perfil == 'Controladoria':
+            pessoais = alertas
+        else:
+            pessoais = por_condominio.get(usuario.condominio_id, [])
+        if pessoais:
+            destinatarios.append({'email': usuario.email.strip().lower(), 'nome': usuario.nome,
+                                  'perfil': usuario.perfil, 'alertas': pessoais})
+    return {'total_atividades_atrasadas': len(alertas), 'destinatarios': destinatarios}
+
+
 def formatar_item_checklist(db: Session, item: models.ChecklistItem):
     execucoes = (
         db.query(models.ChecklistExecucao)
@@ -1140,6 +1251,7 @@ def excluir_checklist(item_id: int, db: Session = Depends(get_db)):
 def executar_checklist(
     item_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     responsavel: str = Form(...),
     status_conformidade: str = Form("Conforme"),
     observacao: Optional[str] = Form(""),
@@ -1170,9 +1282,140 @@ def executar_checklist(
         caminho_foto=caminho_foto
     )
     db.add(execucao)
+    db.flush()  # obtém o ID antes do commit para criar a fila na mesma transação
+    if ENVIO_AUTOMATICO_CHECKLIST:
+        db.flush()
+        dados_envio = _dados_pdf_execucao(item, execucao)
+        novo_envio = models.ChecklistEnvioRelatorio(
+            execucao_id=execucao.id,
+            dados_json=json.dumps(dados_envio, ensure_ascii=False),
+            status='pendente',
+        )
+        db.add(novo_envio)
+        db.flush()
+        envio_id = novo_envio.id
+    else:
+        envio_id = None
     db.commit()
     db.refresh(execucao)
-    return formatar_item_checklist(db, item)
+    if envio_id is not None:
+        background_tasks.add_task(_processar_envio_execucao, envio_id)
+    resultado = formatar_item_checklist(db, item)
+    resultado['envio_relatorio'] = 'em_fila' if envio_id is not None else 'desativado'
+    return resultado
+
+
+def _dados_pdf_execucao(item, execucao):
+    return {
+        'condominio': item.condominio,
+        'atividade': item.titulo,
+        'frequencia': item.frequencia,
+        'descricao_orientacao': item.descricao_orientacao or '',
+        'plano_acao': item.plano_acao_padrao or '',
+        'responsavel': execucao.responsavel,
+        'data_execucao': execucao.data_execucao,
+        'status': execucao.status_conformidade,
+        'observacao': execucao.observacao or '',
+        'tem_foto': bool(execucao.caminho_foto),
+    }
+
+
+def gerar_pdf_execucao_checklist(dados: dict) -> bytes:
+    """PDF individual, inclusive para vistorias conformes (e não só divergências)."""
+    memoria = io.BytesIO()
+    estilos = getSampleStyleSheet()
+    normal = ParagraphStyle('HaizeTextoExecucao', parent=estilos['Normal'],
+                            fontName='Helvetica', fontSize=10, leading=15,
+                            textColor=colors.HexColor('#334155'))
+    cab = ParagraphStyle('HaizeCabExecucao', parent=normal, fontName='Helvetica-Bold',
+                         textColor=colors.HexColor('#0f172a'))
+    titulo = ParagraphStyle('HaizeTituloExecucao', parent=cab, fontSize=16, leading=20)
+    def p(valor, estilo=normal):
+        return Paragraph(escape(str(valor or '-')).replace('\n', '<br/>'), estilo)
+    doc = SimpleDocTemplate(memoria, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm,
+                            leftMargin=20*mm, rightMargin=20*mm,
+                            title='Registro de vistoria - Haize')
+    linhas = [
+        [p('Condomínio', cab), p(dados['condominio'])],
+        [p('Atividade', cab), p(dados['atividade'])],
+        [p('Frequência', cab), p(dados['frequencia'])],
+        [p('Realizado por', cab), p(dados['responsavel'])],
+        [p('Registrado em', cab), p(dados['data_execucao'])],
+        [p('Resultado', cab), p(dados['status'])],
+        [p('Observações', cab), p(dados.get('observacao') or 'Sem observações')],
+        [p('Orientações', cab), p(dados.get('descricao_orientacao') or '-')],
+        [p('Plano de ação', cab), p(dados.get('plano_acao') or '-')],
+        [p('Foto', cab), p('Registrada no aplicativo' if dados.get('tem_foto') else 'Não anexada')],
+    ]
+    tabela = Table(linhas, colWidths=[38*mm, 132*mm], hAlign='LEFT')
+    tabela.setStyle(TableStyle([
+        ('VALIGN',(0,0),(-1,-1),'TOP'),
+        ('ROWBACKGROUNDS',(0,0),(-1,-1),[colors.white,colors.HexColor('#f8fafc')]),
+        ('GRID',(0,0),(-1,-1),.35,colors.HexColor('#e2e8f0')),
+        ('TOPPADDING',(0,0),(-1,-1),10),('BOTTOMPADDING',(0,0),(-1,-1),10),
+    ]))
+    doc.build([Paragraph('HAIZE | RELATÓRIO DE VISTORIA', titulo), Spacer(1,8*mm), tabela,
+               Spacer(1,10*mm),p('Relatório gerado automaticamente após o registro da atividade.')])
+    return memoria.getvalue()
+
+
+def _processar_envio_execucao(envio_id: int):
+    # Reivindicação atômica evita duas tarefas enviando o mesmo PDF simultaneamente.
+    with SessionLocal() as db:
+        agora = datetime.now()
+        vencido = (agora - timedelta(minutes=15)).isoformat(timespec='seconds')
+        elegivel = or_(
+            models.ChecklistEnvioRelatorio.status.in_(['pendente', 'falhou']),
+            and_(models.ChecklistEnvioRelatorio.status == 'processando',
+                 models.ChecklistEnvioRelatorio.inicio_tentativa < vencido),
+        )
+        linhas = db.query(models.ChecklistEnvioRelatorio).filter(
+            models.ChecklistEnvioRelatorio.id == envio_id, elegivel).update({
+                'status': 'processando',
+                'inicio_tentativa': agora.isoformat(timespec='seconds'),
+                'tentativas': models.ChecklistEnvioRelatorio.tentativas + 1,
+                'ultimo_erro': None,
+            }, synchronize_session=False)
+        db.commit()
+        if not linhas:
+            return
+        envio = db.query(models.ChecklistEnvioRelatorio).filter_by(id=envio_id).first()
+        try:
+            dados = json.loads(envio.dados_json)
+            pdf = gerar_pdf_execucao_checklist(dados)
+            enviar_relatorio_google_apps_script({'condominio': dados['condominio']}, pdf_bytes=pdf)
+            envio.status = 'enviado'
+            envio.enviado_em = datetime.now().isoformat(timespec='seconds')
+        except Exception as exc:
+            logger.exception('Falha no envio automático da vistoria %s', envio.execucao_id)
+            envio.status = 'falhou'
+            envio.ultimo_erro = str(exc)[:400]
+        db.commit()
+
+
+@app.get('/checklists/envios')
+def listar_envios_checklist(db: Session = Depends(get_db)):
+    envios = db.query(models.ChecklistEnvioRelatorio).order_by(
+        models.ChecklistEnvioRelatorio.id.desc()).limit(100).all()
+    return [{'id': x.id, 'execucao_id': x.execucao_id, 'status': x.status,
+             'tentativas': x.tentativas, 'enviado_em': x.enviado_em,
+             'criado_em': x.criado_em} for x in envios]
+
+
+@app.post('/checklists/envios/reprocessar')
+def reprocessar_envios_checklist(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    if not ENVIO_AUTOMATICO_CHECKLIST:
+        raise HTTPException(status_code=503, detail='Envio automático de relatórios está desativado neste ambiente.')
+    vencido = (datetime.now() - timedelta(minutes=15)).isoformat(timespec='seconds')
+    envios = db.query(models.ChecklistEnvioRelatorio).filter(
+        or_(models.ChecklistEnvioRelatorio.status.in_(['pendente', 'falhou']),
+            and_(models.ChecklistEnvioRelatorio.status == 'processando',
+                 models.ChecklistEnvioRelatorio.inicio_tentativa < vencido)),
+        models.ChecklistEnvioRelatorio.tentativas < 4).order_by(
+            models.ChecklistEnvioRelatorio.id.asc()).limit(20).all()
+    for envio in envios:
+        background_tasks.add_task(_processar_envio_execucao, envio.id)
+    return {'fila_reprocessamento': len(envios)}
 
 
 @app.get("/checklists/execucoes/{execucao_id}/foto")
@@ -1287,7 +1530,7 @@ def gerar_pdf_relatorio_checklist(dados: dict) -> bytes:
     return memoria.getvalue()
 
 
-def enviar_relatorio_google_apps_script(dados: dict) -> None:
+def enviar_relatorio_google_apps_script(dados: dict, pdf_bytes: Optional[bytes] = None) -> None:
     """Envia o PDF a um Google Apps Script que usa MailApp.sendEmail.
 
     A resposta sucesso=true significa que o Apps Script concluiu a chamada
@@ -1311,7 +1554,7 @@ def enviar_relatorio_google_apps_script(dados: dict) -> None:
             detail="GAS_WEB_APP_URL inválida. Use a URL de implantação do Apps Script terminada em /exec.",
         )
 
-    pdf = gerar_pdf_relatorio_checklist(dados)
+    pdf = pdf_bytes if pdf_bytes is not None else gerar_pdf_relatorio_checklist(dados)
     # O script espera exatamente estas chaves, como configurado anteriormente.
     payload = {
         "chave": HAIZE_SECRET,

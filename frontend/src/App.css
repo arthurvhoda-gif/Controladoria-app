@@ -2839,3 +2839,16 @@ button.compras-indicador:hover,button.compras-indicador.selecionado { border-col
   .checklist-abas { width: 100%; flex-direction: column; align-items: stretch; }
   .checklist-aba { width: 100%; justify-content: flex-start; }
 }
+
+
+/* Alertas automáticos do Checklist — Controladoria e Zelador. */
+.alertas-checklist-categoria{display:block;padding:10px 14px;background:#f8fafc;color:#334155;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.alertas-checklist-lista{border-bottom:1px solid #e2e8f0}
+.alerta-checklist-item{width:100%;display:flex;gap:10px;align-items:center;justify-content:space-between;text-align:left;background:white;border:0;border-bottom:1px solid #f1f5f9;padding:12px 14px;cursor:pointer;font:inherit}
+.alerta-checklist-item:hover,.alerta-checklist-item:focus-visible{background:#fff7ed}
+.alerta-checklist-item span{min-width:0;display:flex;flex-direction:column;gap:3px}
+.alerta-checklist-item strong{font-size:12px;color:#0f172a;overflow-wrap:anywhere}
+.alerta-checklist-item small{font-size:11px;color:#64748b}
+.alerta-checklist-item em{font-style:normal;white-space:nowrap;font-weight:800;font-size:11px;border-radius:20px;padding:3px 8px;background:#fef2f2;color:#b91c1c}
+.alertas-checklist-extra{padding:10px 14px;color:#64748b;font-size:12px}
+.alerta-sync-erro{padding:10px 14px;color:#b91c1c;background:#fef2f2;font-size:12px}

@@ -104,6 +104,19 @@ class ChecklistExecucao(Base):
     caminho_foto = Column(String, nullable=True)
     data_execucao = Column(String, default=lambda: datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
+# Fila persistente: um relatório por execução, mesmo quando o e-mail falha.
+class ChecklistEnvioRelatorio(Base):
+    __tablename__ = 'checklist_envios_relatorios'
+    id = Column(Integer, primary_key=True, index=True)
+    execucao_id = Column(Integer, unique=True, nullable=False, index=True)
+    dados_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default='pendente')
+    tentativas = Column(Integer, nullable=False, default=0)
+    ultimo_erro = Column(Text, nullable=True)
+    inicio_tentativa = Column(String, nullable=True)
+    criado_em = Column(String, default=lambda: datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    enviado_em = Column(String, nullable=True)
+
 UsuarioDB = Usuario
 CondominioDB = Condominio
 UnidadeDB = Unidade

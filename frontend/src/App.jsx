@@ -32,8 +32,8 @@ function parseDataSegura(dataStr) {
   return isNaN(d.getTime()) ? null : d
 }
 
-function calcularStatusSLA(frequencia, ultimaExecucao) {
-  if (!ultimaExecucao || !ultimaExecucao.data_execucao) {
+function calcularStatusSLA(frequencia, ultimaExecucao, criadoEm) {
+  if ((!ultimaExecucao || !ultimaExecucao.data_execucao) && !criadoEm) {
     return {
       status: 'pendente',
       label: 'Pendente',
@@ -43,7 +43,7 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
     }
   }
 
-  const dataUltima = parseDataSegura(ultimaExecucao.data_execucao)
+  const dataUltima = parseDataSegura(ultimaExecucao?.data_execucao || criadoEm)
   if (!dataUltima) {
     return {
       status: 'indefinido',
@@ -247,6 +247,8 @@ function App() {
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
   const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
+  const [alertasChecklist, setAlertasChecklist] = useState([])
+  const [erroAlertasChecklist, setErroAlertasChecklist] = useState('')
 
   const [toasts, setToasts] = useState([])
   const [dialog, setDialog] = useState({
@@ -315,6 +317,7 @@ function App() {
   const carregamentoGeralRef = useRef(null)
   // A sincronização do checklist tem requisição independente dos demais módulos.
   const requisicaoChecklistRef = useRef(null)
+  const requisicaoAlertasRef = useRef(null)
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -366,6 +369,11 @@ function App() {
     setFornecedores([])
     setCategorias([])
     setChecklists([])
+    requisicaoAlertasRef.current?.abort()
+    requisicaoAlertasRef.current = null
+    setAlertasChecklist([])
+    setErroAlertasChecklist('')
+    setMostrarMenuNotificacoes(false)
     setCarregandoChecklist(false)
     setErroChecklist('')
     setUltimaAtualizacaoChecklist(null)
@@ -618,6 +626,56 @@ function App() {
     })()
     requisicao.promise = promise
     return promise
+  }
+
+  // Avisos sempre obtidos da API com o token do usuário atual.
+  // O servidor já filtra pelo condomínio quando o perfil é Checklist.
+  async function carregarAlertasChecklist() {
+    const token = usuarioLogado?.token
+    const perfil = usuarioLogado?.perfil
+    if (!token || !['Controladoria', 'Checklist'].includes(perfil)) return
+    if (tokenSessaoRef.current !== token) return
+    requisicaoAlertasRef.current?.abort()
+    const controller = new AbortController()
+    requisicaoAlertasRef.current = controller
+    try {
+      const resposta = await fetch(`${API_URL}/checklists/alertas`, {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal
+      })
+      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Falha ao buscar alertas de vistorias.'))
+      const resultado = await resposta.json()
+      if (tokenSessaoRef.current !== token || requisicaoAlertasRef.current !== controller) return
+      setAlertasChecklist(Array.isArray(resultado.alertas) ? resultado.alertas : [])
+      setErroAlertasChecklist('')
+    } catch (erro) {
+      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token) {
+        setErroAlertasChecklist(erro.message || 'Não foi possível buscar os alertas.')
+      }
+    } finally {
+      if (requisicaoAlertasRef.current === controller) requisicaoAlertasRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    if (!usuarioLogado?.token || !['Controladoria', 'Checklist'].includes(usuarioLogado?.perfil)) return
+    carregarAlertasChecklist()
+    const atualizar = () => { if (document.visibilityState === 'visible') carregarAlertasChecklist() }
+    const intervalo = setInterval(atualizar, 60000)
+    window.addEventListener('focus', atualizar)
+    return () => { clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+  }, [usuarioLogado?.token, usuarioLogado?.perfil])
+
+  async function reprocessarEmailsChecklist() {
+    try {
+      const resposta = await fetch(`${API_URL}/checklists/envios/reprocessar`, {
+        method: 'POST', headers: getAuthHeaders()
+      })
+      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Não foi possível reenviar relatórios.'))
+      const resultado = await resposta.json()
+      mostrarToast(resultado.fila_reprocessamento
+        ? `${resultado.fila_reprocessamento} relatório(s) encaminhados para nova tentativa.`
+        : 'Não há relatórios com falha aguardando reenvio.', 'success')
+    } catch (erro) { mostrarToast(erro.message, 'error') }
   }
 
   async function carregarDados(forcarIndicador = false) {
@@ -1063,15 +1121,15 @@ function App() {
 
   const indicadoresChecklist = useMemo(() => ({
     todos: checklistsNoEscopo.length,
-    em_dia: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'em_dia').length,
-    atrasados: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'atrasado').length,
+    em_dia: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status === 'em_dia').length,
+    atrasados: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status === 'atrasado').length,
     pendentes: checklistsNoEscopo.filter(item => !item.ultima_execucao).length,
     divergencias: checklistsNoEscopo.filter(item => item.ultima_execucao?.status_conformidade === 'Não Conforme').length
   }), [checklistsNoEscopo])
 
   const checklistsFiltrados = useMemo(() => {
     const listagem = checklistsNoEscopo.filter(item => {
-      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em)
       if (filtroSLAChecklist === 'atrasados') return sla.status === 'atrasado'
       if (filtroSLAChecklist === 'pendentes') return !item.ultima_execucao
       if (filtroSLAChecklist === 'em_dia') return sla.status === 'em_dia'
@@ -1080,7 +1138,7 @@ function App() {
     })
     const ordemPrioridade = item => {
       if (item.ultima_execucao?.status_conformidade === 'Não Conforme') return 0
-      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao).status
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status
       if (sla === 'atrasado') return 1
       if (sla === 'pendente') return 2
       if (sla === 'indefinido') return 3
@@ -1334,6 +1392,7 @@ function App() {
       if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível registrar a vistoria.'))
       const itemAtualizado = await res.json()
       setChecklists(prev => prev.map(item => item.id === itemAtual.id ? itemAtualizado : item))
+      carregarAlertasChecklist()
       setItemChecklistExecutando(null)
       if (statusEscolhido === 'Não Conforme') {
         setAlertaPlanoAcao({
@@ -1343,7 +1402,7 @@ function App() {
           plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
         })
       } else {
-        mostrarToast('Vistoria registrada com sucesso!', 'success')
+        mostrarToast(itemAtualizado.envio_relatorio === 'em_fila' ? 'Vistoria registrada. PDF enviado à fila automática de e-mails.' : 'Vistoria registrada com sucesso!', 'success')
       }
       carregarChecklists({ forcar: true, notificarErro: true })
     } catch (erro) {
@@ -2449,16 +2508,16 @@ function App() {
               <span>{sincronizando ? 'Sincronizando...' : (backendOnline ? 'Sistema Online' : 'Modo Cache')}</span>
             </div>
 
-            {!ehChecklist && (
-              <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }}>
                 <button
                   className="icon-button"
-                  onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
+                  aria-label="Ver alertas e notificações"
+                  onClick={() => { setMostrarMenuNotificacoes(!mostrarMenuNotificacoes); carregarAlertasChecklist() }}
                   title="Central de Alertas e Notificações"
                 >
                   <IconeHaize nome="bell" tamanho={18} />
-                  {quantidadePendentes > 0 && (
-                    <span className="notification-badge">{quantidadePendentes}</span>
+                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)) > 0 && (
+                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)}</span>
                   )}
                 </button>
 
@@ -2466,13 +2525,36 @@ function App() {
                   <div style={{ position: 'absolute', right: 0, top: '46px', width: '330px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', boxShadow: '0 20px 35px -5px rgba(15,23,42,0.18)', zIndex: 9999, overflow: 'hidden' }}>
                     <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <strong style={{ fontSize: '13.5px' }}>Central de Alertas</strong>
-                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>{quantidadePendentes} pendentes</span>
+                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>
+                        {alertasChecklist.length} checklist(s) atrasado(s)
+                      </span>
                     </div>
-                    <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                      {solicitacoesPendentesLista.length === 0 ? (
+                    <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                      {erroAlertasChecklist && <div className="alerta-sync-erro" role="alert">{erroAlertasChecklist}</div>}
+                      {alertasChecklist.length > 0 && (
+                        <div className="alertas-checklist-lista">
+                          <strong className="alertas-checklist-categoria">Vistorias em atraso ({alertasChecklist.length})</strong>
+                          {alertasChecklist.slice(0, 15).map(alerta => (
+                            <button key={alerta.item_id} type="button" className="alerta-checklist-item" onClick={() => {
+                              setPagina('checklist'); setAbaChecklist('vistorias'); setFiltroSLAChecklist('atrasados')
+                              setFiltroCondominioChecklist(alerta.condominio)
+                              setMostrarMenuNotificacoes(false)
+                              carregarChecklists({ forcar: true })
+                            }}>
+                              <span><strong>{alerta.titulo}</strong><small>{alerta.condominio}</small></span>
+                              <em>{alerta.horas_atraso < 24 ? `${Math.ceil(alerta.horas_atraso)}h` : `${Math.floor(alerta.horas_atraso / 24)}d`}</em>
+                            </button>
+                          ))}
+                          {alertasChecklist.length > 15 && <p className="alertas-checklist-extra">+{alertasChecklist.length - 15} outros itens em atraso</p>}
+                        </div>
+                      )}
+                      {!ehChecklist && solicitacoesPendentesLista.length > 0 && (
+                        <strong className="alertas-checklist-categoria">Solicitações para análise</strong>
+                      )}
+                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 ? (
                         <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
                       ) : (
-                        solicitacoesPendentesLista.map(s => (
+                        !ehChecklist && solicitacoesPendentesLista.map(s => (
                           <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <strong style={{ fontSize: '12.5px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
@@ -2491,9 +2573,9 @@ function App() {
                   </div>
                 )}
               </div>
-            )}
 
-            <button className="icon-button" onClick={() => carregarDados(true)} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
+
+            <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
             {!ehChecklist && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
@@ -2601,6 +2683,11 @@ function App() {
                 {ehControladoria && (
                   <button type="button" className="button-primary" onClick={abrirModalCriarChecklist}>
                     <IconeHaize nome="plus" tamanho={16} /> Nova atividade
+                  </button>
+                )}
+                {ehControladoria && (
+                  <button type="button" className="button-secondary" onClick={reprocessarEmailsChecklist} title="Reenviar relatórios automáticos que falharam">
+                    <IconeHaize nome="refresh" tamanho={16} /> Reenviar PDFs com falha
                   </button>
                 )}
                 {filtroCondominioChecklist !== 'todos' && (
@@ -2720,7 +2807,7 @@ function App() {
                   {checklistsFiltrados.map(item => {
                     const ultima = item.ultima_execucao
                     const naoConforme = ultima?.status_conformidade === 'Não Conforme'
-                    const sla = calcularStatusSLA(item.frequencia, ultima)
+                    const sla = calcularStatusSLA(item.frequencia, ultima, item.criado_em)
                     return (
                       <article className={`checklist-atividade ${naoConforme ? 'tem-divergencia' : ''}`} key={item.id}>
                         <div className="checklist-atividade-topo">
