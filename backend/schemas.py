@@ -9,17 +9,21 @@ class UsuarioCreate(BaseModel):
     nome: str
     email: str
     senha: str
-    perfil: str = "Solicitante"
+    perfil: str = 'Solicitante'
+    condominio_id: Optional[int] = None
 
 class UsuarioResponse(BaseModel):
     id: int
     nome: str
     email: str
     perfil: str
+    condominio_id: Optional[int] = None
     class Config:
         from_attributes = True
 
-# CLASSE ADICIONADA PARA SUPORTAR A TROCA DE SENHA NO PASSO 4
+class UsuarioCondominioUpdate(BaseModel):
+    condominio_id: int
+
 class SenhaUpdate(BaseModel):
     nova_senha: str
 
@@ -86,10 +90,11 @@ class FinalizarUpdate(BaseModel):
     valor_realizado: float
 
 class IniciarExecucaoUpdate(BaseModel):
-    observacao_execucao: Optional[str] = ""
+    observacao_execucao: Optional[str] = ''
 
 class ChecklistItemCreate(BaseModel):
     condominio: str
+    condominio_id: Optional[int] = None
     titulo: str
     descricao_orientacao: Optional[str] = None
     frequencia: str

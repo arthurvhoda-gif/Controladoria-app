@@ -6,6 +6,10 @@ import re
 import base64
 import io
 import logging
+import hmac
+from math import isfinite
+import unicodedata
+from datetime import timedelta
 from html import escape
 from urllib import request as urllib_request, error as urllib_error
 from urllib.parse import urlparse
@@ -13,11 +17,11 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, or_, and_
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4, landscape
@@ -45,6 +49,12 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     gestor = perfil == 'Controladoria'
     solicitante = perfil == 'Solicitante'
     vistoriador = perfil == 'Checklist'
+    if path == '/checklists/alertas' and method == 'GET':
+        return gestor or vistoriador
+    if path == '/checklists/envios' and method == 'GET':
+        return gestor
+    if path == '/checklists/envios/reprocessar' and method == 'POST':
+        return gestor
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
@@ -69,7 +79,12 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return (gestor or solicitante) and method in ('GET', 'POST')
     if re.fullmatch(r'/solicitacoes/\d+', path):
         return gestor or (solicitante and method in ('PUT', 'DELETE'))
-    if re.fullmatch(r'/solicitacoes/\d+/(?:status|iniciar-execucao|finalizar)', path):
+    # Solicitante pode iniciar e finalizar SOMENTE as próprias solicitações,
+    # e somente nos status correspondentes (validados dentro de cada rota).
+    # Aprovação, reprovação e ajuste de status continuam só para Controladoria.
+    if re.fullmatch(r'/solicitacoes/\d+/(?:iniciar-execucao|finalizar)', path):
+        return (gestor or solicitante) and method == 'PUT'
+    if re.fullmatch(r'/solicitacoes/\d+/status', path):
         return gestor
     if re.fullmatch(r'/solicitacoes/\d+/(?:anexos|historico)', path):
         return gestor or solicitante
@@ -101,6 +116,15 @@ async def proteger_api(request: Request, call_next):
     if method == 'OPTIONS' or (method == 'GET' and path in ('/', '/status', '/docs', '/openapi.json', '/redoc')) or (method == 'POST' and path == '/login'):
         return await call_next(request)
 
+    # Endpoint exclusivo do gatilho diário do Google Apps Script.
+    # Nenhum dado pessoal é retornado sem a chave forte do servidor.
+    if method == 'POST' and path == '/automacoes/checklists/atrasos':
+        chave = os.getenv('AUTOMATION_SECRET', '').strip()
+        recebida = request.headers.get('X-Haize-Automation', '')
+        if not chave or len(chave) < 32 or not hmac.compare_digest(recebida, chave):
+            return JSONResponse(status_code=403, content={'detail': 'Automação não autorizada.'})
+        return await call_next(request)
+
     authorization = request.headers.get('authorization', '')
     if not authorization.lower().startswith('bearer '):
         return JSONResponse(status_code=401, content={'detail': 'Faça login para continuar.'})
@@ -117,6 +141,7 @@ async def proteger_api(request: Request, call_next):
             request.state.auth_user_id = user.id
             request.state.auth_user_name = user.nome
             request.state.auth_user_role = user.perfil
+            request.state.auth_condominio_id = user.condominio_id
             perfil = user.perfil
     except Exception:
         return JSONResponse(status_code=401, content={'detail': 'Sessão inválida ou expirada. Entre novamente.'})
@@ -158,6 +183,8 @@ EMAILS_DESTINO_RELATORIO = [
 GAS_WEB_APP_URL = os.getenv("GAS_WEB_APP_URL", "").strip()
 HAIZE_SECRET = os.getenv("HAIZE_SECRET", "").strip()
 logger = logging.getLogger("haize.checklist.email")
+# Desativado por padrão para evitar envio real no ambiente Preview/testes.
+ENVIO_AUTOMATICO_CHECKLIST = os.getenv('ENABLE_CHECKLIST_EMAILS', 'false').strip().lower() in ('1', 'true', 'yes')
 
 
 # =========================================================================
@@ -204,6 +231,18 @@ def executar_migracoes_automaticas():
                     logging.exception("Falha na migração: %s", cmd)
     finally:
         db.close()
+
+    # Migração crítica de isolamento: se falhar, o serviço não deve abrir
+    # com proteção parcial dos condomínios.
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
+        conn.execute(text('ALTER TABLE checklist_itens ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_usuarios_condominio_id ON usuarios(condominio_id)'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_checklist_itens_condominio_id ON checklist_itens(condominio_id)'))
+        # Garante também no PostgreSQL que não existam dois zeladores do mesmo condomínio.
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_usuarios_checklist_condominio ON usuarios(condominio_id) WHERE perfil = 'Checklist' AND condominio_id IS NOT NULL"))
+        # Migração dos checklists antigos associados pelo nome.
+        conn.execute(text("UPDATE checklist_itens AS i SET condominio_id = c.id FROM condominios AS c WHERE i.condominio_id IS NULL AND LOWER(TRIM(i.condominio)) = LOWER(TRIM(c.nome))"))
 
 
 # =========================================================================
@@ -272,7 +311,7 @@ def login(dados: schemas.LoginRequest, db: Session = Depends(get_db)):
         'access_token': auth_utils.create_token(usuario),
         'token_type': 'bearer',
         'expires_in': auth_utils.SESSION_HOURS * 3600,
-        'usuario': {'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email, 'perfil': usuario.perfil},
+        'usuario': {'id': usuario.id, 'nome': usuario.nome, 'email': usuario.email, 'perfil': usuario.perfil, 'condominio_id': usuario.condominio_id},
     }
 
 
@@ -314,13 +353,47 @@ def criar_usuario(user: schemas.UsuarioCreate, db: Session = Depends(get_db)):
         senha_hash = auth_utils.hash_password(user.senha)
     except ValueError as erro:
         raise HTTPException(status_code=400, detail=str(erro))
+    if not user.nome.strip():
+        raise HTTPException(status_code=400, detail='Informe o nome do usuário.')
+    condominio_id = None
+    if user.perfil == 'Checklist':
+        if user.condominio_id is None:
+            raise HTTPException(status_code=400, detail='Selecione o condomínio do zelador.')
+        condominio = db.query(models.Condominio).filter(models.Condominio.id == user.condominio_id).first()
+        if not condominio:
+            raise HTTPException(status_code=400, detail='Condomínio inválido.')
+        condominio_id = condominio.id
+        # Um zelador por condomínio, conforme a operação informada pela Haize.
+        if db.query(models.Usuario).filter(models.Usuario.perfil == 'Checklist', models.Usuario.condominio_id == condominio_id).first():
+            raise HTTPException(status_code=409, detail='Este condomínio já possui um zelador vinculado.')
     novo = models.Usuario(nome=user.nome.strip(), email=email_limpo,
-                          senha=senha_hash, perfil=user.perfil)
+                          senha=senha_hash, perfil=user.perfil, condominio_id=condominio_id)
     db.add(novo)
     db.commit()
     db.refresh(novo)
     return novo
 
+
+
+@app.put('/usuarios/{usuario_id}/condominio', response_model=schemas.UsuarioResponse)
+def vincular_zelador(usuario_id: int, dados: schemas.UsuarioCondominioUpdate, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario or usuario.perfil != 'Checklist':
+        raise HTTPException(status_code=404, detail='Zelador não encontrado.')
+    cond = db.query(models.Condominio).filter(models.Condominio.id == dados.condominio_id).first()
+    if not cond:
+        raise HTTPException(status_code=400, detail='Condomínio inválido.')
+    ocupado = db.query(models.Usuario).filter(
+        models.Usuario.id != usuario_id,
+        models.Usuario.perfil == 'Checklist',
+        models.Usuario.condominio_id == cond.id,
+    ).first()
+    if ocupado:
+        raise HTTPException(status_code=409, detail='Este condomínio já possui um zelador vinculado.')
+    usuario.condominio_id = cond.id
+    db.commit()
+    db.refresh(usuario)
+    return usuario
 
 @app.put('/usuarios/{usuario_id}/senha')
 def alterar_senha_usuario(usuario_id: int, dados: schemas.SenhaUpdate, db: Session = Depends(get_db)):
@@ -351,8 +424,13 @@ def excluir_usuario(usuario_id: int, request: Request, db: Session = Depends(get
 # CONDOMÍNIOS, UNIDADES E RATEIO POR FRAÇÃO IDEAL
 # =========================================================================
 @app.get("/condominios", response_model=List[schemas.CondominioResponse])
-def listar_condominios(db: Session = Depends(get_db)):
-    return db.query(models.Condominio).order_by(models.Condominio.nome.asc()).all()
+def listar_condominios(request: Request, db: Session = Depends(get_db)):
+    query = db.query(models.Condominio)
+    if request.state.auth_user_role == 'Checklist':
+        if request.state.auth_condominio_id is None:
+            return []  # Sem vínculo = nenhum condomínio visível.
+        query = query.filter(models.Condominio.id == request.state.auth_condominio_id)
+    return query.order_by(models.Condominio.nome.asc()).all()
 
 
 @app.post("/condominios", response_model=schemas.CondominioResponse)
@@ -404,6 +482,8 @@ def excluir_condominio(condominio_id: int, db: Session = Depends(get_db)):
     db_cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not db_cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
+    if db.query(models.Usuario).filter(models.Usuario.condominio_id == condominio_id).first():
+        raise HTTPException(status_code=409, detail='Desvincule o zelador antes de excluir este condomínio.')
     db.delete(db_cond)
     db.commit()
     return {"mensagem": "Condomínio excluído com sucesso."}
@@ -792,27 +872,55 @@ def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdat
 
 
 @app.put("/solicitacoes/{solicitacao_id}/iniciar-execucao")
-def iniciar_execucao_solicitacao(solicitacao_id: int, dados: schemas.IniciarExecucaoUpdate, db: Session = Depends(get_db)):
-    db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
-    if not db_sol:
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+def iniciar_execucao_solicitacao(
+    solicitacao_id: int,
+    dados: schemas.IniciarExecucaoUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # Controladoria tem acesso a todas; Solicitante, apenas às próprias.
+    db_sol = _solicitacao_visivel(db, request.state, solicitacao_id)
+    if db_sol.status != "Aprovada":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente solicitações aprovadas podem iniciar a execução.",
+        )
 
     db_sol.status = "Em execução"
     db.commit()
     db.refresh(db_sol)
 
-    registrar_historico_seguro(db, db_sol.id, "Solicitação enviada para execução", "Controladoria")
+    registrar_historico_seguro(
+        db, db_sol.id, "Solicitação enviada para execução",
+        request.state.auth_user_name,
+    )
     return db_sol
 
 
 @app.put("/solicitacoes/{solicitacao_id}/finalizar")
-def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, db: Session = Depends(get_db)):
-    db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
-    if not db_sol:
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+def finalizar_solicitacao(
+    solicitacao_id: int,
+    dados: schemas.FinalizarUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # A Controladoria pode finalizar qualquer compra; o Solicitante,
+    # somente uma solicitação criada por ele. A checagem ocorre no servidor.
+    if request.state.auth_user_role not in ('Controladoria', 'Solicitante'):
+        raise HTTPException(status_code=403, detail='Perfil sem permissão para finalizar compras.')
+    db_sol = _solicitacao_visivel(db, request.state, solicitacao_id)
+    if db_sol.status != "Em execução":
+        raise HTTPException(
+            status_code=409,
+            detail="Somente solicitações em execução podem ser finalizadas.",
+        )
+
+    valor = float(dados.valor_realizado or 0.0)
+    if not isfinite(valor) or valor <= 0:
+        raise HTTPException(status_code=422, detail="O valor realizado deve ser maior que zero.")
 
     db_sol.status = "Finalizada"
-    db_sol.valor_realizado = float(dados.valor_realizado or 0.0)
+    db_sol.valor_realizado = valor
     db.commit()
     db.refresh(db_sol)
 
@@ -820,7 +928,7 @@ def finalizar_solicitacao(solicitacao_id: int, dados: schemas.FinalizarUpdate, d
         db,
         db_sol.id,
         f"Solicitação finalizada (Valor Realizado: R$ {db_sol.valor_realizado:.2f})",
-        "Controladoria"
+        request.state.auth_user_name,
     )
     return db_sol
 
@@ -956,6 +1064,97 @@ def download_anexo(anexo_id: int, request: Request, db: Session = Depends(get_db
 # =========================================================================
 # CHECKLIST OPERACIONAL, VISTORIAS E ENVIO AUTOMÁTICO DE RELATÓRIO POR E-MAIL
 # =========================================================================
+# Prazos calculados no servidor (fonte única das notificações).
+# Primeira vistoria vence após a frequência contada da criação da atividade.
+def _data_checklist(valor):
+    if isinstance(valor, datetime):
+        return valor.replace(tzinfo=None)
+    try:
+        return datetime.fromisoformat(str(valor).strip().replace('Z', '+00:00')).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return None
+
+
+def _intervalo_checklist(frequencia):
+    nome = unicodedata.normalize('NFKD', str(frequencia or '').lower())
+    nome = ''.join(c for c in nome if not unicodedata.combining(c)).strip()
+    return timedelta(days={'diaria': 1, 'diario': 1, 'semanal': 7,
+                           'quinzenal': 15, 'mensal': 30}.get(nome, 1))
+
+
+def _alertas_atraso_checklist(db: Session, condominio_id=None):
+    itens_query = db.query(models.ChecklistItem)
+    if condominio_id is not None:
+        itens_query = itens_query.filter(models.ChecklistItem.condominio_id == condominio_id)
+    itens = itens_query.all()
+    ids = [i.id for i in itens]
+    ultimas = {}
+    # Uma consulta para o histórico, em vez de N consultas por atividade.
+    if ids:
+        for ex in db.query(models.ChecklistExecucao).filter(
+                models.ChecklistExecucao.item_id.in_(ids)).order_by(
+                    models.ChecklistExecucao.id.desc()).all():
+            ultimas.setdefault(ex.item_id, ex)
+    agora = datetime.now()
+    alertas = []
+    for item in itens:
+        ultima = ultimas.get(item.id)
+        referencia = _data_checklist(ultima.data_execucao if ultima else item.criado_em)
+        if referencia is None:
+            continue
+        vencimento = referencia + _intervalo_checklist(item.frequencia)
+        if agora <= vencimento:
+            continue
+        atraso_horas = round((agora - vencimento).total_seconds() / 3600, 1)
+        alertas.append({
+            'item_id': item.id,
+            'condominio_id': item.condominio_id,
+            'condominio': item.condominio,
+            'titulo': item.titulo,
+            'frequencia': item.frequencia,
+            'ultima_execucao': ultima.data_execucao if ultima else None,
+            'vencimento': vencimento.isoformat(timespec='seconds'),
+            'horas_atraso': atraso_horas,
+            'nunca_executado': ultima is None,
+        })
+    return sorted(alertas, key=lambda x: x['horas_atraso'], reverse=True)
+
+
+@app.get('/checklists/alertas')
+def listar_alertas_checklist(request: Request, db: Session = Depends(get_db)):
+    if request.state.auth_user_role == 'Checklist':
+        if not request.state.auth_condominio_id:
+            return {'total': 0, 'alertas': []}
+        condominio_id = request.state.auth_condominio_id
+    else:
+        condominio_id = None
+    dados = _alertas_atraso_checklist(db, condominio_id)
+    return {'total': len(dados), 'alertas': dados}
+
+
+@app.post('/automacoes/checklists/atrasos')
+def listar_destinatarios_atrasos(db: Session = Depends(get_db)):
+    """Consulta para gatilho diário GAS; a chave é verificada no middleware."""
+    alertas = _alertas_atraso_checklist(db)
+    por_condominio = {}
+    for a in alertas:
+        por_condominio.setdefault(a['condominio_id'], []).append(a)
+    destinatarios = []
+    usuarios = db.query(models.Usuario).filter(
+        models.Usuario.perfil.in_(['Controladoria', 'Checklist'])).all()
+    for usuario in usuarios:
+        if not usuario.email or '@' not in usuario.email:
+            continue
+        if usuario.perfil == 'Controladoria':
+            pessoais = alertas
+        else:
+            pessoais = por_condominio.get(usuario.condominio_id, [])
+        if pessoais:
+            destinatarios.append({'email': usuario.email.strip().lower(), 'nome': usuario.nome,
+                                  'perfil': usuario.perfil, 'alertas': pessoais})
+    return {'total_atividades_atrasadas': len(alertas), 'destinatarios': destinatarios}
+
+
 def formatar_item_checklist(db: Session, item: models.ChecklistItem):
     execucoes = (
         db.query(models.ChecklistExecucao)
@@ -978,6 +1177,7 @@ def formatar_item_checklist(db: Session, item: models.ChecklistItem):
     return {
         "id": item.id,
         "condominio": item.condominio,
+        "condominio_id": item.condominio_id,
         "titulo": item.titulo,
         "descricao_orientacao": item.descricao_orientacao,
         "frequencia": item.frequencia,
@@ -989,15 +1189,49 @@ def formatar_item_checklist(db: Session, item: models.ChecklistItem):
 
 
 @app.get("/checklists")
-def listar_checklists(db: Session = Depends(get_db)):
-    itens = db.query(models.ChecklistItem).order_by(models.ChecklistItem.id.desc()).all()
+def listar_checklists(request: Request, db: Session = Depends(get_db)):
+    query = db.query(models.ChecklistItem)
+    if request.state.auth_user_role == 'Checklist':
+        if request.state.auth_condominio_id is None:
+            return []
+        query = query.filter(models.ChecklistItem.condominio_id == request.state.auth_condominio_id)
+    itens = query.order_by(models.ChecklistItem.id.desc()).all()
     return [formatar_item_checklist(db, item) for item in itens]
+
+
+def _condominio_para_atividade(db: Session, dados: schemas.ChecklistItemCreate):
+    # A API deriva o nome pelo ID cadastrado; nunca confia apenas em um nome
+    # recebido do navegador para definir o condomínio de uma vistoria.
+    if dados.condominio_id is not None:
+        cond = db.query(models.Condominio).filter(models.Condominio.id == dados.condominio_id).first()
+    else:
+        cond = db.query(models.Condominio).filter(models.Condominio.nome == dados.condominio.strip()).first()
+    if not cond:
+        raise HTTPException(status_code=400, detail='Condomínio não encontrado para a atividade.')
+    return cond
+
+
+def _validar_acesso_item(request: Request, item: models.ChecklistItem) -> None:
+    if request.state.auth_user_role == 'Checklist':
+        if (request.state.auth_condominio_id is None or
+                item.condominio_id != request.state.auth_condominio_id):
+            # Não divulga a existência de atividades de outros condomínios.
+            raise HTTPException(status_code=404, detail='Atividade não encontrada.')
+
+
+def _validar_acesso_condominio(request: Request, condominio_id: int) -> None:
+    if request.state.auth_user_role == 'Checklist':
+        if (request.state.auth_condominio_id is None or
+                condominio_id != request.state.auth_condominio_id):
+            raise HTTPException(status_code=404, detail='Condomínio não encontrado.')
 
 
 @app.post("/checklists")
 def criar_checklist(item: schemas.ChecklistItemCreate, db: Session = Depends(get_db)):
+    cond = _condominio_para_atividade(db, item)
     novo = models.ChecklistItem(
-        condominio=item.condominio,
+        condominio=cond.nome,
+        condominio_id=cond.id,
         titulo=item.titulo.strip(),
         descricao_orientacao=item.descricao_orientacao,
         frequencia=item.frequencia,
@@ -1015,7 +1249,9 @@ def atualizar_checklist(item_id: int, dados: schemas.ChecklistItemCreate, db: Se
     if not item:
         raise HTTPException(status_code=404, detail="Atividade não encontrada.")
 
-    item.condominio = dados.condominio
+    cond = _condominio_para_atividade(db, dados)
+    item.condominio = cond.nome
+    item.condominio_id = cond.id
     item.titulo = dados.titulo.strip()
     item.descricao_orientacao = dados.descricao_orientacao
     item.frequencia = dados.frequencia
@@ -1049,6 +1285,7 @@ def excluir_checklist(item_id: int, db: Session = Depends(get_db)):
 def executar_checklist(
     item_id: int,
     request: Request,
+    background_tasks: BackgroundTasks,
     responsavel: str = Form(...),
     status_conformidade: str = Form("Conforme"),
     observacao: Optional[str] = Form(""),
@@ -1058,6 +1295,7 @@ def executar_checklist(
     item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item de checklist não encontrado.")
+    _validar_acesso_item(request, item)
 
     nome_foto = None
     caminho_foto = None
@@ -1078,16 +1316,153 @@ def executar_checklist(
         caminho_foto=caminho_foto
     )
     db.add(execucao)
+    db.flush()  # obtém o ID antes do commit para criar a fila na mesma transação
+    if ENVIO_AUTOMATICO_CHECKLIST:
+        db.flush()
+        dados_envio = _dados_pdf_execucao(item, execucao)
+        novo_envio = models.ChecklistEnvioRelatorio(
+            execucao_id=execucao.id,
+            dados_json=json.dumps(dados_envio, ensure_ascii=False),
+            status='pendente',
+        )
+        db.add(novo_envio)
+        db.flush()
+        envio_id = novo_envio.id
+    else:
+        envio_id = None
     db.commit()
     db.refresh(execucao)
-    return formatar_item_checklist(db, item)
+    if envio_id is not None:
+        background_tasks.add_task(_processar_envio_execucao, envio_id)
+    resultado = formatar_item_checklist(db, item)
+    resultado['envio_relatorio'] = 'em_fila' if envio_id is not None else 'desativado'
+    return resultado
+
+
+def _dados_pdf_execucao(item, execucao):
+    return {
+        'condominio': item.condominio,
+        'atividade': item.titulo,
+        'frequencia': item.frequencia,
+        'descricao_orientacao': item.descricao_orientacao or '',
+        'plano_acao': item.plano_acao_padrao or '',
+        'responsavel': execucao.responsavel,
+        'data_execucao': execucao.data_execucao,
+        'status': execucao.status_conformidade,
+        'observacao': execucao.observacao or '',
+        'tem_foto': bool(execucao.caminho_foto),
+    }
+
+
+def gerar_pdf_execucao_checklist(dados: dict) -> bytes:
+    """PDF individual, inclusive para vistorias conformes (e não só divergências)."""
+    memoria = io.BytesIO()
+    estilos = getSampleStyleSheet()
+    normal = ParagraphStyle('HaizeTextoExecucao', parent=estilos['Normal'],
+                            fontName='Helvetica', fontSize=10, leading=15,
+                            textColor=colors.HexColor('#334155'))
+    cab = ParagraphStyle('HaizeCabExecucao', parent=normal, fontName='Helvetica-Bold',
+                         textColor=colors.HexColor('#0f172a'))
+    titulo = ParagraphStyle('HaizeTituloExecucao', parent=cab, fontSize=16, leading=20)
+    def p(valor, estilo=normal):
+        return Paragraph(escape(str(valor or '-')).replace('\n', '<br/>'), estilo)
+    doc = SimpleDocTemplate(memoria, pagesize=A4, topMargin=20*mm, bottomMargin=20*mm,
+                            leftMargin=20*mm, rightMargin=20*mm,
+                            title='Registro de vistoria - Haize')
+    linhas = [
+        [p('Condomínio', cab), p(dados['condominio'])],
+        [p('Atividade', cab), p(dados['atividade'])],
+        [p('Frequência', cab), p(dados['frequencia'])],
+        [p('Realizado por', cab), p(dados['responsavel'])],
+        [p('Registrado em', cab), p(dados['data_execucao'])],
+        [p('Resultado', cab), p(dados['status'])],
+        [p('Observações', cab), p(dados.get('observacao') or 'Sem observações')],
+        [p('Orientações', cab), p(dados.get('descricao_orientacao') or '-')],
+        [p('Plano de ação', cab), p(dados.get('plano_acao') or '-')],
+        [p('Foto', cab), p('Registrada no aplicativo' if dados.get('tem_foto') else 'Não anexada')],
+    ]
+    tabela = Table(linhas, colWidths=[38*mm, 132*mm], hAlign='LEFT')
+    tabela.setStyle(TableStyle([
+        ('VALIGN',(0,0),(-1,-1),'TOP'),
+        ('ROWBACKGROUNDS',(0,0),(-1,-1),[colors.white,colors.HexColor('#f8fafc')]),
+        ('GRID',(0,0),(-1,-1),.35,colors.HexColor('#e2e8f0')),
+        ('TOPPADDING',(0,0),(-1,-1),10),('BOTTOMPADDING',(0,0),(-1,-1),10),
+    ]))
+    doc.build([Paragraph('HAIZE | RELATÓRIO DE VISTORIA', titulo), Spacer(1,8*mm), tabela,
+               Spacer(1,10*mm),p('Relatório gerado automaticamente após o registro da atividade.')])
+    return memoria.getvalue()
+
+
+def _processar_envio_execucao(envio_id: int):
+    # Reivindicação atômica evita duas tarefas enviando o mesmo PDF simultaneamente.
+    with SessionLocal() as db:
+        agora = datetime.now()
+        vencido = (agora - timedelta(minutes=15)).isoformat(timespec='seconds')
+        elegivel = or_(
+            models.ChecklistEnvioRelatorio.status.in_(['pendente', 'falhou']),
+            and_(models.ChecklistEnvioRelatorio.status == 'processando',
+                 models.ChecklistEnvioRelatorio.inicio_tentativa < vencido),
+        )
+        linhas = db.query(models.ChecklistEnvioRelatorio).filter(
+            models.ChecklistEnvioRelatorio.id == envio_id, elegivel).update({
+                'status': 'processando',
+                'inicio_tentativa': agora.isoformat(timespec='seconds'),
+                'tentativas': models.ChecklistEnvioRelatorio.tentativas + 1,
+                'ultimo_erro': None,
+            }, synchronize_session=False)
+        db.commit()
+        if not linhas:
+            return
+        envio = db.query(models.ChecklistEnvioRelatorio).filter_by(id=envio_id).first()
+        try:
+            dados = json.loads(envio.dados_json)
+            pdf = gerar_pdf_execucao_checklist(dados)
+            enviar_relatorio_google_apps_script({'condominio': dados['condominio']}, pdf_bytes=pdf)
+            envio.status = 'enviado'
+            envio.enviado_em = datetime.now().isoformat(timespec='seconds')
+        except Exception as exc:
+            logger.exception('Falha no envio automático da vistoria %s', envio.execucao_id)
+            envio.status = 'falhou'
+            envio.ultimo_erro = str(exc)[:400]
+        db.commit()
+
+
+@app.get('/checklists/envios')
+def listar_envios_checklist(db: Session = Depends(get_db)):
+    envios = db.query(models.ChecklistEnvioRelatorio).order_by(
+        models.ChecklistEnvioRelatorio.id.desc()).limit(100).all()
+    return [{'id': x.id, 'execucao_id': x.execucao_id, 'status': x.status,
+             'tentativas': x.tentativas, 'enviado_em': x.enviado_em,
+             'criado_em': x.criado_em} for x in envios]
+
+
+@app.post('/checklists/envios/reprocessar')
+def reprocessar_envios_checklist(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    if not ENVIO_AUTOMATICO_CHECKLIST:
+        raise HTTPException(status_code=503, detail='Envio automático de relatórios está desativado neste ambiente.')
+    vencido = (datetime.now() - timedelta(minutes=15)).isoformat(timespec='seconds')
+    envios = db.query(models.ChecklistEnvioRelatorio).filter(
+        or_(models.ChecklistEnvioRelatorio.status.in_(['pendente', 'falhou']),
+            and_(models.ChecklistEnvioRelatorio.status == 'processando',
+                 models.ChecklistEnvioRelatorio.inicio_tentativa < vencido)),
+        models.ChecklistEnvioRelatorio.tentativas < 4).order_by(
+            models.ChecklistEnvioRelatorio.id.asc()).limit(20).all()
+    for envio in envios:
+        background_tasks.add_task(_processar_envio_execucao, envio.id)
+    return {'fila_reprocessamento': len(envios)}
 
 
 @app.get("/checklists/execucoes/{execucao_id}/foto")
-def ver_foto_execucao(execucao_id: int, db: Session = Depends(get_db)):
+def ver_foto_execucao(execucao_id: int, request: Request, db: Session = Depends(get_db)):
     ex = db.query(models.ChecklistExecucao).filter(models.ChecklistExecucao.id == execucao_id).first()
-    if not ex or not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
-        raise HTTPException(status_code=404, detail="Foto não encontrada.")
+    if not ex:
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
+    item = db.query(models.ChecklistItem).filter(models.ChecklistItem.id == ex.item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
+    _validar_acesso_item(request, item)
+    if not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
+        raise HTTPException(status_code=404, detail='Foto não encontrada.')
     return FileResponse(ex.caminho_foto)
 
 
@@ -1189,7 +1564,7 @@ def gerar_pdf_relatorio_checklist(dados: dict) -> bytes:
     return memoria.getvalue()
 
 
-def enviar_relatorio_google_apps_script(dados: dict) -> None:
+def enviar_relatorio_google_apps_script(dados: dict, pdf_bytes: Optional[bytes] = None) -> None:
     """Envia o PDF a um Google Apps Script que usa MailApp.sendEmail.
 
     A resposta sucesso=true significa que o Apps Script concluiu a chamada
@@ -1213,7 +1588,7 @@ def enviar_relatorio_google_apps_script(dados: dict) -> None:
             detail="GAS_WEB_APP_URL inválida. Use a URL de implantação do Apps Script terminada em /exec.",
         )
 
-    pdf = gerar_pdf_relatorio_checklist(dados)
+    pdf = pdf_bytes if pdf_bytes is not None else gerar_pdf_relatorio_checklist(dados)
     # O script espera exatamente estas chaves, como configurado anteriormente.
     payload = {
         "chave": HAIZE_SECRET,
@@ -1269,14 +1644,16 @@ def enviar_relatorio_google_apps_script(dados: dict) -> None:
 @app.get("/condominios/{condominio_id}/checklist-relatorio-divergencias")
 def relatorio_divergencias_checklist(
     condominio_id: int,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Consulta dados do relatório. GET não envia e-mail para evitar disparos acidentais."""
+    _validar_acesso_condominio(request, condominio_id)
     cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
 
-    itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio == cond.nome).all()
+    itens = db.query(models.ChecklistItem).filter(models.ChecklistItem.condominio_id == cond.id).all()
     divergencias = []
     for item in itens:
         ultima = (
@@ -1307,10 +1684,12 @@ def relatorio_divergencias_checklist(
 @app.post("/condominios/{condominio_id}/checklist-relatorio-divergencias/enviar")
 def enviar_relatorio_divergencias_checklist(
     condominio_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Gera PDF e solicita envio por HTTPS aos dois destinatários."""
-    dados = relatorio_divergencias_checklist(condominio_id, db)
+    _validar_acesso_condominio(request, condominio_id)
+    dados = relatorio_divergencias_checklist(condominio_id, request, db)
     enviar_relatorio_google_apps_script(dados)
     return {
         "status": "enviado_pelo_apps_script",

@@ -5,7 +5,7 @@ import {
 import XLSX from 'xlsx-js-style'
 import './App.css'
 
-const API_URL = 'https://controladoria-api.onrender.com'
+const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
 function lerCache(chave, padrao = []) {
   try {
@@ -32,8 +32,8 @@ function parseDataSegura(dataStr) {
   return isNaN(d.getTime()) ? null : d
 }
 
-function calcularStatusSLA(frequencia, ultimaExecucao) {
-  if (!ultimaExecucao || !ultimaExecucao.data_execucao) {
+function calcularStatusSLA(frequencia, ultimaExecucao, criadoEm) {
+  if ((!ultimaExecucao || !ultimaExecucao.data_execucao) && !criadoEm) {
     return {
       status: 'pendente',
       label: 'Pendente',
@@ -43,7 +43,7 @@ function calcularStatusSLA(frequencia, ultimaExecucao) {
     }
   }
 
-  const dataUltima = parseDataSegura(ultimaExecucao.data_execucao)
+  const dataUltima = parseDataSegura(ultimaExecucao?.data_execucao || criadoEm)
   if (!dataUltima) {
     return {
       status: 'indefinido',
@@ -104,6 +104,17 @@ function aprovado(item) { return numero(item?.valor_aprovado) }
 function realizado(item) { return numero(item?.valor_realizado) }
 function formatarValor(v) { return numero(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
 function formatarNumero(v) { return numero(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }
+
+function escaparHtml(valor) {
+  return String(valor ?? '').replace(/[&<>"']/g, caractere => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[caractere]))
+}
+
+function dataLocalISO(data) {
+  const dois = valor => String(valor).padStart(2, '0')
+  return `${data.getFullYear()}-${dois(data.getMonth() + 1)}-${dois(data.getDate())}`
+}
 
 function formatarDataHora(dataStr) {
   if (!dataStr) return '-'
@@ -175,16 +186,27 @@ function App() {
   const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const [abaChecklist, setAbaChecklist] = useState('vistorias')
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
   const [backendOnline, setBackendOnline] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
+  const [carregandoChecklist, setCarregandoChecklist] = useState(false)
+  const [erroChecklist, setErroChecklist] = useState('')
+  const [ultimaAtualizacaoChecklist, setUltimaAtualizacaoChecklist] = useState(null)
 
   const [solicitacoes, setSolicitacoes] = useState(() => lerCache('solicitacoes', []))
-  const [condominios, setCondominios] = useState(() => lerCache('condominios', []))
+  const [condominios, setCondominios] = useState([])
   const [fornecedores, setFornecedores] = useState(() => lerCache('fornecedores', []))
   const [categorias, setCategorias] = useState(() => lerCache('categorias', []))
-  const [checklists, setChecklists] = useState(() => lerCache('checklists', []))
+  const [checklists, setChecklists] = useState([])
+
+  // Cadastro e vinculação dos zeladores (somente Controladoria).
+  const [zeladores, setZeladores] = useState([])
+  const [carregandoZeladores, setCarregandoZeladores] = useState(false)
+  const [salvandoZelador, setSalvandoZelador] = useState(false)
+  const [formZelador, setFormZelador] = useState({ nome: '', email: '', senha: '', condominio_id: '' })
+  const [atribuicoesZeladores, setAtribuicoesZeladores] = useState({})
 
   // GESTÃO DE UNIDADES E RATEIO POR FRAÇÃO
   const [condominioUnidades, setCondominioUnidades] = useState(null)
@@ -225,6 +247,8 @@ function App() {
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
   const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
+  const [alertasChecklist, setAlertasChecklist] = useState([])
+  const [erroAlertasChecklist, setErroAlertasChecklist] = useState('')
 
   const [toasts, setToasts] = useState([])
   const [dialog, setDialog] = useState({
@@ -261,6 +285,13 @@ function App() {
   const [ordenacaoSolicitacao, setOrdenacaoSolicitacao] = useState('recentes')
   const [paginaSolicitacoes, setPaginaSolicitacoes] = useState(1)
   const [filtroCompra, setFiltroCompra] = useState('')
+  const [filtroCondominioCompra, setFiltroCondominioCompra] = useState('todos')
+  const [filtroStatusCompra, setFiltroStatusCompra] = useState('todos')
+  const [ordenacaoCompra, setOrdenacaoCompra] = useState('recentes')
+  const [paginaCompra, setPaginaCompra] = useState(1)
+  const [buscaCondominioCadastro, setBuscaCondominioCadastro] = useState('')
+  const [buscaCategoriaCadastro, setBuscaCategoriaCadastro] = useState('')
+  const [buscaFornecedorCadastro, setBuscaFornecedorCadastro] = useState('')
   const [salvando, setSalvando] = useState(false)
 
   const [filtroDataInicio, setFiltroDataInicio] = useState('')
@@ -280,6 +311,13 @@ function App() {
   const hashCacheRef = useRef({
     sol: '', cond: '', forn: '', cat: '', chk: ''
   })
+  // Impede que uma resposta iniciada na conta anterior atualize a nova sessão.
+  const tokenSessaoRef = useRef(usuarioLogado?.token || null)
+  // Impede que atualizações periódicas se cancelem mutuamente quando a API está lenta.
+  const carregamentoGeralRef = useRef(null)
+  // A sincronização do checklist tem requisição independente dos demais módulos.
+  const requisicaoChecklistRef = useRef(null)
+  const requisicaoAlertasRef = useRef(null)
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -315,6 +353,46 @@ function App() {
     localStorage.removeItem('usuarioControladoria')
   }
 
+  // Toda troca de conta começa com dados e filtros limpos, sem pedir F5.
+  function reiniciarDadosDaSessao(proximoToken = null) {
+    tokenSessaoRef.current = proximoToken
+    carregamentoGeralRef.current = null
+    if (requisicaoChecklistRef.current) {
+      requisicaoChecklistRef.current.controller.abort()
+      requisicaoChecklistRef.current = null
+    }
+    limparCacheLocal()
+    hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
+    qtdSolicitacoesRef.current = 0
+    setSolicitacoes([])
+    setCondominios([])
+    setFornecedores([])
+    setCategorias([])
+    setChecklists([])
+    requisicaoAlertasRef.current?.abort()
+    requisicaoAlertasRef.current = null
+    setAlertasChecklist([])
+    setErroAlertasChecklist('')
+    setMostrarMenuNotificacoes(false)
+    setCarregandoChecklist(false)
+    setErroChecklist('')
+    setUltimaAtualizacaoChecklist(null)
+    setZeladores([])
+    setAtribuicoesZeladores({})
+    setFiltroCondominioChecklist('todos')
+    setFiltroFrequenciaChecklist('todas')
+    setFiltroSLAChecklist('todos')
+    setBuscaChecklist('')
+    setOrdenacaoChecklist('prioridade')
+    setAbaChecklist('vistorias')
+    setSincronizando(false)
+    setItemChecklistHistorico(null)
+    setItemChecklistExecutando(null)
+    setChecklistEditando(null)
+    setMostrarModalNovoChecklist(false)
+    setSolicitacaoSelecionada(null)
+  }
+
   useEffect(() => {
     // Descarta tokens e caches legados do localStorage, anteriores à autenticação segura.
     for (const chave of Object.keys(localStorage)) {
@@ -336,7 +414,7 @@ function App() {
       .catch(() => {
         if (!canceled) {
           sessionStorage.removeItem('usuarioControladoria')
-          limparCacheLocal()
+          reiniciarDadosDaSessao()
           setUsuarioLogado(null)
         }
       })
@@ -438,8 +516,8 @@ function App() {
       }
       const dados = await res.json()
       const dadosUsuario = { ...dados.usuario, token: dados.access_token }
+      reiniciarDadosDaSessao(dadosUsuario.token)
       setUsuarioLogado(dadosUsuario)
-      limparCacheLocal()
       sessionStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       setSenhaLogin('')
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
@@ -452,16 +530,9 @@ function App() {
   }
 
   function fazerLogout() {
-    setUsuarioLogado(null)
     sessionStorage.removeItem('usuarioControladoria')
-    limparCacheLocal()
-    setSolicitacoes([])
-    setCondominios([])
-    setFornecedores([])
-    setCategorias([])
-    setChecklists([])
-    hashCacheRef.current = { sol: '', cond: '', forn: '', cat: '', chk: '' }
-    setSolicitacaoSelecionada(null)
+    reiniciarDadosDaSessao()
+    setUsuarioLogado(null)
     setPagina('dashboard')
     setEmailLogin('')
     setSenhaLogin('')
@@ -495,19 +566,142 @@ function App() {
     }
   }
 
+  // Consulta isolada: o carregamento lento de solicitações/fornecedores não bloqueia vistorias.
+  // Uma nova sessão sempre invalida e aborta solicitações feitas na conta anterior.
+  async function carregarChecklists({ forcar = false, notificarErro = false } = {}) {
+    const token = usuarioLogado?.token
+    if (!token || tokenSessaoRef.current !== token) return false
+
+    const anterior = requisicaoChecklistRef.current
+    if (anterior?.token === token) {
+      if (!forcar) return anterior.promise
+      anterior.controller.abort()
+    }
+
+    const controller = new AbortController()
+    const requisicao = { token, controller, promise: null }
+    requisicaoChecklistRef.current = requisicao
+    setCarregandoChecklist(true)
+
+    const promise = (async () => {
+      try {
+        const resposta = await fetch(`${API_URL}/checklists`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        if (tokenSessaoRef.current !== token || requisicaoChecklistRef.current !== requisicao) return false
+        if (resposta.status === 401) {
+          fazerLogout()
+          mostrarToast('Sua sessão expirou. Faça login novamente.', 'error')
+          return false
+        }
+        if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Não foi possível atualizar as atividades.'))
+        const dados = await resposta.json()
+        if (!Array.isArray(dados)) throw new Error('A API retornou uma lista de checklists inválida.')
+        if (tokenSessaoRef.current !== token || requisicaoChecklistRef.current !== requisicao) return false
+
+        // Recebe a lista completa que o servidor autorizou para esta conta;
+        // não reaproveita a lista do zelador ao retornar para a Controladoria.
+        setChecklists(dados)
+        setItemChecklistHistorico(prev => prev ? (dados.find(c => c.id === prev.id) || null) : null)
+        setErroChecklist('')
+        setUltimaAtualizacaoChecklist(new Date().toISOString())
+        setBackendOnline(true)
+        return true
+      } catch (erro) {
+        if (erro.name === 'AbortError') return false
+        if (tokenSessaoRef.current === token && requisicaoChecklistRef.current === requisicao) {
+          const mensagem = erro.message || 'Não foi possível sincronizar o Checklist.'
+          setErroChecklist(mensagem)
+          if (notificarErro) mostrarToast(mensagem, 'error')
+        }
+        return false
+      } finally {
+        if (requisicaoChecklistRef.current === requisicao) {
+          requisicaoChecklistRef.current = null
+          setCarregandoChecklist(false)
+        }
+      }
+    })()
+    requisicao.promise = promise
+    return promise
+  }
+
+  // Avisos sempre obtidos da API com o token do usuário atual.
+  // O servidor já filtra pelo condomínio quando o perfil é Checklist.
+  async function carregarAlertasChecklist() {
+    const token = usuarioLogado?.token
+    const perfil = usuarioLogado?.perfil
+    if (!token || !['Controladoria', 'Checklist'].includes(perfil)) return
+    if (tokenSessaoRef.current !== token) return
+    requisicaoAlertasRef.current?.abort()
+    const controller = new AbortController()
+    requisicaoAlertasRef.current = controller
+    try {
+      const resposta = await fetch(`${API_URL}/checklists/alertas`, {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal
+      })
+      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Falha ao buscar alertas de vistorias.'))
+      const resultado = await resposta.json()
+      if (tokenSessaoRef.current !== token || requisicaoAlertasRef.current !== controller) return
+      setAlertasChecklist(Array.isArray(resultado.alertas) ? resultado.alertas : [])
+      setErroAlertasChecklist('')
+    } catch (erro) {
+      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token) {
+        setErroAlertasChecklist(erro.message || 'Não foi possível buscar os alertas.')
+      }
+    } finally {
+      if (requisicaoAlertasRef.current === controller) requisicaoAlertasRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    if (!usuarioLogado?.token || !['Controladoria', 'Checklist'].includes(usuarioLogado?.perfil)) return
+    carregarAlertasChecklist()
+    const atualizar = () => { if (document.visibilityState === 'visible') carregarAlertasChecklist() }
+    const intervalo = setInterval(atualizar, 60000)
+    window.addEventListener('focus', atualizar)
+    return () => { clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+  }, [usuarioLogado?.token, usuarioLogado?.perfil])
+
+  async function reprocessarEmailsChecklist() {
+    try {
+      const resposta = await fetch(`${API_URL}/checklists/envios/reprocessar`, {
+        method: 'POST', headers: getAuthHeaders()
+      })
+      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Não foi possível reenviar relatórios.'))
+      const resultado = await resposta.json()
+      mostrarToast(resultado.fila_reprocessamento
+        ? `${resultado.fila_reprocessamento} relatório(s) encaminhados para nova tentativa.`
+        : 'Não há relatórios com falha aguardando reenvio.', 'success')
+    } catch (erro) { mostrarToast(erro.message, 'error') }
+  }
+
   async function carregarDados(forcarIndicador = false) {
-    if (!usuarioLogado) return
+    const tokenDestaSessao = usuarioLogado?.token
+    if (!tokenDestaSessao || tokenSessaoRef.current !== tokenDestaSessao) return
+    // Somente uma consulta geral simultânea por conta: intervalos de 12s não
+    // invalidam a consulta anterior se o Render demorar para responder.
+    if (carregamentoGeralRef.current === tokenDestaSessao) return
+    carregamentoGeralRef.current = tokenDestaSessao
+    const respostaDaSessaoAtual = () => tokenSessaoRef.current === tokenDestaSessao
+
     if (forcarIndicador) setSincronizando(true)
     try {
-      const [resSol, resCond, resForn, resCat, resChk] = await Promise.all([
-        fetch(`${API_URL}/solicitacoes`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/condominios`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/fornecedores`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/categorias`, { headers: getAuthHeaders() }),
-        fetch(`${API_URL}/checklists`, { headers: getAuthHeaders() })
+      const opcoes = {
+        headers: { Authorization: `Bearer ${tokenDestaSessao}` },
+        cache: 'no-store'
+      }
+      const [resSol, resCond, resForn, resCat] = await Promise.all([
+        fetch(`${API_URL}/solicitacoes`, opcoes),
+        fetch(`${API_URL}/condominios`, opcoes),
+        fetch(`${API_URL}/fornecedores`, opcoes),
+        fetch(`${API_URL}/categorias`, opcoes)
       ])
+      if (!respostaDaSessaoAtual()) return
 
-      if ([resSol, resCond, resForn, resCat, resChk].some(r => r.status === 401)) {
+      if ([resSol, resCond, resForn, resCat].some(r => r.status === 401)) {
         fazerLogout()
         mostrarToast('Sua sessão expirou. Faça login novamente.', 'error')
         return
@@ -516,6 +710,7 @@ function App() {
 
       if (resSol.ok) {
         let dados = await resSol.json()
+        if (!respostaDaSessaoAtual()) return
         if (usuarioLogado.perfil === 'Solicitante') {
           dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
         }
@@ -535,6 +730,10 @@ function App() {
 
       if (resCond.ok) {
         const dadosCond = await resCond.json()
+        if (!respostaDaSessaoAtual()) return
+        if (usuarioLogado.perfil === 'Checklist') {
+          setFiltroCondominioChecklist(dadosCond[0]?.nome || 'todos')
+        }
         const strCond = JSON.stringify(dadosCond)
         if (strCond !== hashCacheRef.current.cond) {
           hashCacheRef.current.cond = strCond
@@ -545,6 +744,7 @@ function App() {
 
       if (resForn.ok) {
         const dadosForn = await resForn.json()
+        if (!respostaDaSessaoAtual()) return
         const strForn = JSON.stringify(dadosForn)
         if (strForn !== hashCacheRef.current.forn) {
           hashCacheRef.current.forn = strForn
@@ -555,6 +755,7 @@ function App() {
 
       if (resCat.ok) {
         const dadosCat = await resCat.json()
+        if (!respostaDaSessaoAtual()) return
         const strCat = JSON.stringify(dadosCat)
         if (strCat !== hashCacheRef.current.cat) {
           hashCacheRef.current.cat = strCat
@@ -562,38 +763,36 @@ function App() {
           salvarCache('categorias', dadosCat)
         }
       }
-
-      if (resChk.ok) {
-        const dadosChk = await resChk.json()
-        const strChk = JSON.stringify(dadosChk)
-        if (strChk !== hashCacheRef.current.chk) {
-          hashCacheRef.current.chk = strChk
-          setChecklists(dadosChk)
-          salvarCache('checklists', dadosChk)
-          setItemChecklistHistorico(prev => prev ? (dadosChk.find(c => c.id === prev.id) || null) : null)
-        }
-      }
     } catch {
-      setBackendOnline(false)
+      if (respostaDaSessaoAtual()) setBackendOnline(false)
     } finally {
-      if (forcarIndicador) setSincronizando(false)
+      if (carregamentoGeralRef.current === tokenDestaSessao) carregamentoGeralRef.current = null
+      if (forcarIndicador && respostaDaSessaoAtual()) setSincronizando(false)
     }
   }
 
   useEffect(() => {
-    if (usuarioLogado) {
-      if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
-        setPagina('checklist')
-      }
-      carregarDados(false)
-      const int = setInterval(() => {
-        if (document.visibilityState === 'visible') {
-          carregarDados(false)
-        }
-      }, 12000)
-      return () => clearInterval(int)
+    if (!usuarioLogado?.token) return
+    if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
+      setPagina('checklist')
     }
-  }, [usuarioLogado])
+    carregarDados(false)
+    if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
+
+    const atualizarSeVisivel = () => {
+      if (document.visibilityState !== 'visible') return
+      carregarDados(false)
+      if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
+    }
+    const intervalo = setInterval(atualizarSeVisivel, 12000)
+    document.addEventListener('visibilitychange', atualizarSeVisivel)
+    window.addEventListener('focus', atualizarSeVisivel)
+    return () => {
+      clearInterval(intervalo)
+      document.removeEventListener('visibilitychange', atualizarSeVisivel)
+      window.removeEventListener('focus', atualizarSeVisivel)
+    }
+  }, [usuarioLogado?.token, pagina, abaChecklist])
 
   function renderBadge(sol) {
     if (!sol) return null
@@ -758,16 +957,56 @@ function App() {
     }
   }, [solicitacoes])
 
+  // Compras: somente registros nas etapas aprovadas, execução ou finalização.
+  const comprasBase = useMemo(() => solicitacoes.filter(sol =>
+    ['Aprovada', 'Em execução', 'Finalizada'].includes(textoStatus(sol.status))
+  ), [solicitacoes])
   const comprasFiltradas = useMemo(() => {
-    const buscaNorm = normalizarTexto(filtroCompra)
-    return solicitacoes.filter(sol => {
-      const st = textoStatus(sol.status)
-      if (!['Aprovada', 'Em execução', 'Finalizada'].includes(st)) return false
-      if (!buscaNorm) return true
-      const t = normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.categoria || ''} ${sol.descricao || ''}`)
-      return t.includes(buscaNorm)
+    const busca = normalizarTexto(filtroCompra)
+    return comprasBase.filter(sol => {
+      if (filtroCondominioCompra !== 'todos' && sol.condominio !== filtroCondominioCompra) return false
+      if (filtroStatusCompra !== 'todos' && textoStatus(sol.status) !== filtroStatusCompra) return false
+      return !busca || normalizarTexto(`${sol.numero || ''} ${sol.condominio || ''} ${sol.descricao || ''} ${sol.categoria || ''} ${sol.fornecedor || ''}`).includes(busca)
+    }).sort((a, b) => {
+      if (ordenacaoCompra === 'maior_valor') return aprovado(b) - aprovado(a) || numero(b.id) - numero(a.id)
+      if (ordenacaoCompra === 'menor_valor') return aprovado(a) - aprovado(b) || numero(b.id) - numero(a.id)
+      if (ordenacaoCompra === 'condominio') return String(a.condominio || '').localeCompare(String(b.condominio || ''), 'pt-BR') || numero(b.id) - numero(a.id)
+      return String(b.data || '').localeCompare(String(a.data || '')) || numero(b.id) - numero(a.id)
     })
-  }, [solicitacoes, filtroCompra])
+  }, [comprasBase, filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
+  const resumoCompras = useMemo(() => ({
+    total: comprasBase.length,
+    aprovadas: comprasBase.filter(sol => textoStatus(sol.status) === 'Aprovada').length,
+    emExecucao: comprasBase.filter(sol => textoStatus(sol.status) === 'Em execução').length,
+    finalizadas: comprasBase.filter(sol => textoStatus(sol.status) === 'Finalizada').length
+  }), [comprasBase])
+  const totalComprasAprovado = comprasFiltradas.reduce((acc, sol) => acc + aprovado(sol), 0)
+  const totalComprasRealizado = comprasFiltradas.reduce((acc, sol) => acc + realizado(sol), 0)
+  const comprasPorPagina = 10
+  const totalPaginasCompra = Math.max(1, Math.ceil(comprasFiltradas.length / comprasPorPagina))
+  const paginaAtualCompra = Math.min(paginaCompra, totalPaginasCompra)
+  const comprasPaginadas = comprasFiltradas.slice((paginaAtualCompra - 1) * comprasPorPagina, paginaAtualCompra * comprasPorPagina)
+  useEffect(() => { setPaginaCompra(1) }, [filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
+  function limparFiltrosCompra() {
+    setFiltroCompra('')
+    setFiltroCondominioCompra('todos')
+    setFiltroStatusCompra('todos')
+    setOrdenacaoCompra('recentes')
+    setPaginaCompra(1)
+  }
+  const opcoesCondominiosCompra = useMemo(() =>
+    [...new Set(comprasBase.map(sol => sol.condominio).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [comprasBase]
+  )
+  const condominiosCadastroFiltrados = useMemo(() => condominios.filter(cond =>
+    normalizarTexto(`${cond.nome || ''} ${cond.cnpj || ''} ${cond.codigo || ''}`).includes(normalizarTexto(buscaCondominioCadastro))
+  ), [condominios, buscaCondominioCadastro])
+  const categoriasCadastroFiltradas = useMemo(() => categorias.filter(cat =>
+    normalizarTexto(`${cat.nome || ''} ${cat.descricao || ''}`).includes(normalizarTexto(buscaCategoriaCadastro))
+  ), [categorias, buscaCategoriaCadastro])
+  const fornecedoresCadastroFiltrados = useMemo(() => fornecedores.filter(forn =>
+    normalizarTexto(`${forn.nome || ''} ${forn.cnpj || ''} ${forn.categoria || ''}`).includes(normalizarTexto(buscaFornecedorCadastro))
+  ), [fornecedores, buscaFornecedorCadastro])
 
   const {
     solicitacoesAnaliseFiltradas,
@@ -822,6 +1061,52 @@ function App() {
     }
   }, [solicitacoes, filtroCondominioAnalise, filtroDataInicio, filtroDataFim])
 
+  // Indicadores baseados na mesma agregação do gráfico e da tabela financeira.
+  // Não alteram valores persistidos, status nem as regras do backend.
+  const resumoFinanceiro = useMemo(() => {
+    const totalSolicitado = solicitacoesAnaliseFiltradas.reduce((total, sol) => total + solicitado(sol), 0)
+    const totalAprovado = listaOrcamentoCondominio.reduce((total, item) => total + item.aprovado, 0)
+    const totalRealizado = listaOrcamentoCondominio.reduce((total, item) => total + item.realizado, 0)
+    return {
+      totalSolicitado,
+      totalAprovado,
+      totalRealizado,
+      saldo: totalAprovado - totalRealizado,
+      pedidos: solicitacoesAnaliseFiltradas.length,
+      condominios: listaOrcamentoCondominio.length
+    }
+  }, [solicitacoesAnaliseFiltradas, listaOrcamentoCondominio])
+
+  const categoriasFinanceiras = useMemo(() => {
+    const mapa = new Map()
+    for (const sol of solicitacoesAnaliseFiltradas) {
+      if (textoStatus(sol.status) !== 'Finalizada') continue
+      const nome = sol.categoria || 'Sem categoria'
+      // Mantém o critério legado dos totais apresentados no gráfico financeiro.
+      const valor = realizado(sol) || aprovado(sol) || solicitado(sol)
+      mapa.set(nome, (mapa.get(nome) || 0) + valor)
+    }
+    return [...mapa.entries()]
+      .map(([nome, valor]) => ({ nome, valor }))
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 6)
+  }, [solicitacoesAnaliseFiltradas])
+
+  function aplicarPeriodoAnalise(tipo) {
+    if (tipo === 'todos') {
+      setFiltroDataInicio('')
+      setFiltroDataFim('')
+      return
+    }
+    const hoje = new Date()
+    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())
+    if (tipo === '30dias') inicio.setDate(inicio.getDate() - 29)
+    if (tipo === 'mes') inicio.setDate(1)
+    if (tipo === 'ano') { inicio.setMonth(0); inicio.setDate(1) }
+    setFiltroDataInicio(dataLocalISO(inicio))
+    setFiltroDataFim(dataLocalISO(hoje))
+  }
+
   // A contagem acompanha condomínio, frequência e busca, sem depender da aba de situação.
   const checklistsNoEscopo = useMemo(() => {
     const busca = normalizarTexto(buscaChecklist)
@@ -836,15 +1121,15 @@ function App() {
 
   const indicadoresChecklist = useMemo(() => ({
     todos: checklistsNoEscopo.length,
-    em_dia: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'em_dia').length,
-    atrasados: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao).status === 'atrasado').length,
+    em_dia: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status === 'em_dia').length,
+    atrasados: checklistsNoEscopo.filter(item => calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status === 'atrasado').length,
     pendentes: checklistsNoEscopo.filter(item => !item.ultima_execucao).length,
     divergencias: checklistsNoEscopo.filter(item => item.ultima_execucao?.status_conformidade === 'Não Conforme').length
   }), [checklistsNoEscopo])
 
   const checklistsFiltrados = useMemo(() => {
     const listagem = checklistsNoEscopo.filter(item => {
-      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao)
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em)
       if (filtroSLAChecklist === 'atrasados') return sla.status === 'atrasado'
       if (filtroSLAChecklist === 'pendentes') return !item.ultima_execucao
       if (filtroSLAChecklist === 'em_dia') return sla.status === 'em_dia'
@@ -853,7 +1138,7 @@ function App() {
     })
     const ordemPrioridade = item => {
       if (item.ultima_execucao?.status_conformidade === 'Não Conforme') return 0
-      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao).status
+      const sla = calcularStatusSLA(item.frequencia, item.ultima_execucao, item.criado_em).status
       if (sla === 'atrasado') return 1
       if (sla === 'pendente') return 2
       if (sla === 'indefinido') return 3
@@ -919,7 +1204,7 @@ function App() {
       setChecklistEditando(null)
       setFormNovoChecklist({ condominio: '', titulo: '', descricao_orientacao: '', frequencia: 'Diária', plano_acao_padrao: '' })
       mostrarToast(editando ? 'Atividade atualizada com sucesso!' : 'Atividade adicionada ao checklist!', 'success')
-      carregarDados(false)
+      carregarChecklists({ forcar: true, notificarErro: true })
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -1064,7 +1349,7 @@ function App() {
         if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível excluir a atividade.'))
         setChecklists(prev => prev.filter(c => c.id !== item.id))
         mostrarToast('Atividade excluída com sucesso.', 'success')
-        carregarDados(false)
+        carregarChecklists({ forcar: true, notificarErro: true })
       } catch (erro) {
         mostrarToast(erro.message || 'Não foi possível excluir a atividade. Tente novamente.', 'error')
       }
@@ -1107,6 +1392,7 @@ function App() {
       if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível registrar a vistoria.'))
       const itemAtualizado = await res.json()
       setChecklists(prev => prev.map(item => item.id === itemAtual.id ? itemAtualizado : item))
+      carregarAlertasChecklist()
       setItemChecklistExecutando(null)
       if (statusEscolhido === 'Não Conforme') {
         setAlertaPlanoAcao({
@@ -1116,9 +1402,9 @@ function App() {
           plano_acao: itemAtual.plano_acao_padrao || 'Comunicar imediatamente a Controladoria Haize para providências corretivas.'
         })
       } else {
-        mostrarToast('Vistoria registrada com sucesso!', 'success')
+        mostrarToast(itemAtualizado.envio_relatorio === 'em_fila' ? 'Vistoria registrada. PDF enviado à fila automática de e-mails.' : 'Vistoria registrada com sucesso!', 'success')
       }
-      carregarDados(false)
+      carregarChecklists({ forcar: true, notificarErro: true })
     } catch (erro) {
       mostrarToast(erro.message || 'Falha na conexão. A vistoria não foi salva.', 'error')
     } finally {
@@ -1399,7 +1685,7 @@ function App() {
 
     const linhasResumo = listaOrcamentoCondominio.map((item, idx) => `
       <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
-        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${item.nome}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${escaparHtml(item.nome)}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; font-weight: 600;">${item.qtdSolicitacoes || 0}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.aprovado)}</td>
         <td style="padding: 8px 10px; border: 1px solid #cbd5e1; text-align: right;">${formatarValor(item.realizado)}</td>
@@ -1409,10 +1695,10 @@ function App() {
 
     const linhasSols = solicitacoesAnaliseFiltradas.map((s, idx) => `
       <tr style="background: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; page-break-inside: avoid;">
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${s.numero || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${s.condominio || ''}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; color: #475569;">${s.categoria || '-'}</td>
-        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${s.descricao || ''}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${escaparHtml(s.numero || '')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; font-weight: 600;">${escaparHtml(s.condominio || '')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0; color: #475569;">${escaparHtml(s.categoria || '-')}</td>
+        <td style="padding: 6px 8px; border: 1px solid #e2e8f0;">${escaparHtml(s.descricao || '')}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right;">${formatarValor(s.valor)}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: right; font-weight: 600;">${formatarValor(s.valor_realizado || s.valor_aprovado || s.valor)}</td>
         <td style="padding: 6px 8px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600; font-size: 11px;">${textoStatus(s.status)}</td>
@@ -1445,8 +1731,8 @@ function App() {
             <div class="subtitle">Relatório Consolidado de Fecho Orçamentário</div>
           </div>
           <div class="meta" style="text-align: right;">
-            <div><strong>Filtro:</strong> ${condFormatado}</div>
-            <div><strong>Período:</strong> ${periodoFormatado}</div>
+            <div><strong>Filtro:</strong> ${escaparHtml(condFormatado)}</div>
+            <div><strong>Período:</strong> ${escaparHtml(periodoFormatado)}</div>
             <div><strong>Emissão:</strong> ${new Date().toLocaleDateString('pt-BR')}</div>
           </div>
         </div>
@@ -1724,10 +2010,6 @@ function App() {
 
   function iniciarExecucao(solicitacao) {
     confirmarAcao('Executar solicitação', `Deseja iniciar a execução da compra ${solicitacao.numero || ''}?`, async () => {
-      fecharSolicitacao()
-      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Em execução' } : s))
-      mostrarToast('Solicitação enviada para execução!', 'success')
-
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/iniciar-execucao`, {
           method: 'PUT',
@@ -1735,9 +2017,13 @@ function App() {
           body: JSON.stringify({ observacao_execucao: '' })
         })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao executar a solicitação.'))
-        carregarDados(false)
+        // Só confirmar visualmente após a API aceitar a operação.
+        setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Em execução' } : s))
+        fecharSolicitacao()
+        mostrarToast('Solicitação enviada para execução!', 'success')
       } catch (e) {
         mostrarToast(e.message, 'error')
+      } finally {
         carregarDados(false)
       }
     })
@@ -1746,11 +2032,7 @@ function App() {
   function finalizarSolicitacao(solicitacao) {
     pedirInput('Finalizar solicitação', 'Informe o valor realmente realizado/pago:', String(realizado(solicitacao) || aprovado(solicitacao) || solicitado(solicitacao) || ''), async v => {
       const vNum = numero(v)
-      if (vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
-
-      fecharSolicitacao()
-      setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, status: 'Finalizada', valor_realizado: vNum } : s))
-      mostrarToast('Solicitação finalizada!', 'success')
+      if (!Number.isFinite(vNum) || vNum <= 0) { mostrarToast('O valor realizado deve ser maior que zero.', 'error'); return }
 
       try {
         const res = await fetch(`${API_URL}/solicitacoes/${solicitacao.id}/finalizar`, {
@@ -1759,10 +2041,15 @@ function App() {
           body: JSON.stringify({ valor_realizado: vNum })
         })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao finalizar solicitação.'))
+        const atualizada = await res.json()
+        // Só altera o estado local depois que o servidor confirmou a compra.
+        setSolicitacoes(prev => prev.map(s => s.id === solicitacao.id ? { ...s, ...atualizada } : s))
+        fecharSolicitacao()
+        mostrarToast('Solicitação finalizada!', 'success')
         dispararNotificacaoNativa('Solicitação Finalizada', `O pedido ${solicitacao.numero} foi concluído com sucesso.`)
-        carregarDados(false)
       } catch (e) {
         mostrarToast(e.message, 'error')
+      } finally {
         carregarDados(false)
       }
     })
@@ -1825,14 +2112,14 @@ function App() {
 
   function excluirCondominio(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
-      setCondominios(prev => prev.filter(c => c.id !== id))
-      mostrarToast('Condomínio excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/condominios/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir condomínio.'))
-        carregarDados(false)
+        setCondominios(prev => prev.filter(c => c.id !== id))
+        mostrarToast('Condomínio excluído.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir o condomínio: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -1886,14 +2173,14 @@ function App() {
 
   function excluirCategoria(id, nome) {
     confirmarAcao('Excluir', `Apagar a categoria "${nome}"?`, async () => {
-      setCategorias(prev => prev.filter(c => c.id !== id))
-      mostrarToast('Categoria excluída.', 'success')
       try {
         const res = await fetch(`${API_URL}/categorias/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir categoria.'))
-        carregarDados(false)
+        setCategorias(prev => prev.filter(c => c.id !== id))
+        mostrarToast('Categoria excluída.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir a categoria: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -1926,14 +2213,14 @@ function App() {
 
   function excluirFornecedor(id, nome) {
     confirmarAcao('Excluir', `Apagar "${nome}"?`, async () => {
-      setFornecedores(prev => prev.filter(f => f.id !== id))
-      mostrarToast('Fornecedor excluído.', 'success')
       try {
         const res = await fetch(`${API_URL}/fornecedores/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
         if (!res.ok) throw new Error(await extrairErro(res, 'Erro ao excluir fornecedor.'))
-        carregarDados(false)
+        setFornecedores(prev => prev.filter(f => f.id !== id))
+        mostrarToast('Fornecedor excluído.', 'success')
       } catch (e) {
-        mostrarToast(e.message, 'error')
+        mostrarToast(`Não foi possível excluir o fornecedor: ${e.message}`, 'error')
+      } finally {
         carregarDados(false)
       }
     }, true)
@@ -1942,6 +2229,70 @@ function App() {
   function atualizarCampoCondominio(campo, valor) { setFormularioCondominio(atual => ({ ...atual, [campo]: valor })) }
   function atualizarCampoCategoria(campo, valor) { setFormularioCategoria(atual => ({ ...atual, [campo]: valor })) }
   function atualizarCampoFornecedor(campo, valor) { setFormularioFornecedor(atual => ({ ...atual, [campo]: valor })) }
+
+  useEffect(() => {
+    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
+  }, [pagina, abaChecklist, usuarioLogado?.perfil, usuarioLogado?.token])
+
+  async function carregarZeladores() {
+    if (usuarioLogado?.perfil !== 'Controladoria') return
+    setCarregandoZeladores(true)
+    try {
+      const res = await fetch(`${API_URL}/usuarios`, { headers: getAuthHeaders() })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível consultar os zeladores.'))
+      const lista = (await res.json()).filter(u => u.perfil === 'Checklist')
+      setZeladores(lista)
+      setAtribuicoesZeladores(Object.fromEntries(lista.map(u => [u.id, String(u.condominio_id || '')])))
+    } catch (err) {
+      mostrarToast(err.message, 'error')
+    } finally { setCarregandoZeladores(false) }
+  }
+
+  async function criarContaZelador(e) {
+    e.preventDefault()
+    if (!formZelador.condominio_id) { mostrarToast('Selecione um condomínio.', 'error'); return }
+    setSalvandoZelador(true)
+    try {
+      const payload = {
+        nome: formZelador.nome.trim(), email: formZelador.email.trim().toLowerCase(),
+        senha: formZelador.senha, perfil: 'Checklist', condominio_id: Number(formZelador.condominio_id)
+      }
+      const res = await fetch(`${API_URL}/usuarios`, {
+        method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload)
+      })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível criar a conta.'))
+      setFormZelador({ nome: '', email: '', senha: '', condominio_id: '' })
+      await carregarZeladores()
+      mostrarToast('Conta do zelador criada e vinculada ao condomínio.', 'success')
+    } catch (err) { mostrarToast(err.message, 'error') }
+    finally { setSalvandoZelador(false) }
+  }
+
+  async function atualizarCondominioZelador(z) {
+    const numero = Number(atribuicoesZeladores[z.id])
+    if (!Number.isInteger(numero) || numero < 1) { mostrarToast('Selecione um condomínio.', 'error'); return }
+    setSalvandoZelador(true)
+    try {
+      const res = await fetch(`${API_URL}/usuarios/${z.id}/condominio`, {
+        method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ condominio_id: numero })
+      })
+      if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível alterar o vínculo.'))
+      await carregarZeladores()
+      mostrarToast('Condomínio do zelador atualizado.', 'success')
+    } catch (err) { mostrarToast(err.message, 'error') }
+    finally { setSalvandoZelador(false) }
+  }
+
+  function excluirContaZelador(z) {
+    confirmarAcao('Excluir conta de zelador', `Remover o acesso de ${z.nome}? O histórico de vistorias será preservado.`, async () => {
+      try {
+        const res = await fetch(`${API_URL}/usuarios/${z.id}`, { method: 'DELETE', headers: getAuthHeaders() })
+        if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível remover a conta.'))
+        await carregarZeladores()
+        mostrarToast('Conta de zelador removida.', 'success')
+      } catch (err) { mostrarToast(err.message, 'error') }
+    }, true)
+  }
 
   if (!usuarioLogado) {
     return (
@@ -2073,7 +2424,7 @@ function App() {
           {ehChecklist ? (
             <>
               <span className="sidebar-section-label">Operacional</span>
-              <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+              <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
                 <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
               </button>
             </>
@@ -2097,7 +2448,7 @@ function App() {
               </button>
 
               {ehControladoria && (
-                <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setSidebarAberta(false); }}>
+                <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
                 </button>
               )}
@@ -2147,7 +2498,7 @@ function App() {
                 Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? 'Checklist Operacional' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
@@ -2158,16 +2509,16 @@ function App() {
               <span>{sincronizando ? 'Sincronizando...' : (backendOnline ? 'Sistema Online' : 'Modo Cache')}</span>
             </div>
 
-            {!ehChecklist && (
-              <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }}>
                 <button
                   className="icon-button"
-                  onClick={() => setMostrarMenuNotificacoes(!mostrarMenuNotificacoes)}
+                  aria-label="Ver alertas e notificações"
+                  onClick={() => { setMostrarMenuNotificacoes(!mostrarMenuNotificacoes); carregarAlertasChecklist() }}
                   title="Central de Alertas e Notificações"
                 >
                   <IconeHaize nome="bell" tamanho={18} />
-                  {quantidadePendentes > 0 && (
-                    <span className="notification-badge">{quantidadePendentes}</span>
+                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)) > 0 && (
+                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)}</span>
                   )}
                 </button>
 
@@ -2175,13 +2526,36 @@ function App() {
                   <div style={{ position: 'absolute', right: 0, top: '46px', width: '330px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', boxShadow: '0 20px 35px -5px rgba(15,23,42,0.18)', zIndex: 9999, overflow: 'hidden' }}>
                     <div style={{ padding: '14px 16px', background: '#0f172a', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <strong style={{ fontSize: '13.5px' }}>Central de Alertas</strong>
-                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>{quantidadePendentes} pendentes</span>
+                      <span style={{ fontSize: '11px', background: '#334155', padding: '2px 8px', borderRadius: '999px', fontWeight: '700' }}>
+                        {alertasChecklist.length} checklist(s) atrasado(s)
+                      </span>
                     </div>
-                    <div style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                      {solicitacoesPendentesLista.length === 0 ? (
+                    <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                      {erroAlertasChecklist && <div className="alerta-sync-erro" role="alert">{erroAlertasChecklist}</div>}
+                      {alertasChecklist.length > 0 && (
+                        <div className="alertas-checklist-lista">
+                          <strong className="alertas-checklist-categoria">Vistorias em atraso ({alertasChecklist.length})</strong>
+                          {alertasChecklist.slice(0, 15).map(alerta => (
+                            <button key={alerta.item_id} type="button" className="alerta-checklist-item" onClick={() => {
+                              setPagina('checklist'); setAbaChecklist('vistorias'); setFiltroSLAChecklist('atrasados')
+                              setFiltroCondominioChecklist(alerta.condominio)
+                              setMostrarMenuNotificacoes(false)
+                              carregarChecklists({ forcar: true })
+                            }}>
+                              <span><strong>{alerta.titulo}</strong><small>{alerta.condominio}</small></span>
+                              <em>{alerta.horas_atraso < 24 ? `${Math.ceil(alerta.horas_atraso)}h` : `${Math.floor(alerta.horas_atraso / 24)}d`}</em>
+                            </button>
+                          ))}
+                          {alertasChecklist.length > 15 && <p className="alertas-checklist-extra">+{alertasChecklist.length - 15} outros itens em atraso</p>}
+                        </div>
+                      )}
+                      {!ehChecklist && solicitacoesPendentesLista.length > 0 && (
+                        <strong className="alertas-checklist-categoria">Solicitações para análise</strong>
+                      )}
+                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 ? (
                         <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
                       ) : (
-                        solicitacoesPendentesLista.map(s => (
+                        !ehChecklist && solicitacoesPendentesLista.map(s => (
                           <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <strong style={{ fontSize: '12.5px', color: '#0f172a' }}>{s.numero} • {s.condominio}</strong>
@@ -2200,20 +2574,106 @@ function App() {
                   </div>
                 )}
               </div>
-            )}
 
-            <button className="icon-button" onClick={() => carregarDados(true)} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
+
+            <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
             {!ehChecklist && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
           </div>
         </header>
 
+
         {/* =========================================================================
             ABA DE CHECKLIST OPERACIONAL E VISTORIAS
            ========================================================================= */}
         {pagina === 'checklist' && (
           <div className="page page-checklist">
+            {ehControladoria && (
+              <nav className="checklist-abas" aria-label="Áreas do Checklist">
+                <button type="button" className={`checklist-aba ${abaChecklist === 'vistorias' ? 'active' : ''}`}
+                  onClick={() => setAbaChecklist('vistorias')} aria-current={abaChecklist === 'vistorias' ? 'page' : undefined}>
+                  <IconeHaize nome="checklist" tamanho={17} /> Vistorias e atividades
+                </button>
+                <button type="button" className={`checklist-aba ${abaChecklist === 'zeladores' ? 'active' : ''}`}
+                  onClick={() => setAbaChecklist('zeladores')} aria-current={abaChecklist === 'zeladores' ? 'page' : undefined}>
+                  <IconeHaize nome="suppliers" tamanho={17} /> Gestão de Zeladores
+                </button>
+              </nav>
+            )}
+            {ehControladoria && abaChecklist === 'zeladores' ? (
+              <div className="checklist-gestao-zeladores">
+            <section className="checklist-intro">
+              <div>
+                <span className="eyebrow">PERMISSÕES POR CONDOMÍNIO</span>
+                <h2>Gestão de zeladores</h2>
+                <p>Crie uma conta para cada zelador e limite o acesso ao checklist do condomínio correspondente. Cada condomínio possui um número interno único.</p>
+              </div>
+              <button type="button" className="button-secondary" onClick={carregarZeladores} disabled={carregandoZeladores}>
+                <IconeHaize nome="refresh" tamanho={16} /> {carregandoZeladores ? 'Atualizando...' : 'Atualizar lista'}
+              </button>
+            </section>
+            <div className="zeladores-layout">
+              <section className="panel zeladores-cadastro">
+                <div className="panel-header"><h3>Nova conta de zelador</h3></div>
+                <form onSubmit={criarContaZelador} className="zeladores-form">
+                  <label className="form-group"><span>Nome completo</span>
+                    <input required maxLength={120} value={formZelador.nome} onChange={e => setFormZelador(p => ({ ...p, nome: e.target.value }))} placeholder="Nome do zelador" />
+                  </label>
+                  <label className="form-group"><span>E-mail de acesso</span>
+                    <input required type="email" autoComplete="off" value={formZelador.email} onChange={e => setFormZelador(p => ({ ...p, email: e.target.value }))} placeholder="zelador@exemplo.com" />
+                  </label>
+                  <label className="form-group"><span>Senha inicial (mínimo 10 caracteres)</span>
+                    <input required type="password" minLength={10} autoComplete="new-password" value={formZelador.senha} onChange={e => setFormZelador(p => ({ ...p, senha: e.target.value }))} placeholder="Senha provisória segura" />
+                  </label>
+                  <label className="form-group"><span>Condomínio autorizado</span>
+                    <select required value={formZelador.condominio_id} onChange={e => setFormZelador(p => ({ ...p, condominio_id: e.target.value }))}>
+                      <option value="">Selecione um condomínio</option>
+                      {condominios.map(c => {
+                        const ocupado = zeladores.some(z => z.condominio_id === c.id)
+                        return <option key={c.id} value={c.id} disabled={ocupado}>Nº {c.id} — {c.nome}{ocupado ? ' (já vinculado)' : ''}</option>
+                      })}
+                    </select>
+                  </label>
+                  <p className="zeladores-ajuda">O número corresponde ao ID permanente do condomínio no cadastro. O zelador verá somente as atividades, fotografias e relatórios desse condomínio.</p>
+                  <button className="button-primary" type="submit" disabled={salvandoZelador || !condominios.length}>
+                    <IconeHaize nome="plus" tamanho={16} /> {salvandoZelador ? 'Salvando...' : 'Criar conta e vincular'}
+                  </button>
+                </form>
+              </section>
+              <section className="panel zeladores-lista">
+                <div className="panel-header"><h3>Zeladores cadastrados</h3><span className="badge neutral">{zeladores.length} contas</span></div>
+                {zeladores.length === 0 ? <p className="zeladores-vazio">Nenhum zelador cadastrado com o perfil Checklist.</p> : (
+                  <div className="zeladores-cards">
+                    {zeladores.map(z => {
+                      const cond = condominios.find(c => c.id === z.condominio_id)
+                      return (
+                        <article className="zelador-card" key={z.id}>
+                          <div className="zelador-card-top"><span className="zelador-avatar">{z.nome?.charAt(0)?.toUpperCase()}</span><div><strong>{z.nome}</strong><small>{z.email}</small></div></div>
+                          <div className="zelador-vinculo">Acesso atual: <strong>{cond ? `Nº ${cond.id} — ${cond.nome}` : 'Sem condomínio vinculado'}</strong></div>
+                          <label className="form-group"><span>Alterar condomínio autorizado</span>
+                            <select value={atribuicoesZeladores[z.id] ?? ''} onChange={e => setAtribuicoesZeladores(p => ({ ...p, [z.id]: e.target.value }))}>
+                              <option value="">Selecione um condomínio</option>
+                              {condominios.map(c => {
+                                const ocupado = zeladores.some(outro => outro.id !== z.id && outro.condominio_id === c.id)
+                                return <option key={c.id} value={c.id} disabled={ocupado}>Nº {c.id} — {c.nome}{ocupado ? ' (ocupado)' : ''}</option>
+                              })}
+                            </select>
+                          </label>
+                          <div className="zelador-card-actions">
+                            <button className="button-secondary" disabled={salvandoZelador || !atribuicoesZeladores[z.id] || Number(atribuicoesZeladores[z.id]) === z.condominio_id} onClick={() => atualizarCondominioZelador(z)}>Salvar vínculo</button>
+                            <button className="button-danger" onClick={() => excluirContaZelador(z)}>Excluir conta</button>
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+              </div>
+            ) : (
+              <>
             <section className="checklist-intro">
               <div>
                 <span className="eyebrow">OPERAÇÃO E MANUTENÇÃO PREVENTIVA</span>
@@ -2226,6 +2686,11 @@ function App() {
                     <IconeHaize nome="plus" tamanho={16} /> Nova atividade
                   </button>
                 )}
+                {ehControladoria && (
+                  <button type="button" className="button-secondary" onClick={reprocessarEmailsChecklist} title="Reenviar relatórios automáticos que falharam">
+                    <IconeHaize nome="refresh" tamanho={16} /> Reenviar PDFs com falha
+                  </button>
+                )}
                 {filtroCondominioChecklist !== 'todos' && (
                   <button type="button" className="button-secondary" onClick={gerarRelatorioDivergenciasPDF} disabled={enviandoRelatorio}>
                     <IconeHaize nome="file" tamanho={16} /> {enviandoRelatorio ? 'Enviando relatório...' : 'Gerar e enviar PDF'}
@@ -2234,6 +2699,15 @@ function App() {
               </div>
             </section>
 
+            {ehChecklist && (
+              <div className={`checklist-acesso-condominio ${!condominios.length ? 'sem-vinculo' : ''}`}>
+                <IconeHaize nome="buildings" tamanho={20} />
+                <div>
+                  <strong>{condominios[0] ? `Condomínio Nº ${condominios[0].id} — ${condominios[0].nome}` : 'Condomínio não vinculado'}</strong>
+                  <span>{condominios[0] ? 'Seu acesso está limitado às vistorias deste condomínio.' : 'Solicite à Controladoria que vincule sua conta a um condomínio.'}</span>
+                </div>
+              </div>
+            )}
             <section className="checklist-indicadores" aria-label="Resumo das vistorias">
               {[
                 { chave: 'todos', titulo: 'Todas', descricao: 'Atividades cadastradas', icone: 'checklist' },
@@ -2263,20 +2737,27 @@ function App() {
                   <h3>Atividades e vistorias</h3>
                   <p>Os prazos seguem a frequência cadastrada; a conformidade mostra o resultado da última vistoria.</p>
                 </div>
-                <span className="checklist-resultados">{checklistsFiltrados.length} de {checklistsNoEscopo.length} atividades</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'right' }}>
+                  <span className="checklist-resultados">{checklistsFiltrados.length} de {checklistsNoEscopo.length} atividades</span>
+                  <small role="status" style={{ color: erroChecklist ? '#b91c1c' : '#64748b' }}>
+                    {carregandoChecklist ? 'Sincronizando vistorias...' : erroChecklist ? `Erro ao atualizar: ${erroChecklist}` : ultimaAtualizacaoChecklist ? `Atualizado às ${new Date(ultimaAtualizacaoChecklist).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Aguardando sincronização'}
+                  </small>
+                </div>
               </div>
               <div className="checklist-controles">
                 <label className="checklist-campo checklist-campo-busca">
                   <span>Buscar atividade</span>
                   <input type="search" value={buscaChecklist} onChange={e => setBuscaChecklist(e.target.value)} placeholder="Nome, condomínio ou instruções" aria-label="Buscar atividade do checklist" />
                 </label>
-                <label className="checklist-campo">
-                  <span>Condomínio</span>
-                  <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
-                    <option value="todos">Todos os condomínios</option>
-                    {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
-                  </select>
-                </label>
+                {ehControladoria && (
+                  <label className="checklist-campo">
+                    <span>Condomínio</span>
+                    <select value={filtroCondominioChecklist} onChange={e => setFiltroCondominioChecklist(e.target.value)}>
+                      <option value="todos">Todos os condomínios</option>
+                      {condominios.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
+                    </select>
+                  </label>
+                )}
                 <label className="checklist-campo">
                   <span>Frequência</span>
                   <select value={filtroFrequenciaChecklist} onChange={e => setFiltroFrequenciaChecklist(e.target.value)}>
@@ -2302,7 +2783,20 @@ function App() {
                   <button type="button" onClick={() => { setBuscaChecklist(''); setFiltroCondominioChecklist('todos'); setFiltroFrequenciaChecklist('todas'); setFiltroSLAChecklist('todos') }}>Limpar filtros</button>
                 </div>
               )}
-              {checklistsFiltrados.length === 0 ? (
+              {carregandoChecklist && !ultimaAtualizacaoChecklist && checklists.length === 0 ? (
+                <div className="checklist-vazio" role="status">
+                  <IconeHaize nome="clock" tamanho={30} />
+                  <strong>Buscando atividades no servidor...</strong>
+                  <p>O checklist será exibido automaticamente assim que os dados chegarem.</p>
+                </div>
+              ) : erroChecklist && checklists.length === 0 ? (
+                <div className="checklist-vazio" role="alert">
+                  <IconeHaize nome="clock" tamanho={30} />
+                  <strong>Não foi possível sincronizar as atividades.</strong>
+                  <p>{erroChecklist}</p>
+                  <button type="button" className="button-secondary" onClick={() => carregarChecklists({ forcar: true, notificarErro: true })}>Tentar novamente</button>
+                </div>
+              ) : checklistsFiltrados.length === 0 ? (
                 <div className="checklist-vazio">
                   <IconeHaize nome="checklist" tamanho={30} />
                   <strong>Nenhuma atividade encontrada</strong>
@@ -2314,7 +2808,7 @@ function App() {
                   {checklistsFiltrados.map(item => {
                     const ultima = item.ultima_execucao
                     const naoConforme = ultima?.status_conformidade === 'Não Conforme'
-                    const sla = calcularStatusSLA(item.frequencia, ultima)
+                    const sla = calcularStatusSLA(item.frequencia, ultima, item.criado_em)
                     return (
                       <article className={`checklist-atividade ${naoConforme ? 'tem-divergencia' : ''}`} key={item.id}>
                         <div className="checklist-atividade-topo">
@@ -2363,6 +2857,8 @@ function App() {
                 </div>
               )}
             </section>
+              </>
+            )}
           </div>
         )}
 
@@ -2412,7 +2908,7 @@ function App() {
                   <strong>{formatarValor(valorTotalRealizado)}</strong>
                   <span className="kpi-footnote">Solicitações finalizadas</span>
                 </article>
-                <article className="kpi-card highlight kpi-economia">
+                <article className={`kpi-card highlight kpi-economia kpi-economia-${classeVariacao(economiaTotal)}`}>
                   <div className="kpi-top"><span>Economia apurada</span><span className="kpi-icon success"><IconeHaize nome="savings" tamanho={20} /></span></div>
                   <strong>{formatarValor(economiaTotal)}</strong>
                   <span className="kpi-footnote">Diferença entre solicitado e realizado nas finalizadas</span>
@@ -2482,130 +2978,139 @@ function App() {
         )}
 
         {pagina === 'analises' && !ehChecklist && (
-          <div className="page">
-            <section className="welcome" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-              <div><span className="eyebrow">INTELIGÊNCIA E RELATÓRIOS</span><h2>Visão Analítica Global</h2></div>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)}>
-                  <option value="todos">Todos os Condomínios</option>
-                  {condominios?.map(c => (<option key={c.id} value={c.nome}>{c.nome}</option>))}
-                </select>
+          <div className="page page-analises">
+            <section className="analise-hero">
+              <div className="analise-hero-texto">
+                <span className="analise-hero-eyebrow">INTELIGÊNCIA FINANCEIRA • HAIZE</span>
+                <h2>Visão analítica da controladoria</h2>
+                <p>Acompanhe solicitações, aprovações e despesas por condomínio em uma única visão.</p>
+                <span className="analise-hero-contagem">{resumoFinanceiro.pedidos} solicitações • {resumoFinanceiro.condominios} condomínios no filtro</span>
+              </div>
+              <span className="analise-hero-simbolo" aria-hidden="true"><IconeHaize nome="analyses" tamanho={58}/></span>
+            </section>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid #cbd5e1', borderRadius: '9px', padding: '4px 10px' }}>
-                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>De:</span>
-                  <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
-                  <span style={{ fontSize: '11.5px', color: '#64748b', fontWeight: '700' }}>Até:</span>
-                  <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={{ border: 'none', padding: '4px', fontSize: '12.5px' }} />
-                  {(filtroDataInicio || filtroDataFim) && (
-                    <button onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }} className="text-button" style={{ fontSize: '11px' }}>Limpar</button>
-                  )}
+            <section className="panel analise-filtros-painel" aria-label="Filtros dos relatórios financeiros">
+              <div className="analise-painel-titulo">
+                <div><span className="eyebrow">RECORTE DOS DADOS</span><h3>Filtros e período</h3></div>
+                <div className="analise-exportar" role="group" aria-label="Exportar dados filtrados">
+                  <button type="button" className="button-secondary" onClick={exportarRelatorioExcel} disabled={resumoFinanceiro.pedidos === 0}><IconeHaize nome="file" tamanho={16}/> Exportar Excel</button>
+                  <button type="button" className="button-secondary" onClick={exportarRelatorioPDF} disabled={resumoFinanceiro.pedidos === 0}><IconeHaize nome="file" tamanho={16}/> Imprimir PDF</button>
                 </div>
-
-                <button className="button-secondary" onClick={exportarRelatorioExcel}>
-                  <span>📊</span> Excel (.xlsx)
-                </button>
-                <button className="button-secondary" onClick={exportarRelatorioPDF}>
-                  <span>🖨️</span> Imprimir PDF
-                </button>
+              </div>
+              <div className="analise-filtros-grade">
+                <label className="analise-campo analise-campo-condominio"><span>Condomínio</span>
+                  <select value={filtroCondominioAnalise} onChange={e => setFiltroCondominioAnalise(e.target.value)}>
+                    <option value="todos">Todos os condomínios</option>
+                    {condominios.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                  </select>
+                </label>
+                <label className="analise-campo"><span>Data inicial</span>
+                  <input type="date" value={filtroDataInicio} max={filtroDataFim || undefined} onChange={e => setFiltroDataInicio(e.target.value)} />
+                </label>
+                <label className="analise-campo"><span>Data final</span>
+                  <input type="date" value={filtroDataFim} min={filtroDataInicio || undefined} onChange={e => setFiltroDataFim(e.target.value)} />
+                </label>
+              </div>
+              <div className="analise-periodos" role="group" aria-label="Selecionar período rápido">
+                <span>Período rápido:</span>
+                <button type="button" className={!filtroDataInicio && !filtroDataFim ? 'active' : ''} aria-pressed={!filtroDataInicio && !filtroDataFim} onClick={() => aplicarPeriodoAnalise('todos')}>Todo o período</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('30dias')}>Últimos 30 dias</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('mes')}>Este mês</button>
+                <button type="button" onClick={() => aplicarPeriodoAnalise('ano')}>Este ano</button>
+                {(filtroDataInicio || filtroDataFim || filtroCondominioAnalise !== 'todos') && <button type="button" className="analise-limpar" onClick={() => { setFiltroCondominioAnalise('todos'); aplicarPeriodoAnalise('todos') }}>Limpar tudo</button>}
               </div>
             </section>
 
-            {filtroCondominioAnalise !== 'todos' && (
-              <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-                <div className="panel">
-                  <div className="panel-header">
-                    <div>
-                      <span className="eyebrow">RATEIO AUTOMÁTICO</span>
-                      <h3>Distribuição por Fração Ideal — {filtroCondominioAnalise}</h3>
-                    </div>
-                    {rateioDados && (
-                      <span className="badge approved" style={{ fontSize: '12.5px', padding: '6px 12px' }}>
-                        Despesas Finalizadas: {formatarValor(rateioDados.total_gasto_condominio)} ({rateioDados.quantidade_solicitacoes} itens)
-                      </span>
-                    )}
-                  </div>
+            <section className="analise-kpis" aria-label="Indicadores financeiros filtrados">
+              <article className="analise-kpi"><span className="analise-kpi-simbolo solicitado"><IconeHaize nome="requests" tamanho={19}/></span><div><span>Valor solicitado</span><strong>{formatarValor(resumoFinanceiro.totalSolicitado)}</strong><small>Pedidos do período</small></div></article>
+              <article className="analise-kpi"><span className="analise-kpi-simbolo aprovado"><IconeHaize nome="approved" tamanho={19}/></span><div><span>Valor aprovado</span><strong>{formatarValor(resumoFinanceiro.totalAprovado)}</strong><small>Solicitações aprovadas</small></div></article>
+              <article className="analise-kpi"><span className="analise-kpi-simbolo realizado"><IconeHaize nome="wallet" tamanho={19}/></span><div><span>Valor realizado</span><strong>{formatarValor(resumoFinanceiro.totalRealizado)}</strong><small>Despesas finalizadas</small></div></article>
+              <article className={`analise-kpi ${resumoFinanceiro.saldo < 0 ? 'analise-kpi-negativo' : ''}`}><span className="analise-kpi-simbolo saldo"><IconeHaize nome="savings" tamanho={19}/></span><div><span>Saldo entre aprovado e realizado</span><strong>{formatarValor(resumoFinanceiro.saldo)}</strong><small>{resumoFinanceiro.saldo < 0 ? 'Realizado supera aprovado' : 'Diferença ainda não realizada'}</small></div></article>
+            </section>
 
-                  {carregandoRateio ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Calculando rateio de despesas...</div>
-                  ) : !rateioDados || rateioDados.rateio_unidades.length === 0 ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
-                      Nenhuma unidade/fração cadastrada para este condomínio. Vá na aba de <strong>Condomínios</strong> e clique em <strong>Unidades</strong> para configurar.
+            {resumoFinanceiro.pedidos === 0 ? (
+              <section className="panel analise-vazio"><IconeHaize nome="analyses" tamanho={33}/><strong>Sem dados para os filtros selecionados</strong><p>Experimente outro condomínio ou amplie o período da pesquisa.</p><button type="button" className="button-secondary" onClick={() => { setFiltroCondominioAnalise('todos'); aplicarPeriodoAnalise('todos') }}>Limpar filtros</button></section>
+            ) : (
+              <>
+                <div className="analise-duas-colunas">
+                  <section className="panel analise-grafico-painel">
+                    <div className="analise-secao-cabecalho"><div><span className="eyebrow">VISÃO COMPARATIVA</span><h3>Solicitado × Aprovado × Realizado</h3><p>Até 10 condomínios com maior valor solicitado no período.</p></div></div>
+                    <div className="analise-chart" style={{ height: Math.max(275, Math.min(510, dadosGraficoCondominios.length * 48 + 95)) }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart layout="vertical" data={dadosGraficoCondominios} margin={{ top: 8, right: 12, left: 3, bottom: 6 }} barCategoryGap="25%">
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3eaf4" />
+                          <XAxis type="number" tickFormatter={v => `R$ ${v >= 1000000 ? `${(v / 1000000).toFixed(1)}mi` : v >= 1000 ? `${Math.round(v / 1000)}mil` : v}`} fontSize={10} tickLine={false} axisLine={false} stroke="#8190a2" />
+                          <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 10, fill: '#50647e' }} tickFormatter={nome => String(nome).length > 19 ? `${String(nome).slice(0, 18)}…` : nome} tickLine={false} axisLine={false} />
+                          <RechartsTooltip formatter={valor => formatarValor(valor)} cursor={{ fill: '#f4f7fc' }} />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '9px' }} />
+                          <Bar name="Solicitado" dataKey="Solicitado" fill="#9aacc7" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                          <Bar name="Aprovado" dataKey="Aprovado" fill="#356ae6" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                          <Bar name="Realizado" dataKey="Realizado" fill="#059669" radius={[0, 4, 4, 0]} isAnimationActive={false} />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                  ) : (
-                    <div className="table">
-                      <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
-                        <span>Unidade / Apartamento</span>
-                        <span>Fração Ideal (%)</span>
-                        <span style={{ textAlign: 'right' }}>Valor Rateado (R$)</span>
+                  </section>
+
+                  <section className="panel analise-categorias-painel">
+                    <div className="analise-secao-cabecalho"><div><span className="eyebrow">DESPESAS FINALIZADAS</span><h3>Principais categorias</h3><p>Distribuição de despesas nas solicitações finalizadas.</p></div></div>
+                    {categoriasFinanceiras.length === 0 ? <div className="analise-categorias-vazio">Ainda não há despesas finalizadas neste período.</div> : (
+                      <div className="analise-categorias-lista">
+                        {categoriasFinanceiras.map(item => (
+                          <div key={item.nome} className="analise-categoria">
+                            <div className="analise-categoria-topo"><span title={item.nome}>{item.nome}</span><strong>{formatarValor(item.valor)}</strong></div>
+                            <div className="analise-categoria-trilha"><span style={{ width: `${categoriasFinanceiras[0].valor > 0 ? Math.min(100, (item.valor / categoriasFinanceiras[0].valor) * 100) : 0}%` }} /></div>
+                          </div>
+                        ))}
                       </div>
-                      {rateioDados.rateio_unidades.map((u, i) => (
-                        <div className="table-row" key={i} style={{ gridTemplateColumns: '2fr 1fr 1fr' }}>
-                          <strong style={{ color: '#0f172a' }}>{u.unidade}</strong>
-                          <span style={{ fontWeight: '700' }}>{formatarNumero(u.fracao_ideal)}%</span>
-                          <strong style={{ textAlign: 'right', color: '#059669' }}>{formatarValor(u.valor_devido)}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                    )}
+                  </section>
                 </div>
-              </section>
+
+                <section className="panel analise-centros-painel">
+                  <div className="analise-secao-cabecalho"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Execução orçamentária por condomínio</h3><p>O saldo representa aprovado menos realizado, não necessariamente economia definitiva.</p></div><span className="analise-contagem">{listaOrcamentoCondominio.length} condomínio(s)</span></div>
+                  <div className="analise-tabela-rolagem">
+                    <table className="analise-tabela">
+                      <thead><tr><th>Condomínio</th><th>Aprovado</th><th>Realizado</th><th>Saldo</th><th>Situação</th></tr></thead>
+                      <tbody>
+                        {listaOrcamentoCondominio.map(item => {
+                          const semOrcamento = item.aprovado === 0
+                          const estourado = item.saldo < 0 && !semOrcamento
+                          const situacao = semOrcamento ? 'Sem aprovação' : estourado ? 'Acima do aprovado' : item.saldo === 0 ? 'Sem saldo' : 'Saldo disponível'
+                          return <tr key={item.nome}>
+                            <td><strong>{item.nome}</strong><small>{item.qtdSolicitacoes} pedido(s)</small></td>
+                            <td>{formatarValor(item.aprovado)}</td>
+                            <td>{formatarValor(item.realizado)}</td>
+                            <td className={item.saldo < 0 ? 'analise-saldo-negativo' : 'analise-saldo-positivo'}>{formatarValor(item.saldo)}</td>
+                            <td><span className={`analise-situacao ${semOrcamento ? 'sem-aprovacao' : estourado ? 'estourado' : 'disponivel'}`}>{situacao}</span></td>
+                          </tr>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
             )}
 
-            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-              <div className="panel">
-                <div className="panel-header">
-                  <div><span className="eyebrow">COMPARATIVO ORÇAMENTÁRIO</span><h3>Solicitado × Aprovado × Realizado</h3></div>
-                </div>
-                <div style={{ width: '100%', height: 360 }}>
-                  {dadosGraficoCondominios.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>Sem dados para gerar gráfico no filtro selecionado.</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dadosGraficoCondominios} margin={{ top: 16, right: 24, left: 12, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                        <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$ ${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
-                        <RechartsTooltip formatter={v => formatarValor(v)} cursor={{ fill: '#f8fafc' }} />
-                        <Legend wrapperStyle={{ paddingTop: '16px' }} />
-                        <Bar dataKey="Solicitado" fill="#94a3b8" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                        <Bar dataKey="Aprovado" fill="#2563eb" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                        <Bar dataKey="Realizado" fill="#10b981" radius={[6, 6, 0, 0]} isAnimationActive={false} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="dashboard-grid" style={{ marginTop: '22px' }}>
-              <div className="panel">
-                <div className="panel-header"><div><span className="eyebrow">POR CENTRO DE CUSTO</span><h3>Execução Orçamentária por Condomínio</h3></div></div>
-                <div className="table">
-                  <div className="table-header" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
-                    <span>Condomínio</span><span>Teto Aprovado</span><span>Gasto Realizado</span><span>Saldo (R$)</span><span>Status</span>
-                  </div>
-                  {listaOrcamentoCondominio.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Nenhuma solicitação encontrada para o filtro.</div>
-                  ) : (
-                    listaOrcamentoCondominio.map(item => {
-                      let sBadge = 'neutral'; let sTexto = 'No Limite'
-                      if (item.saldo > 0) { sBadge = 'positive'; sTexto = 'Economia' }
-                      if (item.saldo < 0) { sBadge = 'negative'; sTexto = 'Estourado' }
-                      if (item.aprovado === 0) { sBadge = 'neutral'; sTexto = 'Sem Orçamento' }
-                      return (
-                        <div className="table-row" key={item.nome} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 140px' }}>
-                          <strong style={{ color: '#0f172a' }}>{item.nome}</strong>
-                          <span>{formatarValor(item.aprovado)}</span>
-                          <span>{formatarValor(item.realizado)}</span>
-                          <strong className={classeVariacao(item.saldo)}>{formatarValor(item.saldo)}</strong>
-                          <span className={`badge ${sBadge}`}>{sTexto}</span>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-            </section>
+            {filtroCondominioAnalise !== 'todos' && (
+              <section className="panel analise-rateio-painel">
+                <div className="analise-secao-cabecalho"><div><span className="eyebrow">DISTRIBUIÇÃO POR FRAÇÃO IDEAL</span><h3>Rateio — {filtroCondominioAnalise}</h3><p>Rateio de solicitações finalizadas; consulte as unidades cadastradas para revisar as frações.</p></div></div>
+                <div className="analise-aviso" role="note"><IconeHaize nome="clock" tamanho={18}/><span>O rateio utiliza <strong>{filtroDataInicio ? `o mês ${filtroDataInicio.slice(0, 7).split('-').reverse().join('/')}` : 'todo o histórico'}</strong> conforme a API atual. Ele não aplica o intervalo exato de datas selecionado acima.</span></div>
+                {carregandoRateio ? <div className="analise-rateio-estado">Calculando rateio...</div> : !rateioDados || (rateioDados.rateio_unidades || []).length === 0 ? (
+                  <div className="analise-rateio-estado">Nenhuma unidade ou fração cadastrada para este condomínio. Configure as unidades no cadastro de condomínios.</div>
+                ) : (
+                  <>
+                    <div className="analise-rateio-total"><span>Total considerado pelo rateio</span><strong>{formatarValor(rateioDados.total_gasto_condominio)}</strong><small>{rateioDados.quantidade_solicitacoes} solicitação(ões) finalizada(s)</small></div>
+                    <div className="analise-tabela-rolagem">
+                      <table className="analise-tabela analise-rateio-tabela">
+                        <thead><tr><th>Unidade</th><th>Fração ideal</th><th>Valor rateado</th></tr></thead>
+                        <tbody>{rateioDados.rateio_unidades.map(u => <tr key={u.unidade_id}><td><strong>{u.unidade}</strong></td><td>{formatarNumero(u.fracao_ideal)}%</td><td className="analise-saldo-positivo">{formatarValor(u.valor_devido)}</td></tr>)}</tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
+            <p className="analise-nota">Observação: indicadores seguem os valores informados nas solicitações; em registros antigos finalizados sem valor realizado, o critério legado pode considerar o valor aprovado ou solicitado. Revise os lançamentos antes de utilizar os relatórios em decisões contábeis.</p>
           </div>
         )}
 
@@ -2716,210 +3221,96 @@ function App() {
         )}
 
         {pagina === 'compras' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <span className="eyebrow">FLUXO DE COMPRAS</span>
-                  <h3>{pagina === 'solicitacoes' ? 'Solicitações de Compra' : 'Compras Aprovadas & Em Execução'}</h3>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input
-                    type="text"
-                    placeholder="🔍 Buscar por código, condomínio ou item..."
-                    style={{ minWidth: '260px' }}
-                    value={pagina === 'solicitacoes' ? filtroSolicitacao : filtroCompra}
-                    onChange={e => pagina === 'solicitacoes' ? setFiltroSolicitacao(e.target.value) : setFiltroCompra(e.target.value)}
-                  />
-                </div>
+          <div className="page compras-page">
+            <header className="cadastro-hero compras-hero">
+              <div>
+                <span className="cadastro-hero-kicker">ACOMPANHAMENTO DE COMPRAS</span>
+                <h2>Compras e execução</h2>
+                <p>Visualize pedidos aprovados, acompanhe a execução e consulte os valores registrados.</p>
               </div>
-
-              {pagina === 'solicitacoes' && (
-                <div className="filter-bar">
-                  <div className="pill-group">
-                    {[
-                      { id: 'todos', label: 'Todas' },
-                      { id: 'Aprovação pendente', label: '⏳ Pendentes' },
-                      { id: 'Em análise', label: 'Em análise' },
-                      { id: 'Ajuste solicitado', label: '📌 Em Ajuste' },
-                      { id: 'Aprovada', label: '✓ Aprovadas' },
-                      { id: 'Em execução', label: '▶ Em Execução' },
-                      { id: 'Finalizada', label: '✅ Finalizadas' },
-                      { id: 'Reprovada', label: '✕ Reprovadas' }
-                    ].map(st => (
-                      <button
-                        key={st.id}
-                        className={`filter-pill ${filtroStatus === st.id ? 'active' : ''}`}
-                        onClick={() => setFiltroStatus(st.id)}
-                      >
-                        {st.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="table">
-                <div className="table-header" style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined}>
-                  <span>Código</span>
-                  <span>Condomínio</span>
-                  <span>Descrição & Categoria</span>
-                  {pagina === 'compras' && (<span>Solicitado</span>)}
-                  <span>{pagina === 'compras' ? 'Aprovado' : 'Valor Total'}</span>
-                  <span>Status</span>
-                </div>
-                {(pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).length === 0 ? (
-                  <div style={{ padding: '36px', textAlign: 'center', color: '#64748b' }}>
-                    Nenhum registro encontrado para este filtro.
-                  </div>
-                ) : (
-                  (pagina === 'solicitacoes' ? solicitacoesFiltradas : comprasFiltradas).map(sol => (
-                    <div className="table-row clickable" key={sol.id} style={pagina === 'compras' ? { gridTemplateColumns: '115px 1.2fr 2fr 1fr 1fr 140px' } : undefined} onClick={() => abrirSolicitacao(sol)}>
-                      <span className="id">{sol.numero}</span>
-                      <strong style={{ color: '#0f172a' }}>{sol.condominio}</strong>
-                      <div>
-                        <div style={{ color: '#1e293b', fontWeight: '600' }}>{sol.descricao}</div>
-                        {sol.categoria && <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>📁 {sol.categoria} {sol.fornecedor ? `• ${sol.fornecedor}` : ''}</div>}
-                      </div>
-                      {pagina === 'compras' && (<strong>{formatarValor(sol.valor)}</strong>)}
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <strong style={{ color: '#0f172a' }}>{formatarValor(pagina === 'compras' ? (aprovado(sol) || sol.valor) : sol.valor)}</strong>
-                        {pagina === 'solicitacoes' && aprovado(sol) > 0 && aprovado(sol) < sol.valor && (<span style={{ fontSize: '11px', color: '#d97706', fontWeight: '700' }}>Aprov: {formatarValor(aprovado(sol))}</span>)}
-                        {realizado(sol) > 0 && (<span style={{ fontSize: '11px', color: realizado(sol) <= (aprovado(sol) || sol.valor) ? '#059669' : '#dc2626', fontWeight: '700' }}>Pago: {formatarValor(realizado(sol))}</span>)}
-                      </div>
-                      {renderBadge(sol)}
-                    </div>
-                  ))
-                )}
+              <div className="cadastro-hero-icon"><IconeHaize nome="shopping" tamanho={40}/></div>
+            </header>
+            <div className="compras-indicadores" aria-label="Resumo do fluxo de compras">
+              <div className="compras-indicador"><span>Em acompanhamento</span><strong>{resumoCompras.total}</strong><small>Pedidos aprovados ou posteriores</small></div>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Aprovada' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Aprovada' ? 'todos' : 'Aprovada')}><span>Aprovadas</span><strong>{resumoCompras.aprovadas}</strong><small>Prontas para execução</small></button>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Em execução' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Em execução' ? 'todos' : 'Em execução')}><span>Em execução</span><strong>{resumoCompras.emExecucao}</strong><small>Compras em andamento</small></button>
+              <button type="button" className={`compras-indicador ${filtroStatusCompra === 'Finalizada' ? 'selecionado' : ''}`} onClick={() => setFiltroStatusCompra(filtroStatusCompra === 'Finalizada' ? 'todos' : 'Finalizada')}><span>Finalizadas</span><strong>{resumoCompras.finalizadas}</strong><small>Compras concluídas</small></button>
+            </div>
+            <section className="panel compras-painel">
+              <div className="cadastro-painel-topo">
+                <div><span className="eyebrow">PAINEL DE COMPRAS</span><h3>Registros e valores</h3><p>Use os filtros para encontrar uma compra e abra seus detalhes para consultar o histórico.</p></div>
+                <span className="cadastro-contador">{comprasFiltradas.length} {comprasFiltradas.length === 1 ? 'resultado' : 'resultados'}</span>
               </div>
+              <div className="cadastro-filtros compras-filtros">
+                <label className="cadastro-campo cadastro-busca"><span>Buscar compra</span><input type="search" value={filtroCompra} placeholder="Código, descrição, fornecedor..." onChange={e => setFiltroCompra(e.target.value)}/></label>
+                <label className="cadastro-campo"><span>Condomínio</span><select value={filtroCondominioCompra} onChange={e => setFiltroCondominioCompra(e.target.value)}><option value="todos">Todos os condomínios</option>{opcoesCondominiosCompra.map(nome => <option value={nome} key={nome}>{nome}</option>)}</select></label>
+                <label className="cadastro-campo"><span>Status</span><select value={filtroStatusCompra} onChange={e => setFiltroStatusCompra(e.target.value)}><option value="todos">Todos os status</option><option value="Aprovada">Aprovadas</option><option value="Em execução">Em execução</option><option value="Finalizada">Finalizadas</option></select></label>
+                <label className="cadastro-campo"><span>Ordenar</span><select value={ordenacaoCompra} onChange={e => setOrdenacaoCompra(e.target.value)}><option value="recentes">Mais recentes</option><option value="maior_valor">Maior aprovado</option><option value="menor_valor">Menor aprovado</option><option value="condominio">Condomínio (A–Z)</option></select></label>
+              </div>
+              {(filtroCompra || filtroCondominioCompra !== 'todos' || filtroStatusCompra !== 'todos' || ordenacaoCompra !== 'recentes') && <div className="cadastro-acoes-filtro"><button type="button" className="text-button" onClick={limparFiltrosCompra}>Limpar filtros</button></div>}
+              <div className="compras-resumo-valores" aria-live="polite">
+                <div><span>Total aprovado no filtro</span><strong>{formatarValor(totalComprasAprovado)}</strong></div>
+                <div><span>Total realizado no filtro</span><strong>{formatarValor(totalComprasRealizado)}</strong></div>
+                <p>Valores calculados apenas com os lançamentos registrados. Aprovação não é pagamento.</p>
+              </div>
+              <div className="compras-tabela" role="table" aria-label="Compras aprovadas e em execução">
+                <div className="compras-tabela-cabecalho" role="row"><span role="columnheader">Código</span><span role="columnheader">Condomínio / Descrição</span><span role="columnheader">Aprovado</span><span role="columnheader">Realizado</span><span role="columnheader">Status</span><span role="columnheader">Detalhes</span></div>
+                {comprasPaginadas.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="shopping" tamanho={30}/><strong>{comprasBase.length === 0 ? 'Nenhuma compra em acompanhamento' : 'Nenhuma compra encontrada'}</strong><p>{comprasBase.length === 0 ? 'As solicitações aprovadas, em execução e finalizadas aparecerão aqui.' : 'Altere os filtros ou limpe a busca para ver mais resultados.'}</p><button type="button" className="button-secondary" onClick={limparFiltrosCompra}>Limpar filtros</button></div> : comprasPaginadas.map(sol => <div className="compras-linha" role="row" key={sol.id}>
+                  <div role="cell"><span className="compras-mobile-label">Código</span><button type="button" className="central-codigo-botao" onClick={() => abrirSolicitacao(sol)}>{sol.numero || `#${sol.id}`}</button><small>{String(sol.data || '').slice(0,10).split('-').reverse().join('/')}</small></div>
+                  <div role="cell" className="compras-descricao"><span className="compras-mobile-label">Condomínio / Descrição</span><strong>{sol.condominio}</strong><span title={sol.descricao || ''}>{sol.descricao || 'Sem descrição'}</span><small>{[sol.categoria, sol.fornecedor].filter(Boolean).join(' • ')}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Aprovado</span><strong>{formatarValor(aprovado(sol))}</strong><small>Solicitado: {formatarValor(solicitado(sol))}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Realizado</span><strong>{formatarValor(realizado(sol))}</strong><small>{textoStatus(sol.status) === 'Finalizada' ? 'Valor registrado' : 'Ainda em andamento'}</small></div>
+                  <div role="cell"><span className="compras-mobile-label">Status</span>{renderBadge(sol)}</div>
+                  <div role="cell" className="compras-cell-acao"><button type="button" className="button-secondary" onClick={() => abrirSolicitacao(sol)}>Ver detalhes <IconeHaize nome="arrow" tamanho={15}/></button></div>
+                </div>)}
+              </div>
+              {totalPaginasCompra > 1 && <nav className="cadastro-paginacao" aria-label="Páginas das compras"><span>Página {paginaAtualCompra} de {totalPaginasCompra}</span><div><button type="button" className="button-secondary" disabled={paginaAtualCompra === 1} onClick={() => setPaginaCompra(p => Math.max(1, p-1))}>Anterior</button><button type="button" className="button-secondary" disabled={paginaAtualCompra === totalPaginasCompra} onClick={() => setPaginaCompra(p => Math.min(totalPaginasCompra, p+1))}>Próxima</button></div></nav>}
             </section>
           </div>
         )}
 
         {pagina === 'categorias' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">REGRAS DE ALÇADA</span><h3>Categorias de Despesa</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoCategoria}>+ Nova Categoria</button>
-              </div>
-              <div className="company-grid">
-                {categorias.map(cat => {
-                  const nome = cat.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.categoria === nome).length
-                  const limitesCadastrados = cat.limites?.length || 0
-
-                  return (
-                    <div className="company-card" key={cat.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar" style={{ background: '#f3e8ff', color: '#7e22ce' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge neutral">Ativa</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {cat.descricao && (<span className="company-detail">{cat.descricao}</span>)}
-
-                        {limitesCadastrados > 0 ? (
-                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '7px 12px', borderRadius: '8px', fontWeight: '700' }}>
-                            ⚡ Alçada Automática em {limitesCadastrados} {limitesCadastrados === 1 ? 'condomínio' : 'condomínios'}
-                          </div>
-                        ) : (
-                          <div style={{ marginTop: '12px', fontSize: '12px', color: '#64748b', background: '#f8fafc', border: '1px dashed #cbd5e1', padding: '7px 12px', borderRadius: '8px' }}>
-                            Aprovação manual padrão
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button className="text-button" onClick={() => editarCategoria(cat)}>Configurar Alçadas</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCategoria(cat.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">CATEGORIAS E ALÇADAS</span><h2>Categorias de despesas</h2><p>Organize os tipos de gasto e configure os limites de aprovação automática.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="categories" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Gerenciar categorias</h3><p>{categorias.length} {categorias.length === 1 ? 'categoria cadastrada' : 'categorias cadastradas'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoCategoria}><IconeHaize nome="plus" tamanho={16}/> Nova categoria</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar categoria</span><input type="search" value={buscaCategoriaCadastro} onChange={e => setBuscaCategoriaCadastro(e.target.value)} placeholder="Nome ou descrição" /></label><span className="cadastro-contador">{categoriasCadastroFiltradas.length} {categoriasCadastroFiltradas.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {categoriasCadastroFiltradas.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="categories" tamanho={28}/><strong>{categorias.length ? 'Nenhuma categoria encontrada' : 'Nenhuma categoria cadastrada'}</strong><p>{categorias.length ? 'Experimente outro termo de busca.' : 'Cadastre uma categoria para definir regras de aprovação.'}</p>{categorias.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaCategoriaCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{categoriasCadastroFiltradas.map(cat => {
+                const nome = cat.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.categoria === nome).length
+                const limitesCadastrados = Array.isArray(cat.limites) ? cat.limites.length : 0
+                return <article className="cadastro-card" key={cat.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="categories" tamanho={20}/></span><span className="cadastro-chip">Cadastrada</span></div><h4>{nome}</h4><p className="cadastro-card-descricao">{cat.descricao || 'Sem descrição informada'}</p><div className="cadastro-card-info"><span><strong>{qtd}</strong> solicitações vinculadas</span><span>{limitesCadastrados ? `${limitesCadastrados} ${limitesCadastrados === 1 ? 'limite' : 'limites'} de alçada` : 'Aprovação manual padrão'}</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => editarCategoria(cat)}>Configurar alçadas</button><button type="button" className="cadastro-excluir" onClick={() => excluirCategoria(cat.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
 
         {pagina === 'condominios' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">CARTEIRA PREDIAL</span><h3>Condomínios Gerenciados</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoCondominio}>+ Novo Condomínio</button>
-              </div>
-              <div className="company-grid">
-                {condominios.map(condominio => {
-                  const nome = condominio.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.condominio === nome).length
-                  return (
-                    <div className="company-card" key={condominio.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar">{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge approved">Ativo</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {condominio.cnpj && (<span className="company-detail">CNPJ: {condominio.cnpj}</span>)}
-                        {condominio.codigo && (<span className="company-detail">Código: {condominio.codigo}</span>)}
-                      </div>
-
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pedidos: </span>
-                          <strong>{qtd}</strong>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <button className="text-button" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button>
-                          <button className="text-button" onClick={() => editarCondominio(condominio)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">CARTEIRA DE CONDOMÍNIOS</span><h2>Condomínios gerenciados</h2><p>Consulte cadastros, dados administrativos e unidades de rateio em um só lugar.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="buildings" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Carteira predial</h3><p>{condominios.length} {condominios.length === 1 ? 'condomínio cadastrado' : 'condomínios cadastrados'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoCondominio}><IconeHaize nome="plus" tamanho={16}/> Novo condomínio</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar condomínio</span><input type="search" value={buscaCondominioCadastro} onChange={e => setBuscaCondominioCadastro(e.target.value)} placeholder="Nome, CNPJ ou código"/></label><span className="cadastro-contador">{condominiosCadastroFiltrados.length} {condominiosCadastroFiltrados.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {condominiosCadastroFiltrados.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="buildings" tamanho={28}/><strong>{condominios.length ? 'Nenhum condomínio encontrado' : 'Nenhum condomínio cadastrado'}</strong><p>{condominios.length ? 'Experimente outro termo de busca.' : 'Cadastre um condomínio para começar a organizar as solicitações.'}</p>{condominios.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaCondominioCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{condominiosCadastroFiltrados.map(condominio => {
+                const nome = condominio.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.condominio === nome).length
+                return <article className="cadastro-card" key={condominio.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="buildings" tamanho={20}/></span><span className="cadastro-chip">Condomínio Nº {condominio.id}</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{condominio.cnpj || 'Não informado'}</strong></span><span>Código: <strong>{condominio.codigo || 'Não informado'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => abrirGerenciadorUnidades(condominio)}>Unidades</button><button type="button" className="button-secondary" onClick={() => editarCondominio(condominio)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirCondominio(condominio.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
 
         {pagina === 'fornecedores' && !ehChecklist && (
-          <div className="page">
-            <section className="panel">
-              <div className="panel-header">
-                <div><span className="eyebrow">PARCEIROS E PRESTADORES</span><h3>Fornecedores Homologados</h3></div>
-                <button className="button-primary" onClick={abrirFormularioNovoFornecedor}>+ Novo Fornecedor</button>
-              </div>
-              <div className="company-grid">
-                {fornecedores.map(forn => {
-                  const nome = forn.nome || 'Sem nome'
-                  const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
-                  return (
-                    <div className="company-card" key={forn.id}>
-                      <div>
-                        <div className="company-card-top">
-                          <div className="company-avatar" style={{ background: '#f1f5f9', color: '#334155' }}>{String(nome).charAt(0).toUpperCase()}</div>
-                          <span className="badge neutral">Homologado</span>
-                        </div>
-                        <h4>{nome}</h4>
-                        {forn.cnpj && (<span className="company-detail">CNPJ: {forn.cnpj}</span>)}
-                        {forn.categoria && (<span className="company-detail">Especialidade: {forn.categoria}</span>)}
-                      </div>
-                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '16px', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Solicitações: </span><strong>{qtd}</strong></div>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button className="text-button" onClick={() => editarFornecedor(forn)}>Editar</button>
-                          <button className="text-button" style={{ color: 'var(--danger)' }} onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          <div className="page cadastros-page">
+            <header className="cadastro-hero"><div><span className="cadastro-hero-kicker">REDE DE FORNECEDORES</span><h2>Fornecedores e prestadores</h2><p>Organize parceiros, especialidades e dados cadastrais usados nas solicitações.</p></div><div className="cadastro-hero-icon"><IconeHaize nome="suppliers" tamanho={40}/></div></header>
+            <section className="panel cadastro-painel">
+              <div className="cadastro-painel-topo"><div><span className="eyebrow">CADASTROS BASE</span><h3>Gerenciar fornecedores</h3><p>{fornecedores.length} {fornecedores.length === 1 ? 'fornecedor cadastrado' : 'fornecedores cadastrados'}</p></div><button type="button" className="button-primary" onClick={abrirFormularioNovoFornecedor}><IconeHaize nome="plus" tamanho={16}/> Novo fornecedor</button></div>
+              <div className="cadastro-filtros cadastro-filtros-simples"><label className="cadastro-campo cadastro-busca"><span>Buscar fornecedor</span><input type="search" value={buscaFornecedorCadastro} onChange={e => setBuscaFornecedorCadastro(e.target.value)} placeholder="Nome, CNPJ ou especialidade"/></label><span className="cadastro-contador">{fornecedoresCadastroFiltrados.length} {fornecedoresCadastroFiltrados.length === 1 ? 'resultado' : 'resultados'}</span></div>
+              {fornecedoresCadastroFiltrados.length === 0 ? <div className="cadastro-vazio"><IconeHaize nome="suppliers" tamanho={28}/><strong>{fornecedores.length ? 'Nenhum fornecedor encontrado' : 'Nenhum fornecedor cadastrado'}</strong><p>{fornecedores.length ? 'Experimente outro termo de busca.' : 'Cadastre um fornecedor para facilitar as próximas solicitações.'}</p>{fornecedores.length > 0 && <button type="button" className="button-secondary" onClick={() => setBuscaFornecedorCadastro('')}>Limpar busca</button>}</div> : <div className="cadastro-grade">{fornecedoresCadastroFiltrados.map(forn => {
+                const nome = forn.nome || 'Sem nome'
+                const qtd = solicitacoes.filter(s => s.fornecedor === nome).length
+                return <article className="cadastro-card" key={forn.id}><div className="cadastro-card-topo"><span className="cadastro-avatar"><IconeHaize nome="suppliers" tamanho={20}/></span><span className="cadastro-chip">Cadastrado</span></div><h4>{nome}</h4><div className="cadastro-card-info"><span>CNPJ: <strong>{forn.cnpj || 'Não informado'}</strong></span><span>Especialidade: <strong>{forn.categoria || 'Não informada'}</strong></span><span><strong>{qtd}</strong> solicitações vinculadas</span></div><div className="cadastro-card-rodape"><button type="button" className="button-secondary" onClick={() => editarFornecedor(forn)}>Editar</button><button type="button" className="cadastro-excluir" onClick={() => excluirFornecedor(forn.id, nome)}>Excluir</button></div></article>
+              })}</div>}
             </section>
           </div>
         )}
@@ -3332,16 +3723,16 @@ function App() {
                     <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
                   </>
                 )}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
+                {(ehControladoria || usuarioLogado.perfil === 'Solicitante') && textoStatus(solicitacaoSelecionada.status) === 'Aprovada' && (
                   <>
                     <button className="button-primary" onClick={() => iniciarExecucao(solicitacaoSelecionada)}>▶ Iniciar Execução</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                    {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
-                {ehControladoria && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
+                {(ehControladoria || (usuarioLogado.perfil === 'Solicitante' && solicitacaoSelecionada.solicitante === usuarioLogado.nome)) && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
                   <>
                     <button className="button-primary" style={{ background: '#059669', borderColor: '#059669' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Compra</button>
-                    <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>
+                    {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
                 {ehControladoria && ['Finalizada', 'Reprovada'].includes(textoStatus(solicitacaoSelecionada.status)) && (
