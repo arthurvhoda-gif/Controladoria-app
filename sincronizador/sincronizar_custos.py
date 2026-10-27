@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 from urllib import request, error
 
 from auditar_planilhas import PASTA_PADRAO, extrair_base, extrair_condominio, br, canon
@@ -83,23 +84,66 @@ def validar_url_testes(url):
     raise ValueError('Por segurança, esta etapa permite envios apenas ao Render de TESTES ou localhost:8000.')
 
 
-def enviar(url, segredo, payload):
+def aguardar_servidor(url, tentativas=3, timeout=150):
+    """Acorda e confere o Render GRATUITO antes de enviar dados.
+
+    Somente GET /status: esta função não envia nem altera lançamentos.
+    """
+    print('\nVerificando disponibilidade do Render de testes...')
+    for tentativa in range(1, tentativas + 1):
+        req = request.Request(url + '/status', headers={'Accept': 'application/json'}, method='GET')
+        try:
+            with request.urlopen(req, timeout=timeout) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f'/status respondeu HTTP {resp.status}')
+            print('Render de testes respondeu HTTP 200. Iniciando envio.')
+            return
+        except error.HTTPError as exc:
+            if exc.code not in (429, 502, 503, 504):
+                raise RuntimeError(f'/status respondeu HTTP {exc.code}; importação cancelada.') from None
+            motivo = f'HTTP {exc.code}'
+        except (error.URLError, OSError) as exc:
+            motivo = str(exc)
+        if tentativa == tentativas:
+            raise RuntimeError(f'Render indisponível após {tentativas} verificações de /status: {motivo}')
+        espera = 5 * tentativa
+        print(f'  Render ainda não respondeu ({motivo}). Nova verificação em {espera}s...')
+        time.sleep(espera)
+
+
+def enviar(url, segredo, payload, tentativas=3, timeout=150):
+    """Envia snapshot completo; reenvio é idempotente na API (chave arquivo+ID).
+
+    Um timeout pode ocorrer após o servidor ter gravado os registros.
+    Repetir o mesmo snapshot não cria duplicações, conforme validado no piloto.
+    """
     dados = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-    req = request.Request(
-        url + '/custos/sincronizar', data=dados,
-        headers={'Content-Type': 'application/json; charset=utf-8',
-                 'X-Haize-Custos': segredo}, method='POST')
-    try:
-        with request.urlopen(req, timeout=60) as resposta:
-            corpo = json.loads(resposta.read().decode('utf-8'))
-        if corpo.get('status') != 'ok':
-            raise RuntimeError(f"Servidor não confirmou importação: {corpo}")
-        return corpo
-    except error.HTTPError as exc:
-        mensagem = exc.read(1000).decode('utf-8', 'replace')
-        raise RuntimeError(f"API respondeu HTTP {exc.code}: {mensagem}") from None
-    except error.URLError as exc:
-        raise RuntimeError(f"Não foi possível acessar Render de testes: {exc.reason}") from None
+    for tentativa in range(1, tentativas + 1):
+        req = request.Request(
+            url + '/custos/sincronizar', data=dados,
+            headers={'Content-Type': 'application/json; charset=utf-8',
+                     'X-Haize-Custos': segredo}, method='POST')
+        try:
+            with request.urlopen(req, timeout=timeout) as resposta:
+                corpo = json.loads(resposta.read().decode('utf-8'))
+            if corpo.get('status') != 'ok':
+                raise RuntimeError(f"Servidor não confirmou importação: {corpo}")
+            return corpo
+        except error.HTTPError as exc:
+            mensagem = exc.read(1000).decode('utf-8', 'replace')
+            if exc.code not in (429, 502, 503, 504):
+                raise RuntimeError(f"API respondeu HTTP {exc.code}: {mensagem}") from None
+            motivo = f'HTTP {exc.code}: {mensagem}'
+        except (error.URLError, OSError) as exc:
+            motivo = str(exc)
+        if tentativa == tentativas:
+            raise RuntimeError(
+                f"Falha ao sincronizar {payload['condominio']} após {tentativas} tentativas: {motivo}. "
+                "Confira o Neon de TESTES antes de qualquer envio manual adicional.")
+        espera = 5 * tentativa
+        print(f"  {payload['condominio']}: tentativa {tentativa}/{tentativas} não confirmou "
+              f"o envio ({motivo}). Tentando novamente em {espera}s...")
+        time.sleep(espera)
 
 
 def executar(args):
@@ -130,6 +174,7 @@ def executar(args):
     if len(segredo) < 32:
         raise ValueError('HAIZE_SYNC_SECRET ausente ou curta. Configure apenas no CMD local, não no código.')
     print('\nENVIANDO APENAS PARA O RENDER DE TESTES: ' + url)
+    aguardar_servidor(url)
     for snap in snapshots:
         resposta = enviar(url, segredo, snap)
         print(f"{snap['condominio']}: novos={resposta['novos']} "
