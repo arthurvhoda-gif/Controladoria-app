@@ -1,0 +1,11 @@
+# NUNCA versionar dados dos condomínios, relatórios, chaves ou bases locais
+__pycache__/
+relatorios/
+*.xlsm
+*.xlsx
+*.xls
+*.csv
+*.json
+.env
+*.key
+*.log

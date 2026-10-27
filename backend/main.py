@@ -34,11 +34,13 @@ import schemas
 from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
+import custos_api  # módulo isolado: Inteligência de Custos
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Controladoria Haize API")
+app.include_router(custos_api.router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -49,6 +51,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     gestor = perfil == 'Controladoria'
     solicitante = perfil == 'Solicitante'
     vistoriador = perfil == 'Checklist'
+    if path == '/custos/resumo' and method == 'GET':
+        return gestor
     if path == '/checklists/alertas' and method == 'GET':
         return gestor or vistoriador
     if path == '/checklists/envios' and method == 'GET':
@@ -123,6 +127,16 @@ async def proteger_api(request: Request, call_next):
         recebida = request.headers.get('X-Haize-Automation', '')
         if not chave or len(chave) < 32 or not hmac.compare_digest(recebida, chave):
             return JSONResponse(status_code=403, content={'detail': 'Automação não autorizada.'})
+        return await call_next(request)
+
+    # Sincronizador Windows: apenas o endpoint de importação; senha só no Render.
+    if method == 'POST' and path == '/custos/sincronizar':
+        chave = os.getenv('COST_SYNC_SECRET', '').strip()
+        recebida = request.headers.get('X-Haize-Custos', '')
+        if not chave or len(chave) < 32 or not hmac.compare_digest(
+            recebida.encode('utf-8'), chave.encode('utf-8')
+        ):
+            return JSONResponse(status_code=403, content={'detail': 'Sincronização não autorizada.'})
         return await call_next(request)
 
     authorization = request.headers.get('authorization', '')
@@ -279,6 +293,7 @@ def criar_usuarios_iniciais():
 def startup_event():
     auth_utils.get_secret()  # Fail closed: Render precisa ter AUTH_SECRET_KEY configurada.
     executar_migracoes_automaticas()
+    custos_api.criar_tabelas_custos(engine)  # Apenas tabelas novas de custos
     criar_usuarios_iniciais()
 
 
