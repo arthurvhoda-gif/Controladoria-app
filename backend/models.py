@@ -166,3 +166,22 @@ class ServicoAviso(Base):
     mensagem = Column(String(300), nullable=False)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     lida_em = Column(DateTime(timezone=True), nullable=True)
+
+# Participantes por tarefa: executores e fiscalizadores, com progresso individual.
+# A coluna legada ServicoInterno.responsavel_id permanece para compatibilidade
+# com registros já existentes, mas a lista abaixo é a fonte de verdade da V2.
+from sqlalchemy import UniqueConstraint
+
+class ServicoParticipante(Base):
+    __tablename__ = 'servicos_participantes'
+    __table_args__ = (UniqueConstraint('servico_id', 'usuario_id', name='uq_servico_participante_usuario'),)
+    id = Column(Integer, primary_key=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id', ondelete='CASCADE'), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True, index=True)
+    usuario_nome = Column(String(200), nullable=False)
+    papel = Column(String(20), nullable=False)  # executor | fiscalizador
+    status = Column(String(40), nullable=False, default='Aguardando ciência')
+    confirmado_em = Column(DateTime(timezone=True), nullable=True)
+    iniciado_em = Column(DateTime(timezone=True), nullable=True)
+    concluido_em = Column(DateTime(timezone=True), nullable=True)
+    validado_em = Column(DateTime(timezone=True), nullable=True)

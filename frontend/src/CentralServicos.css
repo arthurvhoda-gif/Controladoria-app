@@ -45,3 +45,19 @@
 .hs-modal label {font-weight:700;font-size:12px;display:grid;gap:6px;}.hs-modal input,.hs-modal select,.hs-modal textarea {width:100%;min-height:42px;border:1px solid #cbd7e7;border-radius:9px;padding:9px 11px;font:inherit;font-size:14px;box-sizing:border-box;}
 @media (max-width:850px) {.hs-stats {grid-template-columns:repeat(2,minmax(0,1fr));}.hs-layout {grid-template-columns:minmax(0,1fr);}.hs-list {max-height:none;}.hs-top {align-items:flex-start;flex-direction:column;}.hs-detail {min-height:140px;}}
 @media (max-width:480px) {.haize-servicos{padding:9px 0 25px;}.hs-stats>div{padding:13px;}.hs-stats strong{font-size:23px;}.hs-filters{flex-direction:column;}.hs-top-actions,.hs-top-actions .hs-btn {width:100%;}.hs-task-bottom {align-items:flex-start;}.hs-modal{padding:16px;}}
+
+/* V2 — designação de múltiplos participantes e responsabilidades separadas */
+.hs-participant-field{border:1px solid #d5e0ed;border-radius:11px;margin:0;padding:12px;min-width:0;}
+.hs-participant-field legend{font-size:13px;font-weight:800;padding:0 5px;color:#122a53;}
+.hs-participant-field p{font-size:12px;color:#677a94;margin:2px 0 10px;}
+.hs-people{display:grid;gap:4px;max-height:178px;overflow:auto;}
+.hs-modal .hs-check-person{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;background:#f5f8fd;cursor:pointer;min-height:40px;font-weight:600;}
+.hs-modal .hs-check-person input{width:17px;height:17px;min-height:17px;flex:0 0 auto;accent-color:#215af0;}
+.hs-modal .hs-check-person:has(input:disabled){opacity:.48;cursor:not-allowed;}
+.hs-check-person small{font-weight:400;color:#5d7595;}
+.hs-participant-summary{margin:15px 0 12px;}
+.hs-participant-summary h4{margin:13px 0 7px;}
+.hs-participant-summary>p{font-size:12px;color:#6e7e98;}
+.hs-person{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 10px;border:1px solid #e1e9f4;border-radius:8px;margin-bottom:5px;font-size:12px;}
+.hs-person span{color:#49617e;text-align:right;white-space:nowrap;}
+@media(max-width:480px){.hs-person{align-items:flex-start;flex-direction:column;gap:3px;}.hs-person span{text-align:left;}}
