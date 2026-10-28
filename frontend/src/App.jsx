@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import XLSX from 'xlsx-js-style'
 import './App.css'
+import CentralServicos from './CentralServicos'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
@@ -773,7 +774,7 @@ function App() {
 
   useEffect(() => {
     if (!usuarioLogado?.token) return
-    if (usuarioLogado.perfil === 'Checklist' && pagina !== 'checklist') {
+    if (usuarioLogado.perfil === 'Checklist' && !['checklist', 'servicos'].includes(pagina)) {
       setPagina('checklist')
     }
     carregarDados(false)
@@ -2427,6 +2428,9 @@ function App() {
               <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
                 <span className="nav-icon"><IconeHaize nome="checklist" /></span><span>Checklist Predial</span>
               </button>
+              <button className={pagina === 'servicos' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('servicos'); setSidebarAberta(false) }}>
+                <span className="nav-icon"><IconeHaize nome="requests" /></span><span>Minhas Tarefas</span>
+              </button>
             </>
           ) : (
             <>
@@ -2453,6 +2457,9 @@ function App() {
                 </button>
               )}
 
+              <button className={pagina === 'servicos' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('servicos'); setSidebarAberta(false) }}>
+                <span className="nav-icon"><IconeHaize nome="requests" /></span><span>Serviços Internos</span>
+              </button>
               <span className="sidebar-section-label">Cadastros Base</span>
               {ehControladoria && <>
                 <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
@@ -2495,10 +2502,10 @@ function App() {
             <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)} aria-label="Abrir menu de navegação"><IconeHaize nome="menu" /></button>
             <div>
               <span className="breadcrumb">
-                Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina}
+                Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina === 'servicos' ? 'Serviços Internos' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina === 'servicos' ? 'Central de Serviços' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
@@ -2583,6 +2590,12 @@ function App() {
           </div>
         </header>
 
+
+        {pagina === 'servicos' && (
+          <div className="page">
+            <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} />
+          </div>
+        )}
 
         {/* =========================================================================
             ABA DE CHECKLIST OPERACIONAL E VISTORIAS

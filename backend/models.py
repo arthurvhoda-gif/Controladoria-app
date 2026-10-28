@@ -125,3 +125,44 @@ FornecedorDB = Fornecedor
 SolicitacaoDB = Solicitacao
 ChecklistItemDB = ChecklistItem
 ChecklistExecucaoDB = ChecklistExecucao
+
+# ========================================================================
+# CENTRAL DE SERVIÇOS: tabelas separadas de solicitações financeiras.
+# ========================================================================
+from sqlalchemy import Date, DateTime, Boolean, func
+
+class ServicoInterno(Base):
+    __tablename__ = 'servicos_internos'
+    id = Column(Integer, primary_key=True)
+    condominio_id = Column(Integer, ForeignKey('condominios.id'), nullable=False, index=True)
+    condominio_nome = Column(String(200), nullable=False)
+    responsavel_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True, index=True)
+    responsavel_nome = Column(String(200), nullable=False)
+    criador_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    criador_nome = Column(String(200), nullable=False)
+    titulo = Column(String(180), nullable=False)
+    descricao = Column(Text, nullable=False)
+    prioridade = Column(String(20), nullable=False, default='Normal')
+    prazo = Column(Date, nullable=False)
+    status = Column(String(60), nullable=False, default='Aguardando ciência', index=True)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+class ServicoEvento(Base):
+    __tablename__ = 'servicos_eventos'
+    id = Column(Integer, primary_key=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id'), nullable=False, index=True)
+    autor_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    autor_nome = Column(String(200), nullable=False)
+    acao = Column(String(40), nullable=False)
+    observacao = Column(Text, nullable=False, default='')
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+class ServicoAviso(Base):
+    __tablename__ = 'servicos_avisos'
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id'), nullable=False, index=True)
+    mensagem = Column(String(300), nullable=False)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    lida_em = Column(DateTime(timezone=True), nullable=True)

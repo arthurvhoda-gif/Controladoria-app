@@ -34,11 +34,13 @@ import schemas
 from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
+from servicos_api import router as servicos_router
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Controladoria Haize API")
+app.include_router(servicos_router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -55,6 +57,19 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor
     if path == '/checklists/envios/reprocessar' and method == 'POST':
         return gestor
+    # Serviços internos: checagem de perfil na borda + escopo por usuário/condomínio no handler.
+    if path == '/servicos' and method in ('GET', 'POST'):
+        return gestor or (method == 'GET' and (vistoriador or solicitante))
+    if path == '/servicos/responsaveis' and method == 'GET':
+        return gestor
+    if path == '/servicos/notificacoes' and method == 'GET':
+        return gestor or vistoriador or solicitante
+    if re.fullmatch(r'/servicos/notificacoes/\d+/ler', path) and method == 'POST':
+        return gestor or vistoriador or solicitante
+    if re.fullmatch(r'/servicos/\d+(?:/historico)?', path) and method == 'GET':
+        return gestor or vistoriador or solicitante
+    if re.fullmatch(r'/servicos/\d+/acoes', path) and method == 'POST':
+        return gestor or vistoriador or solicitante
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
