@@ -35,12 +35,14 @@ from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
 import custos_api  # módulo isolado: Inteligência de Custos
+import custos_painel  # Consultas analiticas de custos
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Controladoria Haize API")
 app.include_router(custos_api.router)
+app.include_router(custos_painel.router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -51,7 +53,7 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     gestor = perfil == 'Controladoria'
     solicitante = perfil == 'Solicitante'
     vistoriador = perfil == 'Checklist'
-    if path == '/custos/resumo' and method == 'GET':
+    if path in ('/custos/resumo', '/custos/painel') and method == 'GET':
         return gestor
     if path == '/checklists/alertas' and method == 'GET':
         return gestor or vistoriador
