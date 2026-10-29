@@ -226,3 +226,15 @@ class FilaWhatsApp(Base):
     # Apenas PREPARADA: nenhum serviço/rotina envia mensagens nesta versão.
     status = Column(String(24), nullable=False, default='preparada', index=True)
     criada_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# Auditoria sem armazenar números completos no histórico.
+class WhatsAppAuditoriaContato(Base):
+    __tablename__ = 'whatsapp_auditoria_contatos'
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    alterado_por_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    telefone_anterior_final = Column(String(4), nullable=True)
+    telefone_novo_final = Column(String(4), nullable=True)
+    consentimento_revogado = Column(Integer, nullable=False, default=0)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

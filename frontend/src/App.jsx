@@ -6,6 +6,7 @@ import XLSX from 'xlsx-js-style'
 import './App.css'
 import CentralServicos from './CentralServicos'
 import PreferenciasWhatsApp from './PreferenciasWhatsApp'
+import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
@@ -2464,6 +2465,9 @@ function App() {
               </button>
               <span className="sidebar-section-label">Cadastros Base</span>
               {ehControladoria && <>
+                <button className={pagina === 'contatos-whatsapp' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('contatos-whatsapp'); setSidebarAberta(false); }}>
+                  <span className="nav-icon"><IconeHaize nome="bell" /></span><span>Contatos WhatsApp</span>
+                </button>
                 <button className={pagina === 'condominios' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('condominios'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="buildings" /></span><span>Condomínios</span>
                 </button>
@@ -2507,10 +2511,10 @@ function App() {
             <button className="icon-button menu-mobile-btn" onClick={() => setSidebarAberta(!sidebarAberta)} aria-label="Abrir menu de navegação"><IconeHaize nome="menu" /></button>
             <div>
               <span className="breadcrumb">
-                Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina === 'servicos' ? 'Serviços Internos' : pagina}
+                Controladoria Haize {' / '} {pagina === 'dashboard' ? 'Visão Executiva' : pagina === 'solicitacoes' ? 'Solicitações' : pagina === 'checklist' ? 'Checklist' : pagina === 'servicos' ? 'Serviços Internos' : pagina === 'contatos-whatsapp' ? 'Contatos WhatsApp' : pagina}
               </span>
               <h1>
-                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina === 'servicos' ? 'Central de Serviços' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
+                {pagina === 'dashboard' ? 'Painel Geral' : pagina === 'solicitacoes' ? (ehControladoria ? 'Central de Aprovações' : 'Minhas Solicitações') : pagina === 'checklist' ? (ehControladoria && abaChecklist === 'zeladores' ? 'Checklist · Gestão de Zeladores' : 'Checklist Operacional') : pagina === 'servicos' ? 'Central de Serviços' : pagina === 'contatos-whatsapp' ? 'Gestão de Contatos WhatsApp' : pagina.charAt(0).toUpperCase() + pagina.slice(1)}
               </h1>
             </div>
           </div>
@@ -2595,6 +2599,12 @@ function App() {
           </div>
         </header>
 
+
+        {ehControladoria && pagina === 'contatos-whatsapp' && (
+          <div className="page">
+            <GestaoContatosWhatsApp apiUrl={API_URL} token={usuarioLogado.token} />
+          </div>
+        )}
 
         {pagina === 'servicos' && (
           <div className="page">
