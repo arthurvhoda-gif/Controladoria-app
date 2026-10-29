@@ -5,6 +5,7 @@ import {
 import XLSX from 'xlsx-js-style'
 import './App.css'
 import CentralServicos from './CentralServicos'
+import PreferenciasWhatsApp from './PreferenciasWhatsApp'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
@@ -182,6 +183,7 @@ function App() {
   const [emailLogin, setEmailLogin] = useState('')
   const [senhaLogin, setSenhaLogin] = useState('')
   const [mostrarTrocaSenha, setMostrarTrocaSenha] = useState(false)
+  const [mostrarWhatsapp, setMostrarWhatsapp] = useState(false)
   const [senhaAtual, setSenhaAtual] = useState('')
   const [senhaNova, setSenhaNova] = useState('')
   const [trocandoSenha, setTrocandoSenha] = useState(false)
@@ -2490,6 +2492,9 @@ function App() {
               </span>
             </div>
           </div>
+          <button type="button" className="logout-btn" onClick={() => setMostrarWhatsapp(true)}>
+            <span aria-hidden="true">✉</span> Avisos pelo WhatsApp
+          </button>
           <button onClick={fazerLogout} className="logout-btn">
             <IconeHaize nome="logout" tamanho={16} /> Encerrar Sessão
           </button>
@@ -3987,6 +3992,9 @@ function App() {
           </div>
         )}
 
+        {mostrarWhatsapp && (
+          <PreferenciasWhatsApp apiUrl={API_URL} token={usuarioLogado.token} onClose={() => setMostrarWhatsapp(false)} />
+        )}
         {mostrarTrocaSenha && (
           <div className="modal-overlay" style={{ zIndex: 99999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarTrocaSenha(false) }}>
             <div className="modal" style={{ maxWidth: 430 }} role="dialog" aria-modal="true" aria-label="Alterar senha">

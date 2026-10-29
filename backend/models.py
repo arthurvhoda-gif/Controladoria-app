@@ -203,3 +203,26 @@ class ServicoFoto(Base):
     imagem = Column(LargeBinary, nullable=False)
     tamanho_bytes = Column(Integer, nullable=False)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+# Preferências individuais e fila de notificações (V6 - sem envio externo).
+from sqlalchemy import UniqueConstraint
+
+class PreferenciaWhatsApp(Base):
+    __tablename__ = 'whatsapp_preferencias'
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), primary_key=True)
+    telefone = Column(String(18), nullable=True)
+    consentimento = Column(Integer, nullable=False, default=0)
+    consentido_em = Column(DateTime(timezone=True), nullable=True)
+    atualizado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FilaWhatsApp(Base):
+    __tablename__ = 'whatsapp_fila'
+    __table_args__ = (UniqueConstraint('aviso_id', name='uq_whatsapp_aviso'),)
+    id = Column(Integer, primary_key=True)
+    aviso_id = Column(Integer, ForeignKey('servicos_avisos.id', ondelete='CASCADE'), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id', ondelete='CASCADE'), nullable=False, index=True)
+    # Apenas PREPARADA: nenhum serviço/rotina envia mensagens nesta versão.
+    status = Column(String(24), nullable=False, default='preparada', index=True)
+    criada_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

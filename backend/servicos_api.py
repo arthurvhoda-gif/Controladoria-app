@@ -137,10 +137,21 @@ def evento(db, servico, autor, acao, observacao=''):
 
 
 def notificar(db, destino_id, servico, mensagem):
-    if destino_id:
-        db.add(models.ServicoAviso(
-            usuario_id=destino_id, servico_id=servico.id,
-            mensagem=mensagem, criado_em=agora(),
+    if not destino_id:
+        return
+    aviso = models.ServicoAviso(
+        usuario_id=destino_id, servico_id=servico.id,
+        mensagem=mensagem, criado_em=agora(),
+    )
+    db.add(aviso)
+    # Na mesma transação: sem aviso persistido, não há item para WhatsApp.
+    # Sem consentimento prévio, não há fila de envio.
+    preferencia = db.get(models.PreferenciaWhatsApp, destino_id)
+    if preferencia and preferencia.consentimento and preferencia.telefone:
+        db.flush()  # gera o ID do aviso, sem fazer commit antecipado
+        db.add(models.FilaWhatsApp(
+            aviso_id=aviso.id, usuario_id=destino_id,
+            servico_id=servico.id, status='preparada', criada_em=agora(),
         ))
 
 

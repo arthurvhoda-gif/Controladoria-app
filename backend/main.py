@@ -35,12 +35,14 @@ from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
 from servicos_api import router as servicos_router
+from whatsapp_alertas import router as whatsapp_router
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Controladoria Haize API")
 app.include_router(servicos_router)
+app.include_router(whatsapp_router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -74,6 +76,10 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor or vistoriador or solicitante
     if re.fullmatch(r'/servicos/\d+/fotos/\d+', path) and method == 'GET':
         return gestor or vistoriador or solicitante
+    if path == '/avisos-whatsapp/me' and method in ('GET', 'PUT'):
+        return True  # Login obrigatório, só própria conta
+    if path == '/avisos-whatsapp/fila/resumo' and method == 'GET':
+        return gestor
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
