@@ -62,8 +62,47 @@ function SIcon({ nome, size = 18 }) {
     filter: <><path d="M4 7h16M7 12h10M10 17h4"/></>,
     spark: <><path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9L12 3Z"/></>,
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
+    camera: <><path d="M4 7h4l2-3h4l2 3h4v13H4V7Z"/><circle cx="12" cy="13" r="3.5"/></>,
   }
   return <svg {...props}>{p[nome] || p.info}</svg>
+}
+
+
+const FOTOS_TIPO = {antes:'Antes',durante:'Durante',depois:'Depois',fiscalizacao:'Fiscalização'}
+const MAX_UPLOAD = 4 * 1024 * 1024
+function validarArquivos(arquivos) {
+  const todos = Array.from(arquivos || [])
+  if (todos.some(f => !['image/jpeg', 'image/png', 'image/webp'].includes(f.type) || f.size > MAX_UPLOAD || f.size === 0)) {
+    throw new Error('Selecione fotos JPG, PNG ou WebP de até 4 MB cada.')
+  }
+  return todos
+}
+
+function GradeFotos({ fotos, apiUrl, token, servicoId }) {
+  const [links, setLinks] = useState({})
+  const ids = fotos.map(f => f.id).join(',')
+  useEffect(() => {
+    if (!servicoId || !ids || !token) { setLinks({}); return }
+    const controller = new AbortController()
+    const gerados = []
+    setLinks({})
+    Promise.all(fotos.map(async f => {
+      const r = await fetch(`${apiUrl}/servicos/${servicoId}/fotos/${f.id}`, {
+        headers: {Authorization: `Bearer ${token}`}, signal:controller.signal, cache:'no-store',
+      })
+      if (!r.ok) return [f.id, null]
+      const url = URL.createObjectURL(await r.blob())
+      gerados.push(url)
+      return [f.id,url]
+    })).then(pares => { if (!controller.signal.aborted) setLinks(Object.fromEntries(pares)) })
+      .catch(() => { if (!controller.signal.aborted) setLinks({}) })
+    return () => { controller.abort(); gerados.forEach(url => URL.revokeObjectURL(url)) }
+  }, [ids, servicoId, apiUrl, token])
+  if (!fotos.length) return <p className="hs-v5-empty">Nenhuma foto anexada a este serviço.</p>
+  return <div className="hs-v5-photo-grid">{fotos.map(f => <a key={f.id} href={links[f.id] || undefined} target="_blank" rel="noreferrer" className="hs-v5-photo-card" onClick={e => { if (!links[f.id]) e.preventDefault() }} title="Abrir fotografia">
+    <span className="hs-v5-photo-thumb">{links[f.id] ? <img src={links[f.id]} loading="lazy" alt={f.legenda || `Foto de ${FOTOS_TIPO[f.etapa] || f.etapa}`}/> : <SIcon nome="camera" size={24}/>}</span>
+    <span className="hs-v5-photo-meta"><strong>{FOTOS_TIPO[f.etapa] || f.etapa}</strong><small>{f.autor} · {dataBR(f.criada_em)}</small>{f.legenda && <span>{f.legenda}</span>}</span>
+  </a>)}</div>
 }
 
 function Etiqueta({ status }) { return <span className={`hs-v3-status hs-v3-${classeStatus(status)}`}>{status || 'Indefinido'}</span> }
@@ -77,6 +116,14 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
   const [avisos, setAvisos] = useState([])
   const [selecionado, setSelecionado] = useState(null)
   const [historico, setHistorico] = useState([])
+  const [fotos, setFotos] = useState([])
+  const [fotosVersao, setFotosVersao] = useState(0)
+  const [fotosCriacao, setFotosCriacao] = useState([])
+  const [fotosEnvio, setFotosEnvio] = useState([])
+  const [etapaFoto, setEtapaFoto] = useState('durante')
+  const [legendaFoto, setLegendaFoto] = useState('')
+  const [enviandoFotos, setEnviandoFotos] = useState(false)
+  const [erroFoto, setErroFoto] = useState('')
   const [form, setForm] = useState(NOVO)
   const [novoAberto, setNovoAberto] = useState(false)
   const [pesquisaExec, setPesquisaExec] = useState('')
@@ -144,6 +191,15 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
       .catch(e => { if (ativo) setErro(e.message) })
     return () => { ativo = false }
   }, [selecionado?.id, selecionado?.status, requisitar])
+
+  useEffect(() => {
+    if (!selecionado?.id) { setFotos([]); return }
+    let ativo = true
+    requisitar(`/servicos/${selecionado.id}/fotos`)
+      .then(lista => { if (ativo) setFotos(Array.isArray(lista) ? lista : []) })
+      .catch(e => { if (ativo) setErroFoto(e.message || 'Não foi possível carregar as fotos.') })
+    return () => { ativo = false }
+  }, [selecionado?.id, fotosVersao, requisitar])
 
   useEffect(() => {
     if (!novoAberto) return
@@ -225,7 +281,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
   const concluidos = selecionado?.executores?.filter(p => p.status === 'Finalizado').length || 0
   const totalExec = selecionado?.executores?.length || 0
 
-  function abrirModal() { setForm({ ...NOVO, executores_ids: [], fiscalizadores_ids: [] }); setPesquisaExec(''); setPesquisaFiscal(''); setErroForm(''); setMensagem(''); setNovoAberto(true) }
+  function abrirModal() { setFotosCriacao([]); setForm({ ...NOVO, executores_ids: [], fiscalizadores_ids: [] }); setPesquisaExec(''); setPesquisaFiscal(''); setErroForm(''); setMensagem(''); setNovoAberto(true) }
   function fecharModal() { if (!salvando) { setNovoAberto(false); setErroForm('') } }
   function alterarForm(campo, valor) { setForm(anterior => ({ ...anterior, [campo]: valor })); if (erroForm) setErroForm('') }
   function alternarParticipante(campo, id) {
@@ -234,13 +290,45 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
   }
 
   async function abrirServico(s) {
-    setSelecionado(s); setTextoAcao(''); setErro(''); setMensagem(''); setAbaMobile('detalhe')
+    setSelecionado(s); setFotosEnvio([]); setEtapaFoto('durante'); setLegendaFoto(''); setErroFoto(''); setTextoAcao(''); setErro(''); setMensagem(''); setAbaMobile('detalhe')
     const pendentes = avisos.filter(a => a.servico_id === s.id && !a.lida)
     if (pendentes.length) {
       // A leitura é por usuário; o backend nunca altera avisos de terceiros.
       const resultados = await Promise.allSettled(pendentes.map(a => requisitar(`/servicos/notificacoes/${a.id}/ler`, { method: 'POST' })))
       const lidos = new Set(pendentes.filter((_, i) => resultados[i].status === 'fulfilled').map(a => a.id))
       setAvisos(anterior => anterior.map(a => lidos.has(a.id) ? { ...a, lida: true } : a))
+    }
+  }
+
+  async function enviarImagem(id, arquivo, etapa, legenda = '') {
+    const corpo = new FormData()
+    corpo.append('foto', arquivo)
+    corpo.append('etapa', etapa)
+    corpo.append('legenda', legenda)
+    const resposta = await fetch(`${apiUrl}/servicos/${id}/fotos`, {
+      method:'POST', headers:{Authorization:`Bearer ${token}`}, body:corpo, cache:'no-store',
+    })
+    if (!resposta.ok) {
+      let motivo = `Não foi possível enviar ${arquivo.name} (${resposta.status}).`
+      try { const j = await resposta.json(); motivo = j.detail || motivo } catch { /* sem JSON */ }
+      throw new Error(motivo)
+    }
+    return resposta.json()
+  }
+
+  async function adicionarFotos() {
+    if (!selecionado || !fotosEnvio.length || enviandoFotos) return
+    setEnviandoFotos(true); setErroFoto('')
+    let quantidade = 0
+    try {
+      for (const arquivo of fotosEnvio) { await enviarImagem(selecionado.id, arquivo, etapaFoto, legendaFoto.trim()); quantidade++ }
+      setFotosEnvio([]); setLegendaFoto('')
+      setMensagem(`${quantidade} foto(s) adicionada(s) ao histórico do serviço.`)
+    } catch(e) { setErroFoto(`${quantidade} foto(s) enviadas. ${e.message}`) }
+    finally {
+      setEnviandoFotos(false)
+      setFotosVersao(v => v + 1)
+      requisitar(`/servicos/${selecionado.id}/historico`).then(setHistorico).catch(() => {})
     }
   }
 
@@ -257,6 +345,15 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
       const criado = await requisitar('/servicos', { method: 'POST', body: JSON.stringify(dados) })
       setNovoAberto(false)
       setMensagem('Serviço criado! Os participantes receberam avisos internos na Controladoria.')
+      let enviadas = 0
+      let falhaFoto = ''
+      for (const arquivo of fotosCriacao) {
+        try { await enviarImagem(criado.id, arquivo, 'antes'); enviadas++ }
+        catch (erroEnvio) { falhaFoto = erroEnvio.message; break }
+      }
+      setFotosCriacao([])
+      if (falhaFoto) setErro(`Serviço #${criado.id} foi criado, mas somente ${enviadas} foto(s) enviadas. ${falhaFoto}`)
+      else if (enviadas) setMensagem(`Serviço criado com ${enviadas} foto(s) anexadas. Avisos internos enviados.`)
       await atualizar(true)
       setSelecionado(criado); setAbaMobile('detalhe')
       setHistorico(await requisitar(`/servicos/${criado.id}/historico`))
@@ -345,6 +442,25 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
           {totalExec > 0 && <div className="hs-v3-execution-progress"><div className="hs-v3-progress-head"><span>Execução concluída</span><strong>{concluidos} de {totalExec}</strong></div><div className="hs-v3-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={totalExec} aria-valuenow={concluidos} aria-label="Etapas dos executores concluídas"><span style={{ width: `${100 * concluidos / totalExec}%` }}/></div></div>}
           <div className="hs-v3-team"><h5>Quem executa</h5>{(selecionado.executores || []).map(p => <div className="hs-v3-person" key={`e-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Executor</small></span><Etiqueta status={p.status}/></div>)}<h5>Quem fiscaliza</h5>{selecionado.fiscalizadores?.length ? selecionado.fiscalizadores.map(p => <div className="hs-v3-person" key={`f-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Fiscalizador</small></span><Etiqueta status={p.status}/></div>) : <p className="hs-v3-no-inspector">Sem fiscalizador designado. A validação final será realizada pela Controladoria.</p>}</div>
           {!!acoes.length && <section className="hs-v3-action"><div className="hs-v3-action-title"><SIcon nome="checkCircle" size={18}/><strong>Sua próxima ação</strong></div><p>As atualizações são vinculadas ao seu usuário e ficam no histórico.</p><label htmlFor="hs-v3-observacao">Observação ou resultado</label><textarea id="hs-v3-observacao" rows={3} maxLength={3000} value={textoAcao} onChange={e => setTextoAcao(e.target.value)} placeholder="Descreva o andamento, os resultados ou o motivo da devolução..."/><div className="hs-v3-action-buttons">{acoes.map(acao => <button key={acao} type="button" className={`hs-v3-button ${acao === 'devolver' ? 'hs-v3-button-warn' : 'hs-v3-button-primary'}`} onClick={() => executar(acao)} disabled={salvando}>{salvando ? 'Registrando...' : NOMES_ACOES[acao] || acao}</button>)}</div>{acoes.some(acao => ['concluir', 'devolver'].includes(acao)) && <small>Ao concluir ou devolver, informe pelo menos 10 caracteres.</small>}</section>}
+          <section className="hs-v5-photo-section" aria-label="Fotos do serviço">
+            <div className="hs-v3-section-head"><h4><SIcon nome="camera" size={18}/>Fotos e evidências</h4><span>{fotos.length} de 15 fotos</span></div>
+            <p className="hs-v5-photo-hint">Fotografias de antes, durante, depois e da fiscalização. Cada foto fica registrada com o autor e a data.</p>
+            <GradeFotos fotos={fotos} apiUrl={apiUrl} token={token} servicoId={selecionado.id}/>
+            {selecionado.status !== 'Concluído' && <div className="hs-v5-photo-upload">
+              <label htmlFor="hs-v5-etapa-foto">Etapa da fotografia</label>
+              <select id="hs-v5-etapa-foto" value={etapaFoto} onChange={e=>setEtapaFoto(e.target.value)} disabled={enviandoFotos}>
+                {Object.entries(FOTOS_TIPO).map(([v,n])=><option value={v} key={v}>{n}</option>)}
+              </select>
+              <label htmlFor="hs-v5-legenda-foto">Observação (opcional)</label>
+              <input id="hs-v5-legenda-foto" maxLength={250} value={legendaFoto} onChange={e=>setLegendaFoto(e.target.value)} placeholder="Ex.: Reparo realizado na área comum" disabled={enviandoFotos}/>
+              <label htmlFor="hs-v5-arquivos" className="hs-v5-upload-label"><SIcon nome="camera" size={18}/>Escolher fotos do celular ou computador</label>
+              <input id="hs-v5-arquivos" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={e => { try { const novos=validarArquivos(e.target.files); if (novos.length + fotosEnvio.length > 5) throw new Error('Selecione até 5 fotos por envio.'); setFotosEnvio(v=>[...v,...novos]); setErroFoto('') } catch (err) { setErroFoto(err.message) } e.target.value = '' }} disabled={enviandoFotos}/>
+              {fotosEnvio.length > 0 && <div className="hs-v5-photo-selection">{fotosEnvio.map((f,i)=><span key={`${f.name}-${i}`}>{f.name}<button type="button" aria-label={`Remover ${f.name}`} onClick={()=>setFotosEnvio(p=>p.filter((_,k)=>k!==i))}>×</button></span>)}</div>}
+              {erroFoto && <p className="hs-v5-upload-error" role="alert">{erroFoto}</p>}
+              <button type="button" className="hs-v3-button hs-v3-button-primary hs-v5-photo-submit" disabled={enviandoFotos || !fotosEnvio.length || fotos.length+fotosEnvio.length>15} onClick={adicionarFotos}>{enviandoFotos ? 'Enviando fotos...' : `Anexar ${fotosEnvio.length || ''} foto(s)`}</button>
+              <small>JPG, PNG e WebP · até 4 MB por foto · máximo de 15 por serviço.</small>
+            </div>}
+          </section>
           <div className="hs-v3-section-head hs-v3-history-heading"><h4><SIcon nome="clock" size={17}/>Histórico de atividades</h4><span>{historico.length} registros</span></div><ol className="hs-v3-timeline">{historico.length ? historico.map(ev => <li key={ev.id}><span className="hs-v3-timeline-dot"/><div><strong>{String(ev.acao || 'Atualização').replaceAll('_', ' ')}</strong><small>{ev.autor} · {dataBR(ev.data)}</small>{ev.observacao && <p>{ev.observacao}</p>}</div></li>) : <li className="hs-v3-timeline-empty">Nenhum evento encontrado.</li>}</ol>
         </div>
       </aside>
@@ -357,6 +473,10 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
         <div className="hs-v3-form-row"><div className="hs-v3-field"><label htmlFor="hs-v3-condominio">Condomínio <em>*</em></label><select id="hs-v3-condominio" required value={form.condominio_id} onChange={e => { setForm(f => ({ ...f, condominio_id: e.target.value, executores_ids: [], fiscalizadores_ids: [] })); setPesquisaExec(''); setPesquisaFiscal(''); setErroForm('') }}><option value="">Selecione o condomínio</option>{condominios.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}</select></div><div className="hs-v3-field"><label htmlFor="hs-v3-prazo">Prazo <em>*</em></label><input type="date" id="hs-v3-prazo" min={diaHoje()} value={form.prazo} onChange={e => alterarForm('prazo', e.target.value)} required/></div></div>
         <div className="hs-v3-field"><label htmlFor="hs-v3-prioridade">Prioridade</label><select id="hs-v3-prioridade" value={form.prioridade} onChange={e => alterarForm('prioridade', e.target.value)}><option>Baixa</option><option>Normal</option><option>Alta</option><option>Urgente</option></select></div>
         <div className="hs-v3-field"><label htmlFor="hs-v3-descricao">Descrição e orientações <em>*</em></label><textarea id="hs-v3-descricao" rows={4} minLength={5} maxLength={4000} required value={form.descricao} placeholder="Explique o que deve ser feito, o local e os critérios de conclusão." onChange={e => alterarForm('descricao', e.target.value)}/><small>Inclua instruções que evitem dúvidas e retrabalho.</small></div>
+        <div className="hs-v5-create-photos"><label htmlFor="hs-v5-fotos-iniciais"><SIcon nome="camera" size={17}/> Fotos iniciais (opcional)</label><p>Mostre a situação antes do serviço. As fotos serão anexadas automaticamente após a criação.</p>
+        <input id="hs-v5-fotos-iniciais" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={e=>{try {const lista=validarArquivos(e.target.files); if(lista.length+fotosCriacao.length>5) throw new Error('Selecione até 5 fotos iniciais.'); setFotosCriacao(v=>[...v,...lista]);setErroForm('')}catch(err){setErroForm(err.message)} e.target.value=''}}/>
+        {fotosCriacao.length>0 && <div className="hs-v5-photo-selection">{fotosCriacao.map((f,i)=><span key={`${f.name}-${i}`}>{f.name}<button type="button" aria-label={`Remover ${f.name}`} onClick={()=>setFotosCriacao(p=>p.filter((_,k)=>k!==i))}>×</button></span>)}</div>}
+        <small>Até 5 fotos JPG, PNG ou WebP, com 4 MB cada.</small></div>
       </div>
       <div className="hs-v3-form-block"><div className="hs-v3-form-step"><span>02</span><div><strong>Execução</strong><small>Selecione quantas pessoas forem necessárias. Cada uma registra sua própria etapa.</small></div></div>
         <div className="hs-v3-select-head"><label htmlFor="hs-v3-busca-exec">Executores <em>*</em></label><strong>{form.executores_ids.length} selecionado(s)</strong></div><div className="hs-v3-searchbar hs-v3-people-search"><SIcon nome="search" size={16}/><input type="search" id="hs-v3-busca-exec" placeholder="Buscar colaborador ou zelador" value={pesquisaExec} onChange={e => setPesquisaExec(e.target.value)} disabled={!form.condominio_id}/></div>

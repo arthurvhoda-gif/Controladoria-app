@@ -4,10 +4,13 @@ WhatsApp não é integrado nesta etapa; apenas avisos internos. Registros V1 sem
 participantes continuam legíveis via fallback da coluna responsavel_id.
 """
 from datetime import date, datetime, timezone
+from io import BytesIO
 from zoneinfo import ZoneInfo
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import Response
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -26,6 +29,10 @@ STATUS_FECHADO = 'Concluído'
 STATUS_EXEC_CONCLUIDO = 'Finalizado'
 STATUS_FISC_APROVADO = 'Aprovado'
 PRIORIDADES = ('Baixa', 'Normal', 'Alta', 'Urgente')
+MAX_FOTO_ENTRADA = 4 * 1024 * 1024  # 4 MiB por arquivo antes de compactar
+MAX_FOTOS_SERVICO = 15
+ETAPAS_FOTOS = {'antes', 'durante', 'depois', 'fiscalizacao'}
+Image.MAX_IMAGE_PIXELS = 18_000_000
 
 
 def sessao():
@@ -424,3 +431,100 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
     db.commit()
     db.refresh(servico)
     return serializar(servico, db, user)
+
+
+# ------------------------------------------------------------------------
+# Evidências fotográficas: autenticação e escopo por condomínio em cada rota.
+# Sem URLs públicas nem dados de imagem no JSON de listagem.
+# ------------------------------------------------------------------------
+def _foto_info(foto):
+    return {
+        'id': foto.id, 'servico_id': foto.servico_id,
+        'etapa': foto.etapa, 'legenda': foto.legenda,
+        'autor': foto.autor_nome, 'tamanho_bytes': foto.tamanho_bytes,
+        'criada_em': foto.criado_em.isoformat() if foto.criado_em else None,
+    }
+
+
+@router.get('/{servico_id}/fotos')
+def listar_fotos(servico_id: int, request: Request, db: Session = Depends(sessao)):
+    user = obter_usuario(request, db)
+    obter_servico(db, servico_id, user)
+    registros = (db.query(models.ServicoFoto)
+                 .filter(models.ServicoFoto.servico_id == servico_id)
+                 .order_by(models.ServicoFoto.id.desc()).all())
+    return [_foto_info(f) for f in registros]
+
+
+@router.post('/{servico_id}/fotos', status_code=201)
+async def adicionar_foto(
+    servico_id: int, request: Request,
+    foto: UploadFile = File(...), etapa: str = Form('durante'),
+    legenda: str = Form(''), db: Session = Depends(sessao),
+):
+    user = obter_usuario(request, db)
+    # Lock da tarefa impede que dois uploads concorrentes ignorem o limite.
+    servico = (db.query(models.ServicoInterno)
+               .filter(models.ServicoInterno.id == servico_id)
+               .with_for_update().first())
+    if not servico or not visivel(servico, user, db):
+        raise HTTPException(404, detail='Serviço não encontrado.')
+    if servico.status == STATUS_FECHADO:
+        raise HTTPException(409, detail='Serviço encerrado. Fotos não podem ser acrescentadas.')
+    if etapa not in ETAPAS_FOTOS:
+        raise HTTPException(400, detail='Etapa da fotografia inválida.')
+    if len(legenda.strip()) > 250:
+        raise HTTPException(400, detail='Legenda muito longa (máximo 250 caracteres).')
+    total = db.query(models.ServicoFoto).filter(models.ServicoFoto.servico_id == servico_id).count()
+    if total >= MAX_FOTOS_SERVICO:
+        raise HTTPException(409, detail=f'Limite de {MAX_FOTOS_SERVICO} fotos por serviço atingido.')
+    if foto.content_type not in ('image/jpeg', 'image/png', 'image/webp'):
+        raise HTTPException(415, detail='Envie JPG, PNG ou WebP.')
+    bruto = await foto.read(MAX_FOTO_ENTRADA + 1)
+    if not bruto or len(bruto) > MAX_FOTO_ENTRADA:
+        raise HTTPException(413, detail='A foto deve ter no máximo 4 MB.')
+    try:
+        with Image.open(BytesIO(bruto)) as imagem:
+            if imagem.format not in ('JPEG', 'PNG', 'WEBP'):
+                raise HTTPException(415, detail='Formato de imagem inválido.')
+            imagem = ImageOps.exif_transpose(imagem)
+            imagem.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+            imagem = imagem.convert('RGB')
+            saida = BytesIO()
+            imagem.save(saida, format='WEBP', quality=78, method=4)
+            conteudo = saida.getvalue()
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(415, detail='Imagem inválida ou corrompida.')
+    if len(conteudo) > 2 * 1024 * 1024:
+        raise HTTPException(413, detail='Imagem compactada muito grande.')
+    registro = models.ServicoFoto(
+        servico_id=servico_id, usuario_id=user.id, autor_nome=user.nome,
+        etapa=etapa, legenda=legenda.strip(),
+        nome_original=(foto.filename or 'foto')[:250],
+        imagem=conteudo, tamanho_bytes=len(conteudo), criado_em=agora(),
+    )
+    db.add(registro)
+    evento(db, servico, user, 'foto_anexada',
+           f'Foto de {etapa} anexada.' + (f' {legenda.strip()}' if legenda.strip() else ''))
+    servico.atualizado_em = agora()
+    db.commit()
+    db.refresh(registro)
+    return _foto_info(registro)
+
+
+@router.get('/{servico_id}/fotos/{foto_id}')
+def visualizar_foto(servico_id: int, foto_id: int, request: Request, db: Session = Depends(sessao)):
+    user = obter_usuario(request, db)
+    obter_servico(db, servico_id, user)
+    registro = (db.query(models.ServicoFoto)
+                .filter(models.ServicoFoto.id == foto_id,
+                        models.ServicoFoto.servico_id == servico_id).first())
+    if not registro:
+        raise HTTPException(404, detail='Foto não encontrada.')
+    return Response(content=registro.imagem, media_type='image/webp', headers={
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': f'inline; filename="servico-{servico_id}-foto-{foto_id}.webp"',
+    })

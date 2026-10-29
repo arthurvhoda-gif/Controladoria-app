@@ -185,3 +185,21 @@ class ServicoParticipante(Base):
     iniciado_em = Column(DateTime(timezone=True), nullable=True)
     concluido_em = Column(DateTime(timezone=True), nullable=True)
     validado_em = Column(DateTime(timezone=True), nullable=True)
+
+
+# Fotos de serviços: ficam no banco, não no disco efêmero do Render.
+# Formato armazenado: WebP sanitizado/compactado (sem EXIF/metadados).
+from sqlalchemy import LargeBinary
+
+class ServicoFoto(Base):
+    __tablename__ = 'servicos_fotos'
+    id = Column(Integer, primary_key=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id', ondelete='CASCADE'), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    autor_nome = Column(String(200), nullable=False)
+    etapa = Column(String(24), nullable=False)
+    legenda = Column(String(250), nullable=False, default='')
+    nome_original = Column(String(250), nullable=False)
+    imagem = Column(LargeBinary, nullable=False)
+    tamanho_bytes = Column(Integer, nullable=False)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

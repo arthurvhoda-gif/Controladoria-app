@@ -70,6 +70,10 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor or vistoriador or solicitante
     if re.fullmatch(r'/servicos/\d+/acoes', path) and method == 'POST':
         return gestor or vistoriador or solicitante
+    if re.fullmatch(r'/servicos/\d+/fotos', path) and method in ('GET', 'POST'):
+        return gestor or vistoriador or solicitante
+    if re.fullmatch(r'/servicos/\d+/fotos/\d+', path) and method == 'GET':
+        return gestor or vistoriador or solicitante
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':

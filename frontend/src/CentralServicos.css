@@ -290,3 +290,32 @@
 @media (max-width:760px){.hs-v4-topbar{align-items:flex-start;flex-wrap:wrap}.hs-v4-topbar-actions{width:100%}.hs-v4-topbar-actions .hs-v3-button{flex:1}.hs-v4-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.hs-v4-summary{min-height:90px}.hs-v4-table-heading{display:none}.hs-v4-taskrow{grid-template-columns:minmax(0,1fr) auto;gap:9px 12px;padding:14px 15px}.hs-v4-task-main{grid-column:1/2}.hs-v4-task-main>strong{font-size:14px}.hs-v4-task-people{grid-column:1/2}.hs-v4-task-due{grid-column:2/3;grid-row:2}.hs-v4-task-state{grid-column:2/3;grid-row:1;align-self:center;justify-self:end}.hs-v4-row-arrow{display:none}.hs-v4-taskrow .hs-v3-tag{display:none}.hs-v4-toolbar{padding:8px 13px;flex-direction:column;align-items:stretch;gap:8px}.hs-v4-order{max-width:none;justify-content:flex-start}.hs-v4-order select{max-width:none;flex:1}.hs-v4-filterbar{padding:4px 13px 11px}.hs-v4-board-title{padding:15px 14px 9px}.hs-v4-task-people small{display:none}.hs-v4-drawer{width:100vw}.hs-v4-drawer-scroll{padding:21px 18px 28px}.hs-v4-drawer-bar{padding:13px 17px}.hs-v4-drawer .hs-v3-detail-title{font-size:21px}.hs-v4 .hs-v3-modal-top{padding:18px 17px 15px}.hs-v4 .hs-v3-modal-body{padding:0 17px}.hs-v4 .hs-v3-field input,.hs-v4 .hs-v3-field select,.hs-v4 .hs-v3-field textarea,.hs-v4 .hs-v4-query input{font-size:16px}}
 @media(max-width:440px){.hs-v4-topbar h2{font-size:19px}.hs-v4-topbar p{font-size:11.5px}.hs-v4-notification-toggle{flex-wrap:wrap}.hs-v4-notification-toggle strong{white-space:normal;flex:1}.hs-v4-notification-action{margin-left:auto}.hs-v4-summary-number{font-size:26px}.hs-v4-task-state .hs-v3-status{max-width:135px}.hs-v4-drawer .hs-v3-detail-info{gap:12px;padding:13px}}
 @media(prefers-reduced-motion:reduce){.hs-v4-drawer{animation:none}}
+
+
+/* V5 — Evidências fotográficas persistentes e acessíveis por perfil */
+.hs-v5-photo-section{margin:24px 0;padding:19px 0;border-top:1px solid #e8edf5}
+.hs-v5-photo-section .hs-v3-section-head{margin-bottom:5px}
+.hs-v5-photo-hint{font-size:12px;line-height:1.55;color:#73849b;margin:6px 0 14px}
+.hs-v5-empty{padding:18px 15px;background:#f7f9fd;border:1px dashed #d5e1ef;border-radius:12px;color:#72859e;font-size:12px}
+.hs-v5-photo-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.hs-v5-photo-card{display:block;min-width:0;border-radius:12px;border:1px solid #e2e9f2;overflow:hidden;background:#fff;text-decoration:none;color:#203b5d;transition:box-shadow .15s,border-color .15s}
+.hs-v5-photo-card:hover{border-color:#8caef8;box-shadow:0 5px 15px rgba(20,57,106,.08)}
+.hs-v5-photo-thumb{display:flex;height:150px;justify-content:center;align-items:center;background:#edf3fb;color:#7185a1}
+.hs-v5-photo-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.hs-v5-photo-meta{padding:11px 12px;display:grid;gap:4px}
+.hs-v5-photo-meta strong{font-size:12px;color:#1e3a5c}
+.hs-v5-photo-meta small{font-size:10.5px;color:#7487a0}
+.hs-v5-photo-meta span{font-size:11px;color:#526986;overflow-wrap:anywhere}
+.hs-v5-photo-upload,.hs-v5-create-photos{display:grid;gap:9px;margin:14px 0 0;padding:16px;background:#f8faff;border:1px solid #e1e9f3;border-radius:12px}
+.hs-v5-photo-upload label,.hs-v5-create-photos>label{font-size:12px;font-weight:700;color:#264462;display:flex;align-items:center;gap:7px}
+.hs-v5-photo-upload input:not([type=file]),.hs-v5-photo-upload select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #cbd9eb;border-radius:8px;padding:8px 11px;background:white;color:#223e62;font:inherit;font-size:13px}
+.hs-v5-photo-upload input[type=file],.hs-v5-create-photos input[type=file]{font-size:12px;max-width:100%;width:100%;color:#667b95}
+.hs-v5-upload-label{padding-top:5px}
+.hs-v5-photo-selection{display:flex;flex-wrap:wrap;gap:7px}
+.hs-v5-photo-selection>span{max-width:100%;display:inline-flex;align-items:center;gap:8px;padding:6px 7px 6px 10px;border-radius:9px;background:#eaf2ff;color:#2a5185;font-size:11px;overflow-wrap:anywhere}
+.hs-v5-photo-selection button{flex-shrink:0;border:0;background:transparent;color:#476999;cursor:pointer;font-size:19px;line-height:1}
+.hs-v5-photo-submit{justify-content:center}
+.hs-v5-photo-upload small,.hs-v5-create-photos small{font-size:10.5px;color:#74859c}
+.hs-v5-create-photos p{margin:0;color:#70839a;font-size:11.5px;line-height:1.5}
+.hs-v5-upload-error{margin:0;color:#ac2934;font-weight:600;font-size:11.5px}
+@media(max-width:580px){.hs-v5-photo-grid{grid-template-columns:1fr}.hs-v5-photo-thumb{height:200px}.hs-v5-photo-section{margin-top:18px}}
