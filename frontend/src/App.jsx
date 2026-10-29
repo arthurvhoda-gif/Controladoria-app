@@ -2584,7 +2584,7 @@ function App() {
 
 
             <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
-            {!ehChecklist && (
+            {!ehChecklist && pagina !== 'servicos' && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
           </div>
