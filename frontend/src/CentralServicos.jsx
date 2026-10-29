@@ -17,8 +17,7 @@ const dataBR = data => {
   return Number.isNaN(d.getTime()) ? 'Data indisponível' : horarioBR.format(d)
 }
 const diaHoje = () => {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 const prazoInfo = (texto, concluido = false) => {
   if (!texto) return { texto: 'Sem prazo', tom: 'neutral' }
@@ -96,6 +95,8 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
   const modalRef = useRef(null)
   const abrirRef = useRef(null)
   const ultimaRequisicao = useRef(0)
+  const gavetaRef = useRef(null)
+  const focoAnteriorGaveta = useRef(null)
 
   const requisitar = useCallback(async (caminho, opcoes = {}) => {
     const resposta = await fetch(`${apiUrl}${caminho}`, {
@@ -162,6 +163,36 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
     primeiroCampo?.focus()
     return () => { document.removeEventListener('keydown', tecla); document.body.style.overflow = ''; anterior?.focus?.() }
   }, [novoAberto, salvando])
+
+  // A ficha completa abre em uma gaveta: mantém a lista legível até em notebooks.
+  useEffect(() => {
+    if (!selecionado) return
+    const retorno = focoAnteriorGaveta.current
+    const overflowAnterior = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const fechar = e => {
+      if (e.key === 'Escape') { e.preventDefault(); setSelecionado(null); setAbaMobile('lista'); return }
+      if (e.key !== 'Tab' || !gavetaRef.current) return
+      const elementos = [...gavetaRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]')]
+      if (!elementos.length) return
+      const primeiro = elementos[0], ultimo = elementos[elementos.length - 1]
+      if (e.shiftKey && document.activeElement === primeiro) { e.preventDefault(); ultimo.focus() }
+      else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primeiro.focus() }
+    }
+    document.addEventListener('keydown', fechar)
+    gavetaRef.current?.querySelector('[data-fechar-detalhe]')?.focus()
+    return () => {
+      document.removeEventListener('keydown', fechar)
+      document.body.style.overflow = overflowAnterior
+      retorno?.focus?.()
+    }
+  }, [selecionado?.id])
+
+  function fecharDetalhe() { setSelecionado(null); setAbaMobile('lista') }
+  function mostrarDetalhe(item) {
+    focoAnteriorGaveta.current = document.activeElement
+    abrirServico(item)
+  }
 
   const candidatos = useMemo(() => form.condominio_id ? pessoas.filter(p => p.perfil !== 'Checklist' || Number(p.condominio_id) === Number(form.condominio_id)) : [], [pessoas, form.condominio_id])
   const candidatosExec = useMemo(() => candidatos.filter(p => normaliza(`${p.nome} ${p.perfil}`).includes(normaliza(pesquisaExec))), [candidatos, pesquisaExec])
@@ -250,51 +281,74 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
     finally { setSalvando(false) }
   }
 
-  return <section className="haize-servicos hs-v3" aria-label="Central de Serviços">
-    <header className="hs-v3-heading">
-      <div className="hs-v3-heading-copy"><div className="hs-v3-eyebrow"><span className="hs-v3-eyebrow-dot"/>GESTÃO OPERACIONAL <span className="hs-v3-eyebrow-separator">/</span> SERVIÇOS</div><h2>Central de Serviços</h2><p>Responsabilidades definidas, execução acompanhada e histórico transparente de cada atividade.</p></div>
-      <div className="hs-v3-heading-actions"><button type="button" className="hs-v3-button hs-v3-button-light" onClick={() => atualizar()} disabled={carregando || salvando}><SIcon nome="refresh" size={16}/><span>Atualizar</span></button>{gestor && <button type="button" ref={abrirRef} className="hs-v3-button hs-v3-button-primary" onClick={abrirModal}><SIcon nome="plus" size={18}/>Novo serviço</button>}</div>
+  return <section className="haize-servicos hs-v3 hs-v4" aria-label="Central de Serviços">
+    <header className="hs-v4-topbar">
+      <div className="hs-v4-topbar-text"><span className="hs-v4-kicker">PAINEL OPERACIONAL</span><h2>Visão geral dos serviços</h2><p>Acompanhe responsáveis, prazos e validações em um único lugar.</p></div>
+      <div className="hs-v4-topbar-actions"><button type="button" className="hs-v3-button hs-v3-button-light hs-v4-refresh" onClick={() => atualizar()} disabled={carregando || salvando} title="Atualizar informações"><SIcon nome="refresh" size={16}/><span>Atualizar</span></button>{gestor && <button type="button" ref={abrirRef} className="hs-v3-button hs-v3-button-primary" onClick={abrirModal}><SIcon nome="plus" size={18}/>Novo serviço</button>}</div>
     </header>
 
-    <div className="hs-v3-metrics" aria-label="Indicadores de serviços">
-      <button className={`hs-v3-metric ${filtro === 'todos' ? 'is-active' : ''}`} onClick={() => setFiltro('todos')} type="button"><span className="hs-v3-metric-label">Total de serviços <SIcon nome="layers" size={18}/></span><strong>{servicos.length}</strong><span className="hs-v3-metric-meta">Todos os registros</span></button>
-      <button className={`hs-v3-metric ${filtro === 'abertos' ? 'is-active' : ''}`} onClick={() => setFiltro('abertos')} type="button"><span className="hs-v3-metric-label">Em aberto <SIcon nome="clock" size={18}/></span><strong>{abertos}</strong><span className="hs-v3-metric-meta">Acompanhamento ativo</span></button>
-      <button className={`hs-v3-metric ${filtro === 'atrasados' ? 'is-active' : ''} ${atrasados ? 'hs-v3-metric-alert' : ''}`} onClick={() => setFiltro('atrasados')} type="button"><span className="hs-v3-metric-label">Atrasados <SIcon nome="alert" size={18}/></span><strong>{atrasados}</strong><span className="hs-v3-metric-meta">Precisam de atenção</span></button>
-      <button className={`hs-v3-metric ${filtro === 'revisao' ? 'is-active' : ''}`} onClick={() => setFiltro('revisao')} type="button"><span className="hs-v3-metric-label">Para validar <SIcon nome="checkCircle" size={18}/></span><strong>{revisao}</strong><span className="hs-v3-metric-meta">Fiscalização ou Controladoria</span></button>
+    <div className="hs-v4-overview" aria-label="Resumo dos serviços">
+      {[
+        {chave: 'todos', nome: 'Total', valor: servicos.length, sub: 'Serviços cadastrados', icone: 'layers'},
+        {chave: 'abertos', nome: 'Em aberto', valor: abertos, sub: 'Em acompanhamento', icone: 'clock'},
+        {chave: 'atrasados', nome: 'Atrasados', valor: atrasados, sub: 'Fora do prazo', icone: 'alert'},
+        {chave: 'revisao', nome: 'Para validar', valor: revisao, sub: 'Aguardam conferência', icone: 'checkCircle'},
+      ].map(k => <button type="button" key={k.chave} className={`hs-v4-summary ${filtro === k.chave ? 'is-active' : ''} ${k.chave === 'atrasados' && k.valor > 0 ? 'is-alert' : ''}`} onClick={() => setFiltro(k.chave)} aria-pressed={filtro === k.chave}>
+        <span className="hs-v4-summary-label">{k.nome}<SIcon nome={k.icone} size={17}/></span><span className="hs-v4-summary-number">{k.valor}</span><span className="hs-v4-summary-sub">{k.sub}</span>
+      </button>)}
     </div>
 
     {erro && <div className="hs-v3-flash hs-v3-flash-error" role="alert"><SIcon nome="alert"/><span>{erro}</span><button type="button" aria-label="Fechar mensagem" onClick={() => setErro('')}><SIcon nome="close" size={16}/></button></div>}
     {mensagem && <div className="hs-v3-flash hs-v3-flash-ok" role="status"><SIcon nome="checkCircle"/><span>{mensagem}</span><button type="button" aria-label="Fechar mensagem" onClick={() => setMensagem('')}><SIcon nome="close" size={16}/></button></div>}
 
-    {naoLidas.length > 0 && <div className="hs-v3-notice-panel"><button type="button" className="hs-v3-notice-trigger" onClick={() => setMostraAvisos(v => !v)} aria-expanded={mostraAvisos}><span className="hs-v3-notice-icon"><SIcon nome="bell" size={19}/></span><span><strong>{naoLidas.length} {naoLidas.length === 1 ? 'aviso não lido' : 'avisos não lidos'}</strong><small>Atualizações de tarefas que precisam da sua atenção</small></span><span className="hs-v3-notice-link">{mostraAvisos ? 'Ocultar avisos' : 'Ver avisos'} <SIcon nome="arrow" size={16}/></span></button>{mostraAvisos && <div className="hs-v3-notices">{naoLidas.slice(0, 8).map(aviso => <button type="button" key={aviso.id} onClick={() => { const s = servicos.find(item => item.id === aviso.servico_id); if (s) abrirServico(s); else setErro('Este serviço não está disponível para o seu perfil.') }}><SIcon nome="bell" size={16}/><span>{aviso.mensagem}<small>{dataBR(aviso.criada_em)}</small></span><SIcon nome="arrow" size={15}/></button>)}</div>}</div>}
+    {naoLidas.length > 0 && <div className={`hs-v4-notification ${mostraAvisos ? 'is-open' : ''}`}>
+      <button type="button" className="hs-v4-notification-toggle" onClick={() => setMostraAvisos(v => !v)} aria-expanded={mostraAvisos} aria-controls="hs-v4-aviso-lista"><span className="hs-v4-notification-bell"><SIcon nome="bell" size={17}/></span><strong>{naoLidas.length} {naoLidas.length === 1 ? 'notificação pendente' : 'notificações pendentes'}</strong><span className="hs-v4-notification-hint">Veja o que precisa da sua atenção</span><span className="hs-v4-notification-action">{mostraAvisos ? 'Recolher' : 'Ver avisos'} <SIcon nome="arrow" size={15}/></span></button>
+      {mostraAvisos && <div className="hs-v4-notification-items" id="hs-v4-aviso-lista">{naoLidas.slice(0, 8).map(aviso => <button type="button" key={aviso.id} onClick={() => { const item = servicos.find(s => s.id === aviso.servico_id); if (item) mostrarDetalhe(item); else setErro('Este serviço não está disponível para o seu perfil.') }}><SIcon nome="bell" size={15}/><span>{aviso.mensagem}<small>{dataBR(aviso.criada_em)}</small></span><SIcon nome="arrow" size={15}/></button>)}{naoLidas.length > 8 && <p>Exibindo os 8 avisos mais recentes de {naoLidas.length} pendências.</p>}</div>}
+    </div>}
 
-    <div className="hs-v3-workspace">
-      <div className={`hs-v3-list-column ${abaMobile === 'detalhe' ? 'hs-v3-mobile-hide' : ''}`}>
-        <div className="hs-v3-panel-header"><div><h3>Solicitações</h3><p>{filtrados.length} {filtrados.length === 1 ? 'resultado' : 'resultados'} {busca || filtro !== 'todos' ? 'encontrados' : 'registrados'}</p></div><span className="hs-v3-list-count">{filtrados.length}</span></div>
-        <div className="hs-v3-searchbar"><SIcon nome="search" size={18}/><input type="search" aria-label="Pesquisar serviços" value={busca} placeholder="Buscar serviço, condomínio, pessoa..." onChange={e => setBusca(e.target.value)}/>{busca && <button type="button" aria-label="Limpar busca" onClick={() => setBusca('')}><SIcon nome="close" size={16}/></button>}</div>
-        <div className="hs-v3-controls"><div className="hs-v3-chips" aria-label="Filtrar serviços">{[['todos','Todos'],['abertos','Em aberto'],['atrasados','Atrasados'],['revisao','Para validar'],['concluidos','Concluídos']].map(([valor, label]) => <button key={valor} type="button" className={filtro === valor ? 'is-active' : ''} aria-pressed={filtro === valor} onClick={() => setFiltro(valor)}>{label}</button>)}</div><label className="hs-v3-sort"><SIcon nome="filter" size={16}/><select aria-label="Ordenação das solicitações" value={ordem} onChange={e => setOrdem(e.target.value)}><option value="recentes">Mais recentes</option><option value="prazo">Prazo mais próximo</option><option value="prioridade">Maior prioridade</option><option value="antigos">Mais antigos</option></select></label></div>
-        <div className="hs-v3-task-list" role="list" aria-label="Lista de solicitações">
-          {carregando ? <div className="hs-v3-loading" role="status"><span className="hs-v3-spinner"/>Carregando serviços...</div> : filtrados.length === 0 ? <div className="hs-v3-zero"><span className="hs-v3-zero-icon"><SIcon nome="clipboard" size={28}/></span><h4>{servicos.length ? 'Nenhum serviço com esses filtros' : 'Tudo pronto para começar'}</h4><p>{servicos.length ? 'Experimente outro filtro ou limpe sua pesquisa.' : gestor ? 'Crie o primeiro serviço e acompanhe os responsáveis em um só lugar.' : 'Quando uma tarefa for atribuída a você, ela aparecerá aqui.'}</p>{servicos.length ? <button type="button" className="hs-v3-button hs-v3-button-light" onClick={() => { setFiltro('todos'); setBusca('') }}>Limpar filtros</button> : gestor ? <button type="button" className="hs-v3-button hs-v3-button-primary" onClick={abrirModal}><SIcon nome="plus" size={16}/>Criar primeiro serviço</button> : null}</div> : filtrados.map(s => {
-            const due = prazoInfo(s.prazo, s.status === 'Concluído')
-            return <div role="listitem" key={s.id}><button type="button" className={`hs-v3-task ${selecionado?.id === s.id ? 'is-selected' : ''}`} onClick={() => abrirServico(s)} aria-pressed={selecionado?.id === s.id}><span className="hs-v3-task-line"><span className="hs-v3-task-id">SERVIÇO #{s.id}</span><span className={`hs-v3-tag hs-v3-priority-${normaliza(s.prioridade)}`}>{s.prioridade}</span></span><strong className="hs-v3-task-title">{s.titulo}</strong><span className="hs-v3-task-condo">{s.condominio}</span><span className="hs-v3-task-footer"><Etiqueta status={s.status}/><span className={`hs-v3-due hs-v3-due-${due.tom}`}><SIcon nome="calendar" size={14}/>{due.texto}</span></span><span className="hs-v3-task-team"><SIcon nome="users" size={14}/>{(s.executores?.length || (s.responsavel ? 1 : 0))} executor(es){s.fiscalizadores?.length ? ` · ${s.fiscalizadores.length} fiscalizador(es)` : ''}</span></button></div>
-          })}
-        </div>
+    <section className="hs-v4-board" aria-label="Lista de solicitações">
+      <div className="hs-v4-board-title"><div><h3>Solicitações de serviço</h3><p>{filtrados.length} {filtrados.length === 1 ? 'serviço encontrado' : 'serviços encontrados'}</p></div><span className="hs-v4-board-count">{filtrados.length}</span></div>
+      <div className="hs-v4-toolbar">
+        <div className="hs-v3-searchbar hs-v4-query"><SIcon nome="search" size={18}/><input type="search" aria-label="Pesquisar serviços" value={busca} placeholder="Buscar serviço, condomínio ou pessoa..." onChange={e => setBusca(e.target.value)}/>{busca && <button type="button" aria-label="Limpar busca" onClick={() => setBusca('')}><SIcon nome="close" size={16}/></button>}</div>
+        <label className="hs-v4-order"><SIcon nome="filter" size={16}/><select aria-label="Ordenação das solicitações" value={ordem} onChange={e => setOrdem(e.target.value)}><option value="recentes">Mais recentes</option><option value="prazo">Prazo mais próximo</option><option value="prioridade">Maior prioridade</option><option value="antigos">Mais antigos</option></select></label>
       </div>
+      <div className="hs-v4-filterbar" aria-label="Filtrar serviços">{[['todos', 'Todos'], ['abertos', 'Em aberto'], ['atrasados', 'Atrasados'], ['revisao', 'Para validar'], ['concluidos', 'Concluídos']].map(([id, nome]) => <button key={id} type="button" className={filtro === id ? 'is-active' : ''} aria-pressed={filtro === id} onClick={() => setFiltro(id)}>{nome}</button>)}</div>
+      <div className="hs-v4-table" role="list" aria-label="Serviços encontrados">
+        <div className="hs-v4-table-heading" aria-hidden="true"><span>SERVIÇO</span><span>CONDOMÍNIO</span><span>EQUIPE</span><span>PRAZO</span><span>SITUAÇÃO</span><span></span></div>
+        {carregando ? <div className="hs-v3-loading" role="status"><span className="hs-v3-spinner"/>Carregando serviços...</div> : filtrados.length === 0 ? <div className="hs-v3-zero"><span className="hs-v3-zero-icon"><SIcon nome="clipboard" size={26}/></span><h4>{servicos.length ? 'Nenhum serviço encontrado' : 'Nenhuma solicitação registrada'}</h4><p>{servicos.length ? 'Ajuste seus filtros para localizar a tarefa.' : gestor ? 'Crie o primeiro serviço para distribuir atividades e acompanhar prazos.' : 'Quando você receber uma tarefa, ela aparecerá aqui.'}</p>{servicos.length ? <button className="hs-v3-button hs-v3-button-light" type="button" onClick={() => { setFiltro('todos'); setBusca('') }}>Limpar filtros</button> : gestor && <button className="hs-v3-button hs-v3-button-primary" type="button" onClick={abrirModal}><SIcon nome="plus" size={16}/>Novo serviço</button>}</div> : filtrados.map(item => {
+          const due = prazoInfo(item.prazo, item.status === 'Concluído')
+          const listaExec = item.executores || []
+          const nomesEquipe = listaExec.length ? listaExec.slice(0, 2).map(x => x.nome).join(', ') : item.responsavel || 'A definir'
+          const extra = listaExec.length > 2 ? ` +${listaExec.length - 2}` : ''
+          return <div role="listitem" key={item.id}><button type="button" className="hs-v4-taskrow" onClick={() => mostrarDetalhe(item)} aria-label={`Abrir serviço ${item.id}: ${item.titulo}`}>
+            <span className="hs-v4-task-main"><span className="hs-v4-task-code"># {String(item.id).padStart(4, '0')} <span className={`hs-v3-tag hs-v3-priority-${normaliza(item.prioridade)}`}>{item.prioridade}</span></span><strong>{item.titulo}</strong><small className="hs-v4-inline-condo">{item.condominio}</small></span>
+            <span className="hs-v4-task-condo">{item.condominio}</span>
+            <span className="hs-v4-task-people"><SIcon nome="users" size={16}/><span>{nomesEquipe}{extra}<small>{item.fiscalizadores?.length ? `${item.fiscalizadores.length} fiscalização(ões)` : 'Sem fiscalização adicional'}</small></span></span>
+            <span className={`hs-v4-task-due hs-v4-due-${due.tom}`}><SIcon nome="calendar" size={15}/>{due.texto}</span>
+            <span className="hs-v4-task-state"><Etiqueta status={item.status}/></span>
+            <span className="hs-v4-row-arrow"><SIcon nome="arrow" size={17}/></span>
+          </button></div>
+        })}
+      </div>
+      {!carregando && filtrados.length > 0 && <div className="hs-v4-board-footer"><span>{filtrados.length} {filtrados.length === 1 ? 'solicitação exibida' : 'solicitações exibidas'}</span><span>Selecione um serviço para ver detalhes e registrar ações.</span></div>}
+    </section>
 
-      <div className={`hs-v3-detail-column ${abaMobile === 'lista' ? 'hs-v3-mobile-hide' : ''}`}>
-        {!selecionado ? <div className="hs-v3-detail-empty"><span className="hs-v3-zero-icon"><SIcon nome="clipboard" size={30}/></span><h3>Selecione uma solicitação</h3><p>Acompanhe responsáveis, prazos, execução, fiscalização e todo o histórico em um único lugar.</p></div> : <div className="hs-v3-detail-inner">
-          <button type="button" className="hs-v3-back" onClick={() => setAbaMobile('lista')}><SIcon nome="back" size={16}/>Voltar aos serviços</button>
-          <div className="hs-v3-detail-top"><span className="hs-v3-task-id">SERVIÇO #{selecionado.id}</span><Etiqueta status={selecionado.status}/></div>
+    {selecionado && <div className="hs-v4-drawer-layer">
+      <button type="button" className="hs-v4-drawer-backdrop" onClick={fecharDetalhe} aria-label="Fechar detalhes do serviço" tabIndex={-1}/>
+      <aside className="hs-v4-drawer" role="dialog" aria-modal="true" aria-labelledby="hs-v4-drawer-title" ref={gavetaRef}>
+        <div className="hs-v4-drawer-bar"><div><span className="hs-v4-drawer-eyebrow">DETALHES DA SOLICITAÇÃO</span><strong id="hs-v4-drawer-title">Serviço #{selecionado.id}</strong></div><button type="button" className="hs-v4-drawer-close" onClick={fecharDetalhe} data-fechar-detalhe aria-label="Fechar detalhes"><SIcon nome="close" size={19}/></button></div>
+        <div className="hs-v3-detail-inner hs-v4-drawer-scroll">
+          <div className="hs-v3-detail-top"><span className="hs-v3-task-id">SOLICITAÇÃO #{String(selecionado.id).padStart(4, '0')}</span><Etiqueta status={selecionado.status}/></div>
           <h3 className="hs-v3-detail-title">{selecionado.titulo}</h3><p className="hs-v3-detail-desc">{selecionado.descricao}</p>
           <div className="hs-v3-detail-info"><div><span>Condomínio</span><strong>{selecionado.condominio}</strong></div><div><span>Prioridade</span><strong><span className={`hs-v3-tag hs-v3-priority-${normaliza(selecionado.prioridade)}`}>{selecionado.prioridade}</span></strong></div><div><span>Prazo</span><strong className={selecionado.atrasado ? 'hs-v3-red' : ''}>{dataBR(selecionado.prazo)}</strong></div><div><span>Criado por</span><strong>{selecionado.criador}</strong></div></div>
-          <div className="hs-v3-section-head"><h4><SIcon nome="users" size={17}/>Equipe responsável</h4><span>{totalExec} executor(es)</span></div>
-          {totalExec > 0 && <div className="hs-v3-execution-progress"><div className="hs-v3-progress-head"><span>Execução individual</span><strong>{concluidos} de {totalExec} concluídas</strong></div><div className="hs-v3-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={totalExec} aria-valuenow={concluidos} aria-label="Etapas dos executores concluídas"><span style={{ width: `${100 * concluidos / totalExec}%` }}/></div></div>}
-          <div className="hs-v3-team"><h5>Execução</h5>{(selecionado.executores || []).map(p => <div className="hs-v3-person" key={`e-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Executor</small></span><Etiqueta status={p.status}/></div>)}<h5>Fiscalização</h5>{selecionado.fiscalizadores?.length ? selecionado.fiscalizadores.map(p => <div className="hs-v3-person" key={`f-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Fiscalizador</small></span><Etiqueta status={p.status}/></div>) : <p className="hs-v3-no-inspector">Sem fiscalizador designado. A validação final será feita pela Controladoria.</p>}</div>
-          {!!acoes.length && <section className="hs-v3-action"><div className="hs-v3-action-title"><SIcon nome="checkCircle" size={18}/><strong>Sua próxima ação</strong></div><p>Registre sua participação. As atualizações ficam vinculadas ao seu usuário no histórico.</p><label htmlFor="hs-v3-observacao">Observação ou resultado</label><textarea id="hs-v3-observacao" rows={3} maxLength={3000} value={textoAcao} onChange={e => setTextoAcao(e.target.value)} placeholder="Descreva o andamento, os resultados ou o motivo da devolução..."/><div className="hs-v3-action-buttons">{acoes.map(acao => <button key={acao} type="button" className={`hs-v3-button ${acao === 'devolver' ? 'hs-v3-button-warn' : 'hs-v3-button-primary'}`} onClick={() => executar(acao)} disabled={salvando}>{salvando ? 'Registrando...' : NOMES_ACOES[acao] || acao}</button>)}</div>{acoes.some(acao => ['concluir', 'devolver'].includes(acao)) && <small>Ao concluir ou devolver, informe pelo menos 10 caracteres.</small>}</section>}
-          <div className="hs-v3-section-head hs-v3-history-heading"><h4><SIcon nome="clock" size={17}/>Linha do tempo</h4><span>{historico.length} registros</span></div><ol className="hs-v3-timeline">{historico.length ? historico.map(ev => <li key={ev.id}><span className="hs-v3-timeline-dot"/><div><strong>{String(ev.acao || 'Atualização').replaceAll('_', ' ')}</strong><small>{ev.autor} · {dataBR(ev.data)}</small>{ev.observacao && <p>{ev.observacao}</p>}</div></li>) : <li className="hs-v3-timeline-empty">Nenhum evento encontrado.</li>}</ol>
-        </div>}
-      </div>
-    </div>
+          <div className="hs-v3-section-head"><h4><SIcon nome="users" size={17}/>Equipe e responsabilidades</h4><span>{totalExec} executor(es)</span></div>
+          {totalExec > 0 && <div className="hs-v3-execution-progress"><div className="hs-v3-progress-head"><span>Execução concluída</span><strong>{concluidos} de {totalExec}</strong></div><div className="hs-v3-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={totalExec} aria-valuenow={concluidos} aria-label="Etapas dos executores concluídas"><span style={{ width: `${100 * concluidos / totalExec}%` }}/></div></div>}
+          <div className="hs-v3-team"><h5>Quem executa</h5>{(selecionado.executores || []).map(p => <div className="hs-v3-person" key={`e-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Executor</small></span><Etiqueta status={p.status}/></div>)}<h5>Quem fiscaliza</h5>{selecionado.fiscalizadores?.length ? selecionado.fiscalizadores.map(p => <div className="hs-v3-person" key={`f-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Fiscalizador</small></span><Etiqueta status={p.status}/></div>) : <p className="hs-v3-no-inspector">Sem fiscalizador designado. A validação final será realizada pela Controladoria.</p>}</div>
+          {!!acoes.length && <section className="hs-v3-action"><div className="hs-v3-action-title"><SIcon nome="checkCircle" size={18}/><strong>Sua próxima ação</strong></div><p>As atualizações são vinculadas ao seu usuário e ficam no histórico.</p><label htmlFor="hs-v3-observacao">Observação ou resultado</label><textarea id="hs-v3-observacao" rows={3} maxLength={3000} value={textoAcao} onChange={e => setTextoAcao(e.target.value)} placeholder="Descreva o andamento, os resultados ou o motivo da devolução..."/><div className="hs-v3-action-buttons">{acoes.map(acao => <button key={acao} type="button" className={`hs-v3-button ${acao === 'devolver' ? 'hs-v3-button-warn' : 'hs-v3-button-primary'}`} onClick={() => executar(acao)} disabled={salvando}>{salvando ? 'Registrando...' : NOMES_ACOES[acao] || acao}</button>)}</div>{acoes.some(acao => ['concluir', 'devolver'].includes(acao)) && <small>Ao concluir ou devolver, informe pelo menos 10 caracteres.</small>}</section>}
+          <div className="hs-v3-section-head hs-v3-history-heading"><h4><SIcon nome="clock" size={17}/>Histórico de atividades</h4><span>{historico.length} registros</span></div><ol className="hs-v3-timeline">{historico.length ? historico.map(ev => <li key={ev.id}><span className="hs-v3-timeline-dot"/><div><strong>{String(ev.acao || 'Atualização').replaceAll('_', ' ')}</strong><small>{ev.autor} · {dataBR(ev.data)}</small>{ev.observacao && <p>{ev.observacao}</p>}</div></li>) : <li className="hs-v3-timeline-empty">Nenhum evento encontrado.</li>}</ol>
+        </div>
+      </aside>
+    </div>}
 
     {novoAberto && <div className="hs-v3-modal-backdrop" ><form className="hs-v3-modal" ref={modalRef} onSubmit={criar} role="dialog" aria-modal="true" aria-labelledby="hs-v3-modal-title" noValidate>
       <div className="hs-v3-modal-top"><div><span className="hs-v3-eyebrow">NOVA DEMANDA</span><h3 id="hs-v3-modal-title">Criar solicitação de serviço</h3><p>Organize a execução e a fiscalização em uma única tarefa.</p></div><button type="button" className="hs-v3-icon-button" aria-label="Fechar" onClick={fecharModal} disabled={salvando}><SIcon nome="close" size={20}/></button></div>
