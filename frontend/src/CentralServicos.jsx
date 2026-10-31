@@ -108,7 +108,7 @@ function GradeFotos({ fotos, apiUrl, token, servicoId }) {
 function Etiqueta({ status }) { return <span className={`hs-v3-status hs-v3-${classeStatus(status)}`}>{status || 'Indefinido'}</span> }
 function Avatar({ nome }) { return <span className="hs-v3-avatar" aria-hidden="true">{iniciais(nome)}</span> }
 
-export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
+export default function CentralServicos({ apiUrl, usuario, condominios = [], linkServicoId = null, onLinkConcluido }) {
   const gestor = usuario?.perfil === 'Controladoria'
   const token = usuario?.token
   const [servicos, setServicos] = useState([])
@@ -182,6 +182,35 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [] }) {
     const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizar(true) }, 60000)
     return () => { ultimaRequisicao.current++; clearInterval(timer) }
   }, [atualizar])
+
+  // Abertura direta após login: sempre consulta o endpoint protegido de detalhes.
+  useEffect(() => {
+    if (!linkServicoId || !token || carregando) return
+    const controller = new AbortController()
+    const abrirLink = async () => {
+      try {
+        const resposta = await fetch(`${apiUrl}/servicos/${linkServicoId}`, {
+          headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, cache: 'no-store',
+        })
+        if (controller.signal.aborted) return
+        if (resposta.status === 401) return // Mantém o link para uma nova autenticação.
+        if (!resposta.ok) {
+          setErro('A tarefa do link não existe ou não está disponível para seu perfil.')
+          onLinkConcluido?.(linkServicoId)
+          return
+        }
+        const detalhes = await resposta.json()
+        if (controller.signal.aborted) return
+        focoAnteriorGaveta.current = document.activeElement
+        abrirServico(detalhes)
+        onLinkConcluido?.(linkServicoId)
+      } catch {
+        if (!controller.signal.aborted) setErro('Falha de conexão ao abrir a tarefa. Verifique a rede e atualize a página para tentar novamente.')
+      }
+    }
+    abrirLink()
+    return () => { controller.abort() }
+  }, [linkServicoId, token, carregando, apiUrl, onLinkConcluido])
 
   useEffect(() => {
     if (!selecionado) { setHistorico([]); return }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
@@ -9,6 +9,14 @@ import PreferenciasWhatsApp from './PreferenciasWhatsApp'
 import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
+
+// Links de avisos: /?servico=123. Não concede permissão; a API valida o acesso.
+function lerServicoLink() {
+  const valor = new URLSearchParams(window.location.search).get('servico')
+  if (!valor || !/^[1-9]\d{0,9}$/.test(valor)) return null
+  const id = Number(valor)
+  return Number.isSafeInteger(id) && id <= 2147483647 ? id : null
+}
 
 function lerCache(chave, padrao = []) {
   try {
@@ -189,7 +197,17 @@ function App() {
   const [senhaNova, setSenhaNova] = useState('')
   const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
-  const [pagina, setPagina] = useState(paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const [servicoLinkId, setServicoLinkId] = useState(lerServicoLink)
+  const [pagina, setPagina] = useState(usuarioLogado?.token && servicoLinkId ? 'servicos' : paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const concluirAberturaLink = useCallback((id) => {
+    // Remove apenas o parâmetro de tarefa, preservando outros parâmetros e o hash.
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('servico') === String(id)) {
+      url.searchParams.delete('servico')
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    }
+    setServicoLinkId(atual => atual === id ? null : atual)
+  }, [])
   const [abaChecklist, setAbaChecklist] = useState('vistorias')
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
@@ -525,7 +543,7 @@ function App() {
       sessionStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       setSenhaLogin('')
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
-      setPagina(paginaInicialPorPerfil(dadosUsuario.perfil))
+      setPagina(servicoLinkId ? 'servicos' : paginaInicialPorPerfil(dadosUsuario.perfil))
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -2608,7 +2626,7 @@ function App() {
 
         {pagina === 'servicos' && (
           <div className="page">
-            <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} />
+            <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
           </div>
         )}
 
