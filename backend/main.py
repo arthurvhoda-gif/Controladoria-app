@@ -35,6 +35,7 @@ from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
 from servicos_api import router as servicos_router
+from usuarios_pendencias import contar_servicos_pendentes
 from whatsapp_alertas import router as whatsapp_router
 
 # Cria todas as tabelas caso ainda não existam
@@ -446,6 +447,12 @@ def excluir_usuario(usuario_id: int, request: Request, db: Session = Depends(get
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail='Usuário não encontrado.')
+    pendentes = contar_servicos_pendentes(db, usuario_id)
+    if pendentes:
+        raise HTTPException(
+            status_code=409,
+            detail=f'Este usuário possui {pendentes} serviço(s) em aberto como criador, executor ou fiscalizador. Resolva as responsabilidades antes de excluí-lo.',
+        )
     db.delete(usuario)
     db.commit()
     return {'mensagem': 'Usuário removido com sucesso.'}
