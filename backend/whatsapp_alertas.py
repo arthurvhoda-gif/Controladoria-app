@@ -8,11 +8,12 @@ import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, tuple_
 from sqlalchemy.orm import Session
 import models
 from database import SessionLocal
 from whatsapp_mensagens import preparar_previa_whatsapp, link_direto_servico
+from whatsapp_validade import avaliar_vigencia
 
 router = APIRouter(prefix='/avisos-whatsapp', tags=['Avisos WhatsApp - preparacao'])
 
@@ -174,6 +175,20 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
         .limit(30)
         .all()
     )
+    # Carrega apenas os participantes relacionados aos avisos exibidos (maximo 30).
+    # Consulta somente leitura; nao muda a fila ou o andamento dos servicos.
+    participantes = {}
+    if registros:
+        pares = {(servico.id, destinatario.id)
+                 for _, _, servico, destinatario, _ in registros}
+        participantes = {
+            (p.servico_id, p.usuario_id, p.papel): p
+            for p in db.query(models.ServicoParticipante).filter(
+                tuple_(models.ServicoParticipante.servico_id,
+                       models.ServicoParticipante.usuario_id).in_(pares)
+            ).all()
+        }
+
     itens = []
     for fila, aviso, servico, destinatario, preferencia in registros:
         previa = preparar_previa_whatsapp(
@@ -182,12 +197,28 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             mensagem_aviso=aviso.mensagem,
             frontend_public_url=frontend_url,
         )
+        # O papel deve corresponder ao tipo do aviso; nunca usar um executor
+        # para inferir a pendencia de um fiscalizador (ou vice-versa).
+        papel_esperado = {
+            'nova_tarefa': 'executor',
+            'devolucao': 'executor',
+            'designacao_fiscal': 'fiscalizador',
+            'pronto_fiscalizacao': 'fiscalizador',
+        }.get(previa['evento'])
+        participante = participantes.get((servico.id, destinatario.id, papel_esperado))
+        diagnostico = avaliar_vigencia(
+            previa['evento'], servico.status,
+            papel=participante.papel if participante else None,
+            status_participante=participante.status if participante else None,
+            destinatario_eh_criador=(servico.criador_id == destinatario.id),
+        )
         itens.append({
             'fila_id': fila.id,
             'servico_id': servico.id,
             'destinatario': destinatario.nome,
             'status': fila.status,
             'evento': previa['evento'],
+            'diagnostico': diagnostico,
             'mensagem': previa['mensagem'],
             'link': previa['link'],
             'elegivel_agora': bool(preferencia and preferencia.telefone and preferencia.consentimento),

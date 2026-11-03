@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import './PreviaAvisosWhatsApp.css'
 
+const rotulosDiagnostico = {
+  coerente: 'Coerente',
+  possivelmente_desatualizado: 'Possivelmente desatualizado',
+  informativo: 'Informativo',
+  revisar: 'Revisar',
+}
+
 export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
   const [aberto, setAberto] = useState(false)
   const [recarregar, setRecarregar] = useState(0)
@@ -55,10 +62,14 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
           <span>Solicitação #{String(item.servico_id).padStart(4, '0')}</span>
           <span>{item.status}</span>
           {!item.elegivel_agora && <span className="wa-previa-alerta">Sem autorização ou número ativo</span>}
+          {item.diagnostico && <span className={['revisar', 'possivelmente_desatualizado'].includes(item.diagnostico.situacao) ? 'wa-previa-alerta' : ''}>
+            Diagnóstico: {rotulosDiagnostico[item.diagnostico.situacao] || 'Revisar'}
+          </span>}
         </div>
         <small>Tipo de aviso: {item.evento.replaceAll('_', ' ')}</small>
         <pre className="wa-previa-mensagem">{item.mensagem}</pre>
-        <p className="wa-previa-nota">Prévia para conferência. Ações e registros devem ser feitos no aplicativo.</p>
+        {item.diagnostico?.motivo && <p className="wa-previa-nota">Análise: {item.diagnostico.motivo}</p>}
+        <p className="wa-previa-nota">Diagnóstico indicativo: não autoriza envio automático. Ações e registros devem ser feitos no aplicativo.</p>
       </article>)}
     </div>}
   </section>
