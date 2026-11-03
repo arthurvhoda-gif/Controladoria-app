@@ -130,17 +130,25 @@ def obter_servico(db: Session, id_servico: int, user):
 
 
 def evento(db, servico, autor, acao, observacao=''):
-    db.add(models.ServicoEvento(
+    registro = models.ServicoEvento(
         servico_id=servico.id, autor_id=autor.id, autor_nome=autor.nome,
         acao=acao, observacao=observacao.strip(), criado_em=agora(),
-    ))
+    )
+    db.add(registro)
+    db.flush()  # ID disponivel para todos os avisos desta acao, sem commit antecipado
+    return registro
 
 
-def notificar(db, destino_id, servico, mensagem):
+def notificar(db, destino_id, servico, mensagem, *, evento_origem=None):
     if not destino_id:
         return
+    if evento_origem is not None and (
+        evento_origem.id is None or evento_origem.servico_id != servico.id
+    ):
+        raise ValueError('Evento de origem inconsistente com a tarefa.')
     aviso = models.ServicoAviso(
         usuario_id=destino_id, servico_id=servico.id,
+        evento_id=evento_origem.id if evento_origem is not None else None,
         mensagem=mensagem, criado_em=agora(),
     )
     db.add(aviso)
@@ -155,10 +163,10 @@ def notificar(db, destino_id, servico, mensagem):
         ))
 
 
-def publicar_para(db, servico, pessoas, mensagem, excluir=None):
+def publicar_para(db, servico, pessoas, mensagem, excluir=None, *, evento_origem=None):
     ids = {p.usuario_id for p in pessoas if p.usuario_id and p.usuario_id != excluir}
     for uid in ids:
-        notificar(db, uid, servico, mensagem)
+        notificar(db, uid, servico, mensagem, evento_origem=evento_origem)
 
 
 def derivar_status(pessoas):
@@ -291,6 +299,9 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
     )
     db.add(servico)
     db.flush()
+    evento_criacao = evento(db, servico, autor, 'criado',
+           f'Executores: {", ".join(por_id[i].nome for i in exec_ids)}; '
+           f'Fiscalizadores: {", ".join(por_id[i].nome for i in fiscais_ids) or "nenhum"}')
     for papel, lista in (('executor', exec_ids), ('fiscalizador', fiscais_ids)):
         for uid in lista:
             pessoa = por_id[uid]
@@ -301,10 +312,7 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
             notificar(db, uid, servico, (
                 f'Nova tarefa para executar: {servico.titulo}' if papel == 'executor'
                 else f'Você foi designado para fiscalizar: {servico.titulo}'
-            ))
-    evento(db, servico, autor, 'criado',
-           f'Executores: {", ".join(por_id[i].nome for i in exec_ids)}; '
-           f'Fiscalizadores: {", ".join(por_id[i].nome for i in fiscais_ids) or "nenhum"}')
+            ), evento_origem=evento_criacao)
     db.commit()
     db.refresh(servico)
     return serializar(servico, db, autor)
@@ -369,6 +377,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
     if servico.status == STATUS_FECHADO:
         raise HTTPException(409, detail='Serviço já concluído.')
 
+    evento_atual = None
     if acao == 'confirmar':
         if not eu:
             raise HTTPException(403, detail='Você não está designado a este serviço.')
@@ -376,7 +385,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
             raise HTTPException(409, detail='Recebimento já confirmado ou indisponível.')
         eu.status = STATUS_CIENTE
         eu.confirmado_em = agora()
-        evento(db, servico, user, 'confirmar', f'{eu.papel}: confirmou recebimento. {observacao}')
+        evento_atual = evento(db, servico, user, 'confirmar', f'{eu.papel}: confirmou recebimento. {observacao}')
     elif acao == 'iniciar':
         if not eu or eu.papel != 'executor':
             raise HTTPException(403, detail='Somente executor designado pode iniciar.')
@@ -384,7 +393,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
             raise HTTPException(409, detail='Confirme o recebimento antes de iniciar.')
         eu.status = STATUS_EXECUCAO
         eu.iniciado_em = agora()
-        evento(db, servico, user, 'iniciar', observacao)
+        evento_atual = evento(db, servico, user, 'iniciar', observacao)
     elif acao == 'concluir':
         if not eu or eu.papel != 'executor':
             raise HTTPException(403, detail='Somente executor designado pode concluir.')
@@ -392,7 +401,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
             raise HTTPException(409, detail='Inicie sua etapa antes de concluir.')
         eu.status = STATUS_EXEC_CONCLUIDO
         eu.concluido_em = agora()
-        evento(db, servico, user, 'concluir', observacao)
+        evento_atual = evento(db, servico, user, 'concluir', observacao)
     elif acao == 'validar':
         if servico.status == STATUS_FISCALIZACAO:
             if not eu or eu.papel != 'fiscalizador':
@@ -401,13 +410,13 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
                 raise HTTPException(409, detail='Confirme ciência antes de fiscalizar.')
             eu.status = STATUS_FISC_APROVADO
             eu.validado_em = agora()
-            evento(db, servico, user, 'fiscalizar', observacao or 'Fiscalização aprovada.')
+            evento_atual = evento(db, servico, user, 'fiscalizar', observacao or 'Fiscalização aprovada.')
         elif servico.status == STATUS_VALIDACAO:
             if user.perfil != 'Controladoria':
                 raise HTTPException(403, detail='Somente Controladoria pode encerrar.')
             servico.status = STATUS_FECHADO
-            evento(db, servico, user, 'validar', observacao or 'Serviço validado pela Controladoria.')
-            publicar_para(db, servico, pessoas, f'Serviço validado: {servico.titulo}', excluir=user.id)
+            evento_atual = evento(db, servico, user, 'validar', observacao or 'Serviço validado pela Controladoria.')
+            publicar_para(db, servico, pessoas, f'Serviço validado: {servico.titulo}', excluir=user.id, evento_origem=evento_atual)
         else:
             raise HTTPException(409, detail='Ainda não é possível validar o serviço.')
     elif acao == 'devolver':
@@ -422,9 +431,9 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
             elif p.papel == 'fiscalizador' and p.status == STATUS_FISC_APROVADO:
                 p.status = STATUS_CIENTE
                 p.validado_em = None
-        evento(db, servico, user, 'devolver', observacao)
+        evento_atual = evento(db, servico, user, 'devolver', observacao)
         publicar_para(db, servico, [p for p in pessoas if p.papel == 'executor'],
-                      f'Serviço devolvido para ajustes: {servico.titulo}')
+                      f'Serviço devolvido para ajustes: {servico.titulo}', evento_origem=evento_atual)
     else:
         raise HTTPException(400, detail='Ação desconhecida.')
 
@@ -434,10 +443,10 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
         if anterior != servico.status:
             if servico.status == STATUS_FISCALIZACAO:
                 publicar_para(db, servico, [p for p in pessoas if p.papel == 'fiscalizador'],
-                              f'Serviço pronto para fiscalização: {servico.titulo}')
+                              f'Serviço pronto para fiscalização: {servico.titulo}', evento_origem=evento_atual)
             elif servico.status == STATUS_VALIDACAO:
                 notificar(db, servico.criador_id, servico,
-                          f'Serviço aguardando validação final: {servico.titulo}')
+                          f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual)
     servico.atualizado_em = agora()
     db.commit()
     db.refresh(servico)
