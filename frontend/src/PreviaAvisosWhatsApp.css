@@ -1,0 +1,14 @@
+.wa-previa { margin: 1.25rem 0; padding: 1.15rem; border: 1px solid #d5dfeb; border-radius: 12px; background: #f9fbff; }
+.wa-previa-cabecalho { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; align-items: center; }
+.wa-previa-cabecalho h3 { margin: 0 0 .35rem; color: #192c48; }
+.wa-previa-cabecalho p { margin: 0; color: #58677c; }
+.wa-previa-botao { padding: .55rem .85rem; border: 1px solid #9bacbf; border-radius: 8px; background: white; color: #1c3557; font: inherit; cursor: pointer; }
+.wa-previa-botao:disabled { opacity: .6; cursor: wait; }
+.wa-previa-conteudo { padding-top: 1rem; }
+.wa-previa-barra { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .75rem; margin-bottom: .75rem; font-size: .9rem; color: #52657a; }
+.wa-previa-item { margin: .8rem 0; padding: 1rem; background: white; border: 1px solid #dce5ee; border-radius: 10px; }
+.wa-previa-meta { display: flex; flex-wrap: wrap; gap: .4rem .8rem; align-items: center; margin-bottom: .5rem; }
+.wa-previa-meta span { font-size: .84rem; color: #52657a; }
+.wa-previa-alerta, .wa-previa-erro { color: #9a3412 !important; }
+.wa-previa-mensagem { margin: .7rem 0; padding: .9rem; border-radius: 8px; background: #f3f7fb; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.5; }
+.wa-previa-nota { margin-bottom: 0; font-size: .83rem; color: #66788c; }

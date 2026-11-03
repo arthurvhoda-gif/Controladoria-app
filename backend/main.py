@@ -82,6 +82,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor
     if path == '/avisos-whatsapp/me' and method in ('GET', 'PUT'):
         return True  # Login obrigatório, só própria conta
+    if path == '/avisos-whatsapp/fila/previas' and method == 'GET':
+        return gestor
     if path == '/avisos-whatsapp/fila/resumo' and method == 'GET':
         return gestor
     if path == '/usuarios/me' and method == 'GET':

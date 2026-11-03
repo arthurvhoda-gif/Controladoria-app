@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './GestaoContatosWhatsApp.css'
+import PreviaAvisosWhatsApp from './PreviaAvisosWhatsApp'
 
 const texto = value => String(value || '').toLocaleLowerCase('pt-BR')
 
@@ -84,6 +85,8 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
     </div>
 
     <p className="wa-admin-note"><strong>Importante:</strong> a Controladoria informa os telefones, mas não autoriza mensagens em nome dos colaboradores. Ao trocar um número, o consentimento anterior é cancelado. Nenhum WhatsApp é enviado nesta versão.</p>
+
+    <PreviaAvisosWhatsApp apiUrl={apiUrl} token={token} />
 
     <div className="wa-admin-filters">
       <label>Buscar usuário, e-mail, condomínio ou telefone

@@ -4,6 +4,7 @@ Os endpoints /admin são exclusivos da Controladoria. O funcionário pode apenas
 autorizar/revogar avisos para o número atribuído pela Controladoria.
 """
 import re
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 import models
 from database import SessionLocal
+from whatsapp_mensagens import preparar_previa_whatsapp, link_direto_servico
 
 router = APIRouter(prefix='/avisos-whatsapp', tags=['Avisos WhatsApp - preparacao'])
 
@@ -147,3 +149,48 @@ def resumo_fila(request: Request, db: Session = Depends(sessao)):
         'por_status': {status: quantidade for status, quantidade in registros},
         'observacao': 'Simulação da fila; nenhuma mensagem enviada ao WhatsApp.',
     }
+
+@router.get('/fila/previas')
+def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
+    """Lista somente avisos preparados; exclusivos da Controladoria. SEM ENVIOS."""
+    exigir_controladoria(request, db)
+    frontend_url = os.getenv('FRONTEND_PUBLIC_URL', '').strip()
+    # Falhar explicitamente se não houver URL configurada evita links do ambiente errado.
+    try:
+        link_direto_servico(1, frontend_url)
+    except ValueError as exc:
+        raise HTTPException(503, detail='Configure FRONTEND_PUBLIC_URL válida neste ambiente.') from exc
+
+    registros = (
+        db.query(models.FilaWhatsApp, models.ServicoAviso, models.ServicoInterno,
+                 models.Usuario, models.PreferenciaWhatsApp)
+        .join(models.ServicoAviso, models.FilaWhatsApp.aviso_id == models.ServicoAviso.id)
+        .join(models.ServicoInterno, models.FilaWhatsApp.servico_id == models.ServicoInterno.id)
+        .join(models.Usuario, models.FilaWhatsApp.usuario_id == models.Usuario.id)
+        .outerjoin(models.PreferenciaWhatsApp,
+                   models.FilaWhatsApp.usuario_id == models.PreferenciaWhatsApp.usuario_id)
+        .filter(models.FilaWhatsApp.status == 'preparada')
+        .order_by(models.FilaWhatsApp.criada_em.desc(), models.FilaWhatsApp.id.desc())
+        .limit(30)
+        .all()
+    )
+    itens = []
+    for fila, aviso, servico, destinatario, preferencia in registros:
+        previa = preparar_previa_whatsapp(
+            servico_id=servico.id,
+            titulo=servico.titulo,
+            mensagem_aviso=aviso.mensagem,
+            frontend_public_url=frontend_url,
+        )
+        itens.append({
+            'fila_id': fila.id,
+            'servico_id': servico.id,
+            'destinatario': destinatario.nome,
+            'status': fila.status,
+            'evento': previa['evento'],
+            'mensagem': previa['mensagem'],
+            'link': previa['link'],
+            'elegivel_agora': bool(preferencia and preferencia.telefone and preferencia.consentimento),
+            'criada_em': fila.criada_em.isoformat() if fila.criada_em else None,
+        })
+    return {'envios_ativos': False, 'previa': itens, 'limite': 30}
