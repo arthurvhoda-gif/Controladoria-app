@@ -7,6 +7,12 @@ const rotulosDiagnostico = {
   informativo: 'Informativo',
   revisar: 'Revisar',
 }
+const rotulosHistorico = {
+  superado: 'Superado',
+  nao_comprovado: 'Não comprovado',
+  informativo: 'Informativo',
+  revisar: 'Revisar',
+}
 
 export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
   const [aberto, setAberto] = useState(false)
@@ -65,10 +71,25 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
           {item.diagnostico && <span className={['revisar', 'possivelmente_desatualizado'].includes(item.diagnostico.situacao) ? 'wa-previa-alerta' : ''}>
             Diagnóstico: {rotulosDiagnostico[item.diagnostico.situacao] || 'Revisar'}
           </span>}
+          {item.diagnostico_historico && <span className={
+            item.sem_evento_origem && item.diagnostico_historico.situacao === 'revisar'
+              ? ''
+              : ['superado', 'revisar'].includes(item.diagnostico_historico.situacao) ? 'wa-previa-alerta' : ''
+          }>
+            Histórico: {item.sem_evento_origem && item.diagnostico_historico.situacao === 'revisar'
+              ? 'Origem não registrada (revisar)'
+              : (rotulosHistorico[item.diagnostico_historico.situacao] || 'Revisar')}
+          </span>}
         </div>
         <small>Tipo de aviso: {item.evento.replaceAll('_', ' ')}</small>
         <pre className="wa-previa-mensagem">{item.mensagem}</pre>
         {item.diagnostico?.motivo && <p className="wa-previa-nota">Análise: {item.diagnostico.motivo}</p>}
+        {item.diagnostico_historico?.motivo && <p className="wa-previa-nota">
+          Histórico: {item.sem_evento_origem && item.diagnostico_historico.situacao === 'revisar'
+            ? 'Aviso sem vínculo com evento de origem. Pode ser anterior à V6.5; exige conferência manual.'
+            : item.diagnostico_historico.motivo}
+          {item.diagnostico_historico.evento_superador ? ` (evento #${item.diagnostico_historico.evento_superador})` : ''}
+        </p>}
         <p className="wa-previa-nota">Diagnóstico indicativo: não autoriza envio automático. Ações e registros devem ser feitos no aplicativo.</p>
       </article>)}
     </div>}

@@ -14,6 +14,7 @@ import models
 from database import SessionLocal
 from whatsapp_mensagens import preparar_previa_whatsapp, link_direto_servico
 from whatsapp_validade import avaliar_vigencia
+from whatsapp_historico import avaliar_historico
 
 router = APIRouter(prefix='/avisos-whatsapp', tags=['Avisos WhatsApp - preparacao'])
 
@@ -189,6 +190,27 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             ).all()
         }
 
+    # Historico completo das tarefas presentes na pagina (maximo 30 avisos).
+    # Limite defensivo: historico truncado NUNCA pode gerar conclusao de vigencia.
+    historicos = {}
+    historico_completo = True
+    if registros:
+        servicos_ids = {servico.id for _, _, servico, _, _ in registros}
+        eventos_db = (
+            db.query(models.ServicoEvento)
+            .filter(models.ServicoEvento.servico_id.in_(servicos_ids))
+            .order_by(models.ServicoEvento.id.asc())
+            .limit(10001)
+            .all()
+        )
+        historico_completo = len(eventos_db) <= 10000
+        if historico_completo:
+            for e in eventos_db:
+                historicos.setdefault(e.servico_id, []).append({
+                    'id': e.id, 'servico_id': e.servico_id,
+                    'acao': e.acao, 'autor_id': e.autor_id,
+                })
+
     itens = []
     for fila, aviso, servico, destinatario, preferencia in registros:
         previa = preparar_previa_whatsapp(
@@ -212,6 +234,17 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             status_participante=participante.status if participante else None,
             destinatario_eh_criador=(servico.criador_id == destinatario.id),
         )
+        diagnostico_historico = (
+            avaliar_historico(
+                tipo=previa['evento'], evento_origem_id=aviso.evento_id,
+                destinatario_id=destinatario.id, servico_id=servico.id,
+                eventos=historicos.get(servico.id, []),
+            ) if historico_completo else {
+                'situacao': 'revisar',
+                'motivo': 'Historico excede o limite de leitura; revisar manualmente.',
+                'evento_superador': None,
+            }
+        )
         itens.append({
             'fila_id': fila.id,
             'servico_id': servico.id,
@@ -219,6 +252,8 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             'status': fila.status,
             'evento': previa['evento'],
             'diagnostico': diagnostico,
+            'diagnostico_historico': diagnostico_historico,
+            'sem_evento_origem': bool(aviso.evento_id is None and historico_completo),
             'mensagem': previa['mensagem'],
             'link': previa['link'],
             'elegivel_agora': bool(preferencia and preferencia.telefone and preferencia.consentimento),
