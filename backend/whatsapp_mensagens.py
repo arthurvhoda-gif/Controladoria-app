@@ -59,10 +59,19 @@ def classificar_aviso(mensagem_aviso):
     return "atualizacao", "Existe uma atualização em uma tarefa."
 
 
-def preparar_previa_whatsapp(*, servico_id, titulo, mensagem_aviso, frontend_public_url):
+def preparar_previa_whatsapp(*, servico_id, titulo, mensagem_aviso, frontend_public_url, tipo_evento=None):
     """Devolve dados de uma prévia, sem salvar nem enviar qualquer mensagem."""
     link = link_direto_servico(servico_id, frontend_public_url)
-    codigo, descricao = classificar_aviso(mensagem_aviso)
+    # NULL identifica legado; tipo invalido nao usa classificacao pelo texto.
+    if tipo_evento is None:
+        codigo, descricao = classificar_aviso(mensagem_aviso)
+    else:
+        codigo, descricao = 'atualizacao', 'Existe uma atualização em uma tarefa.'
+        if isinstance(tipo_evento, str):
+            for _, candidato, texto in _EVENTOS:
+                if candidato == tipo_evento:
+                    codigo, descricao = candidato, texto
+                    break
     titulo_limpo = _texto_unica_linha(titulo)
     texto = (
         "CONTROLADORIA HAIZE\n"

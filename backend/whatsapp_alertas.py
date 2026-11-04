@@ -219,6 +219,7 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             servico_id=servico.id,
             titulo=servico.titulo,
             mensagem_aviso=aviso.mensagem,
+            tipo_evento=aviso.tipo_evento,
             frontend_public_url=frontend_url,
         )
         # O papel deve corresponder ao tipo do aviso; nunca usar um executor
