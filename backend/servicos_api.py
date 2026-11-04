@@ -139,7 +139,14 @@ def evento(db, servico, autor, acao, observacao=''):
     return registro
 
 
-def notificar(db, destino_id, servico, mensagem, *, evento_origem=None):
+TIPOS_AVISO = frozenset(('nova_tarefa', 'designacao_fiscal', 'pronto_fiscalizacao', 'devolucao', 'validacao_final', 'servico_validado'))
+
+
+def notificar(db, destino_id, servico, mensagem, *, evento_origem=None, tipo_evento=None):
+    if tipo_evento is not None and tipo_evento not in TIPOS_AVISO:
+        raise ValueError('Tipo de aviso desconhecido.')
+    if tipo_evento is not None and evento_origem is None:
+        raise ValueError('Aviso tipado exige evento de origem.')
     if not destino_id:
         return
     if evento_origem is not None and (
@@ -149,7 +156,7 @@ def notificar(db, destino_id, servico, mensagem, *, evento_origem=None):
     aviso = models.ServicoAviso(
         usuario_id=destino_id, servico_id=servico.id,
         evento_id=evento_origem.id if evento_origem is not None else None,
-        mensagem=mensagem, criado_em=agora(),
+        mensagem=mensagem, tipo_evento=tipo_evento, criado_em=agora(),
     )
     db.add(aviso)
     # Na mesma transação: sem aviso persistido, não há item para WhatsApp.
@@ -163,10 +170,10 @@ def notificar(db, destino_id, servico, mensagem, *, evento_origem=None):
         ))
 
 
-def publicar_para(db, servico, pessoas, mensagem, excluir=None, *, evento_origem=None):
+def publicar_para(db, servico, pessoas, mensagem, excluir=None, *, evento_origem=None, tipo_evento=None):
     ids = {p.usuario_id for p in pessoas if p.usuario_id and p.usuario_id != excluir}
     for uid in ids:
-        notificar(db, uid, servico, mensagem, evento_origem=evento_origem)
+        notificar(db, uid, servico, mensagem, evento_origem=evento_origem, tipo_evento=tipo_evento)
 
 
 def derivar_status(pessoas):
@@ -312,7 +319,7 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
             notificar(db, uid, servico, (
                 f'Nova tarefa para executar: {servico.titulo}' if papel == 'executor'
                 else f'Você foi designado para fiscalizar: {servico.titulo}'
-            ), evento_origem=evento_criacao)
+            ), evento_origem=evento_criacao, tipo_evento='nova_tarefa' if papel == 'executor' else 'designacao_fiscal')
     db.commit()
     db.refresh(servico)
     return serializar(servico, db, autor)
@@ -416,7 +423,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
                 raise HTTPException(403, detail='Somente Controladoria pode encerrar.')
             servico.status = STATUS_FECHADO
             evento_atual = evento(db, servico, user, 'validar', observacao or 'Serviço validado pela Controladoria.')
-            publicar_para(db, servico, pessoas, f'Serviço validado: {servico.titulo}', excluir=user.id, evento_origem=evento_atual)
+            publicar_para(db, servico, pessoas, f'Serviço validado: {servico.titulo}', excluir=user.id, evento_origem=evento_atual, tipo_evento='servico_validado')
         else:
             raise HTTPException(409, detail='Ainda não é possível validar o serviço.')
     elif acao == 'devolver':
@@ -433,7 +440,7 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
                 p.validado_em = None
         evento_atual = evento(db, servico, user, 'devolver', observacao)
         publicar_para(db, servico, [p for p in pessoas if p.papel == 'executor'],
-                      f'Serviço devolvido para ajustes: {servico.titulo}', evento_origem=evento_atual)
+                      f'Serviço devolvido para ajustes: {servico.titulo}', evento_origem=evento_atual, tipo_evento='devolucao')
     else:
         raise HTTPException(400, detail='Ação desconhecida.')
 
@@ -443,10 +450,10 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
         if anterior != servico.status:
             if servico.status == STATUS_FISCALIZACAO:
                 publicar_para(db, servico, [p for p in pessoas if p.papel == 'fiscalizador'],
-                              f'Serviço pronto para fiscalização: {servico.titulo}', evento_origem=evento_atual)
+                              f'Serviço pronto para fiscalização: {servico.titulo}', evento_origem=evento_atual, tipo_evento='pronto_fiscalizacao')
             elif servico.status == STATUS_VALIDACAO:
                 notificar(db, servico.criador_id, servico,
-                          f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual)
+                          f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual, tipo_evento='validacao_final')
     servico.atualizado_em = agora()
     db.commit()
     db.refresh(servico)

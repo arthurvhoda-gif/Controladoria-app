@@ -165,6 +165,8 @@ class ServicoAviso(Base):
     usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
     servico_id = Column(Integer, ForeignKey('servicos_internos.id'), nullable=False, index=True)
     evento_id = Column(Integer, ForeignKey('servicos_eventos.id', ondelete='SET NULL'), nullable=True, index=True)
+    # V6.9: NULL preserva avisos legados, sem inferencia pelo texto.
+    tipo_evento = Column(String(32), nullable=True)
     mensagem = Column(String(300), nullable=False)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     lida_em = Column(DateTime(timezone=True), nullable=True)
