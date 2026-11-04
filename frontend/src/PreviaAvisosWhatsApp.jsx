@@ -14,6 +14,12 @@ const rotulosHistorico = {
   revisar: 'Revisar',
 }
 
+const rotulosPreenvio = {
+  impedido: 'Impedido',
+  revisar: 'Revisar',
+  pendente_de_validacao_operacional: 'Pendente de validação operacional',
+}
+
 export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
   const [aberto, setAberto] = useState(false)
   const [recarregar, setRecarregar] = useState(0)
@@ -80,6 +86,9 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
               ? 'Origem não registrada (revisar)'
               : (rotulosHistorico[item.diagnostico_historico.situacao] || 'Revisar')}
           </span>}
+          {item.diagnostico_preenvio && <span className={item.diagnostico_preenvio.situacao === 'impedido' ? 'wa-previa-alerta' : ''}>
+            Pré-envio: {rotulosPreenvio[item.diagnostico_preenvio.situacao] || 'Revisar'}
+          </span>}
         </div>
         <small>Tipo de aviso: {item.evento.replaceAll('_', ' ')}</small>
         <pre className="wa-previa-mensagem">{item.mensagem}</pre>
@@ -90,6 +99,7 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
             : item.diagnostico_historico.motivo}
           {item.diagnostico_historico.evento_superador ? ` (evento #${item.diagnostico_historico.evento_superador})` : ''}
         </p>}
+        {item.diagnostico_preenvio?.motivo && <p className="wa-previa-nota">Pré-envio (simulação): {item.diagnostico_preenvio.motivo}</p>}
         <p className="wa-previa-nota">Diagnóstico indicativo: não autoriza envio automático. Ações e registros devem ser feitos no aplicativo.</p>
       </article>)}
     </div>}

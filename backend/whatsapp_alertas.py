@@ -15,6 +15,8 @@ from database import SessionLocal
 from whatsapp_mensagens import preparar_previa_whatsapp, link_direto_servico
 from whatsapp_validade import avaliar_vigencia
 from whatsapp_historico import avaliar_historico
+from whatsapp_preenvio import avaliar_preenvio
+from servicos_api import pessoa_visivel
 
 router = APIRouter(prefix='/avisos-whatsapp', tags=['Avisos WhatsApp - preparacao'])
 
@@ -245,6 +247,54 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
                 'evento_superador': None,
             }
         )
+        # V6.7 - TRIAGEM EXCLUSIVAMENTE INFORMATIVA (SEM ENVIOS).
+        # O cadastro atual nao possui campo "usuario_ativo". O telefone
+        # cadastrado nao prova que sua linha esta ativa. E a deteccao de
+        # duplicidades ainda nao foi aferida atomicamente. Usar None.
+        if previa['evento'] == 'validacao_final':
+            acesso_destinatario = bool(
+                servico.criador_id == destinatario.id and
+                destinatario.perfil == 'Controladoria'
+            )
+        else:
+            participante_preenvio = participante
+            if previa['evento'] == 'servico_validado':
+                participante_preenvio = next((
+                    p for papel in ('executor', 'fiscalizador')
+                    if (p := participantes.get((servico.id, destinatario.id, papel))) is not None
+                ), None)
+            acesso_destinatario = (
+                pessoa_visivel(participante_preenvio, servico, destinatario)
+                if participante_preenvio is not None else None
+            )
+
+        referencias_corretas = bool(
+            fila.aviso_id == aviso.id and fila.servico_id == servico.id and
+            aviso.servico_id == servico.id and
+            fila.usuario_id == destinatario.id and aviso.usuario_id == destinatario.id
+        )
+        if not referencias_corretas:
+            vinculos_preenvio = False
+        elif aviso.evento_id is None or not historico_completo:
+            vinculos_preenvio = None
+        else:
+            vinculos_preenvio = any(
+                e['id'] == aviso.evento_id and e['servico_id'] == servico.id
+                for e in historicos.get(servico.id, [])
+            )
+
+        diagnostico_preenvio = avaliar_preenvio(
+            status_fila=fila.status,
+            consentimento=bool(preferencia and preferencia.consentimento),
+            telefone_ativo=False if not (preferencia and preferencia.telefone) else None,
+            usuario_ativo=None,
+            destinatario_autorizado=acesso_destinatario,
+            vinculos_consistentes=vinculos_preenvio,
+            evento_origem_id=aviso.evento_id,
+            diagnostico_atual=diagnostico['situacao'],
+            diagnostico_historico=diagnostico_historico['situacao'],
+            duplicidade_detectada=None,
+        )
         itens.append({
             'fila_id': fila.id,
             'servico_id': servico.id,
@@ -253,6 +303,7 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             'evento': previa['evento'],
             'diagnostico': diagnostico,
             'diagnostico_historico': diagnostico_historico,
+            'diagnostico_preenvio': diagnostico_preenvio,
             'sem_evento_origem': bool(aviso.evento_id is None and historico_completo),
             'mensagem': previa['mensagem'],
             'link': previa['link'],

@@ -47,9 +47,13 @@ def avaliar_preenvio(*, status_fila, consentimento, telefone_ativo,
         "vinculos_consistentes": vinculos_consistentes,
         "duplicidade_detectada": duplicidade_detectada,
     }
-    if any(type(valor) is not bool for valor in valores.values()):
-        return resposta("revisar", "Uma verificação obrigatória está ausente ou é inválida.")
+    # Primeiro, rejeitar entradas de tipo invalido. None representa
+    # verificacao INDISPONIVEL (nunca uma aprovacao presumida).
+    if any(valor is not None and type(valor) is not bool for valor in valores.values()):
+        return resposta("revisar", "Uma verificação obrigatória tem tipo inválido.")
 
+    # Um bloqueio COMPROVADO deve continuar visivel mesmo quando outras
+    # verificacoes ainda nao estao disponiveis. Nunca libera para envio.
     for campo, motivo in (
         ("consentimento", "Sem consentimento individual ativo."),
         ("telefone_ativo", "Telefone não está ativo ou cadastrado."),
@@ -57,9 +61,9 @@ def avaliar_preenvio(*, status_fila, consentimento, telefone_ativo,
         ("destinatario_autorizado", "Destinatário sem acesso atual à tarefa."),
         ("vinculos_consistentes", "Vínculos de fila, aviso, tarefa ou evento inconsistentes."),
     ):
-        if not valores[campo]:
+        if valores[campo] is False:
             return resposta("impedido", motivo)
-    if duplicidade_detectada:
+    if duplicidade_detectada is True:
         return resposta("impedido", "Possível duplicidade detectada para este aviso/evento.")
 
     if diagnostico_historico == "superado":
@@ -77,6 +81,12 @@ def avaliar_preenvio(*, status_fila, consentimento, telefone_ativo,
         return resposta("revisar", "Histórico não permite conclusão operacional segura.")
     if diagnostico_atual != "coerente":
         return resposta("revisar", "Situação atual não comprova necessidade de ação.")
+
+    # Sem verificacoes confiaveis, exigir revisao — NUNCA inventar True.
+    ausentes = [nome for nome, valor in valores.items() if valor is None]
+    if ausentes:
+        return resposta("revisar", "Verificações não comprovadas: " +
+                        ", ".join(ausentes) + ". Nenhum envio autorizado.")
 
     # 'nao_comprovado' + 'coerente': apenas passou por filtros de triagem;
     # NÃO significa aptidão, autorização ou liberação para disparar.
