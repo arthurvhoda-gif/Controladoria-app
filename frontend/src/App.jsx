@@ -7,6 +7,7 @@ import './App.css'
 import CentralServicos from './CentralServicos'
 import PreferenciasWhatsApp from './PreferenciasWhatsApp'
 import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
+import CentralFinanceira from './CentralFinanceira'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 
@@ -186,6 +187,7 @@ function App() {
   function paginaInicialPorPerfil(perfil) {
     if (perfil === 'Checklist') return 'checklist'
     if (perfil === 'Solicitante') return 'solicitacoes'
+    if (perfil === 'Financeiro') return 'financeiro'
     return 'dashboard'
   }
 
@@ -543,7 +545,7 @@ function App() {
       sessionStorage.setItem('usuarioControladoria', JSON.stringify(dadosUsuario))
       setSenhaLogin('')
       mostrarToast(`Bem-vindo(a), ${dadosUsuario.nome}!`, 'success')
-      setPagina(servicoLinkId ? 'servicos' : paginaInicialPorPerfil(dadosUsuario.perfil))
+      setPagina(servicoLinkId && dadosUsuario.perfil !== 'Financeiro' ? 'servicos' : paginaInicialPorPerfil(dadosUsuario.perfil))
     } catch (err) {
       mostrarToast(err.message, 'error')
     } finally {
@@ -702,7 +704,7 @@ function App() {
 
   async function carregarDados(forcarIndicador = false) {
     const tokenDestaSessao = usuarioLogado?.token
-    if (!tokenDestaSessao || tokenSessaoRef.current !== tokenDestaSessao) return
+    if (!tokenDestaSessao || tokenSessaoRef.current !== tokenDestaSessao || usuarioLogado.perfil === 'Financeiro') return
     // Somente uma consulta geral simultânea por conta: intervalos de 12s não
     // invalidam a consulta anterior se o Render demorar para responder.
     if (carregamentoGeralRef.current === tokenDestaSessao) return
@@ -734,7 +736,7 @@ function App() {
         let dados = await resSol.json()
         if (!respostaDaSessaoAtual()) return
         if (usuarioLogado.perfil === 'Solicitante') {
-          dados = dados.filter(s => s.solicitante === usuarioLogado.nome)
+          dados = dados.filter(s => s.solicitante_id === usuarioLogado.id)
         }
         const strSol = JSON.stringify(dados)
         if (strSol !== hashCacheRef.current.sol) {
@@ -795,6 +797,10 @@ function App() {
 
   useEffect(() => {
     if (!usuarioLogado?.token) return
+    if (usuarioLogado.perfil === 'Financeiro') {
+      if (pagina !== 'financeiro') setPagina('financeiro')
+      return
+    }
     if (usuarioLogado.perfil === 'Checklist' && !['checklist', 'servicos'].includes(pagina)) {
       setPagina('checklist')
     }
@@ -2353,6 +2359,7 @@ function App() {
 
   const ehControladoria = usuarioLogado.perfil === 'Controladoria'
   const ehChecklist = usuarioLogado.perfil === 'Checklist'
+  const ehFinanceiro = usuarioLogado.perfil === 'Financeiro'
 
   return (
     <div className="app">
@@ -2443,7 +2450,14 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          {ehChecklist ? (
+          {ehFinanceiro ? (
+            <>
+              <span className="sidebar-section-label">Gestão Financeira</span>
+              <button className={pagina === 'financeiro' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('financeiro'); setSidebarAberta(false); }}>
+                <span className="nav-icon"><IconeHaize nome="analyses" /></span><span>Central Financeira</span>
+              </button>
+            </>
+          ) : ehChecklist ? (
             <>
               <span className="sidebar-section-label">Operacional</span>
               <button className={pagina === 'checklist' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('checklist'); setAbaChecklist('vistorias'); setSidebarAberta(false); }}>
@@ -2468,6 +2482,11 @@ function App() {
                 <span className="nav-icon"><IconeHaize nome="requests" /></span><span>Solicitações</span>
                 {ehControladoria && quantidadePendentes > 0 && (<span className="nav-count">{quantidadePendentes}</span>)}
               </button>
+              {ehControladoria && (
+                <button className={pagina === 'financeiro' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('financeiro'); setSidebarAberta(false); }}>
+                  <span className="nav-icon"><IconeHaize nome="analyses" /></span><span>Central Financeira</span>
+                </button>
+              )}
               <button className={pagina === 'compras' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('compras'); setSidebarAberta(false); }}>
                 <span className="nav-icon"><IconeHaize nome="shopping" /></span><span>Compras</span>
               </button>
@@ -2611,12 +2630,18 @@ function App() {
 
 
             <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
-            {!ehChecklist && pagina !== 'servicos' && (
+            {!ehChecklist && !ehFinanceiro && pagina !== 'servicos' && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
           </div>
         </header>
 
+
+        {(ehControladoria || ehFinanceiro) && pagina === 'financeiro' && (
+          <div className="page">
+            <CentralFinanceira key={usuarioLogado.id} apiUrl={API_URL} token={usuarioLogado.token} perfil={usuarioLogado.perfil} />
+          </div>
+        )}
 
         {ehControladoria && pagina === 'contatos-whatsapp' && (
           <div className="page">
@@ -2624,7 +2649,7 @@ function App() {
           </div>
         )}
 
-        {pagina === 'servicos' && (
+        {!ehFinanceiro && pagina === 'servicos' && (
           <div className="page">
             <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
           </div>
@@ -3775,7 +3800,7 @@ function App() {
                     {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}
                   </>
                 )}
-                {(ehControladoria || (usuarioLogado.perfil === 'Solicitante' && solicitacaoSelecionada.solicitante === usuarioLogado.nome)) && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
+                {(ehControladoria || (usuarioLogado.perfil === 'Solicitante' && solicitacaoSelecionada.solicitante_id === usuarioLogado.id)) && textoStatus(solicitacaoSelecionada.status) === 'Em execução' && (
                   <>
                     <button className="button-primary" style={{ background: '#059669', borderColor: '#059669' }} onClick={() => finalizarSolicitacao(solicitacaoSelecionada)}>✓ Finalizar Compra</button>
                     {ehControladoria && <button className="button-danger" onClick={() => excluirSolicitacao(solicitacaoSelecionada)}>Excluir</button>}

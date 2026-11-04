@@ -1,0 +1,51 @@
+.fin-root { display:flex;flex-direction:column;gap:18px;color:#0f172a;max-width:1440px;margin:0 auto; }
+.fin-title { display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap; }
+.fin-title h2 { font-size:clamp(23px,2vw,32px);letter-spacing:-.035em;margin:5px 0 7px; }
+.fin-title p,.fin-cadastro p { color:#64748b;font-size:13px;line-height:1.6;max-width:750px;margin:0; }
+.fin-tools { display:flex;gap:8px;flex-wrap:wrap; }
+.fin-estado { color:#64748b;font-size:12px; }
+.fin-kpis { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px; }
+.fin-kpis article,.fin-card { background:white;border:1px solid #e2e8f0;box-shadow:0 3px 14px rgba(15,23,42,.035);border-radius:14px;padding:18px; }
+.fin-kpis article { display:flex;flex-direction:column;gap:8px; }
+.fin-kpis span { color:#64748b;font-size:12px;font-weight:600; }
+.fin-kpis strong { font-size:clamp(17px,2.3vw,27px);letter-spacing:-.035em; }
+.fin-kpis .fin-danger { background:#fff8f8;border-color:#fecaca; }
+.fin-kpis .fin-danger strong { color:#b91c1c; }
+.fin-layout { display:grid;grid-template-columns:minmax(260px,0.92fr) minmax(420px,1.55fr);align-items:start;gap:16px; }
+.fin-lista { display:flex;flex-direction:column;gap:10px; }
+.fin-root label { display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:#334155; }
+.fin-root input,.fin-root select,.fin-root textarea { width:100%;padding:10px 12px;background:#fff;color:#0f172a;border:1px solid #cbd5e1;border-radius:9px;font:inherit;box-sizing:border-box; }
+.fin-root textarea { min-height:70px;resize:vertical; }
+.fin-linhas { max-height:650px;overflow-y:auto;display:flex;flex-direction:column;gap:7px; }
+.fin-linha { border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px;padding:12px 13px;text-align:left;display:flex;flex-direction:column;gap:7px;color:#334155;font-size:12px;cursor:pointer; }
+.fin-linha:hover,.fin-linha.fin-ativa { background:#eff6ff;border-color:#93c5fd; }
+.fin-linha-top { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.fin-linha-top strong { color:#0f172a;font-size:14px; }
+.fin-linha-top small { color:#64748b; }
+.fin-linha-valor { display:flex;gap:6px;align-items:center;flex-wrap:wrap; }
+.fin-linha-valor em { color:#b91c1c;font-style:normal;font-weight:700; }
+.fin-detalhe { min-height:430px;display:flex;flex-direction:column;gap:17px; }
+.fin-detalhe h3 { font-size:18px;margin:0 0 6px; }
+.fin-detalhe header p { color:#64748b;font-size:13px;margin:0;line-height:1.5; }
+.fin-resumo { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px; }
+.fin-resumo span { background:#f8fafc;padding:10px 12px;border:1px solid #e2e8f0;border-radius:9px;font-size:11px;color:#64748b;display:flex;flex-direction:column;gap:5px; }
+.fin-resumo b { color:#0f172a;font-size:17px; }
+.fin-alerta { background:#fff1f2;color:#9f1239;border:1px solid #fda4af;padding:12px 15px;border-radius:10px;font-size:13px; }
+.fin-alerta p { margin:4px 0 0;font-size:12px; }
+.fin-form,.fin-legado { display:flex;flex-direction:column;gap:13px;border-top:1px solid #e2e8f0;padding-top:15px; }
+.fin-form h4,.fin-historico h4,.fin-legado h4 { margin:0;font-size:15px; }
+.fin-form-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+.fin-historico { border-top:1px solid #e2e8f0;padding-top:16px;display:flex;flex-direction:column;gap:10px; }
+.fin-evento { border:1px solid #bbf7d0;background:#f0fdf4;padding:11px 14px;border-radius:10px;display:flex;flex-direction:column;gap:6px; }
+.fin-evento.fin-estorno { background:#fff7ed;border-color:#fed7aa; }
+.fin-evento>div:first-child { display:flex;justify-content:space-between;gap:8px; }
+.fin-evento strong { font-size:12px; }
+.fin-evento small { color:#64748b;font-size:11px; }
+.fin-evento p { margin:0;font-size:12px; }
+.fin-evento-botoes { display:flex;align-items:center;gap:9px;flex-wrap:wrap; }
+.fin-rotulo-estornado { color:#b45309;font-size:11px;font-weight:700; }
+.fin-aviso,.fin-vazio,.fin-nota,.fin-legado p { color:#64748b;font-size:12px;line-height:1.6; }
+.fin-cadastro { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px; }
+.fin-cadastro h3,.fin-cadastro p { grid-column:1/-1;margin:0; }
+@media(max-width:1000px) { .fin-layout { grid-template-columns:1fr; }.fin-linhas { max-height:320px; } }
+@media(max-width:650px) { .fin-kpis { grid-template-columns:1fr; }.fin-resumo,.fin-form-grid,.fin-cadastro { grid-template-columns:1fr; } }

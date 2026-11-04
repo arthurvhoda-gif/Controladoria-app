@@ -58,6 +58,7 @@ class Solicitacao(Base):
     valor_aprovado = Column(Float, default=0.0)
     valor_realizado = Column(Float, default=0.0)
     solicitante = Column(String, nullable=False)
+    solicitante_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True, index=True)
     status = Column(String, default='Aprovação pendente')
     motivo_ajuste = Column(Text, nullable=True)
     observacao = Column(Text, nullable=True)
@@ -239,3 +240,40 @@ class WhatsAppAuditoriaContato(Base):
     telefone_novo_final = Column(String(4), nullable=True)
     consentimento_revogado = Column(Integer, nullable=False, default=0)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+# ========================================================================
+# CENTRAL FINANCEIRA: livro de lançamentos imutáveis (V6.8, desenvolvimento).
+# Valores inteiros em centavos; comprovantes persistidos em tabela separada.
+# ========================================================================
+from sqlalchemy import BigInteger
+
+class FinanceiroLancamento(Base):
+    __tablename__ = 'financeiro_lancamentos'
+    __table_args__ = (
+        UniqueConstraint('chave_operacao', name='uq_financeiro_chave_operacao'),
+        UniqueConstraint('estorno_de_id', name='uq_financeiro_estorno_unico'),
+    )
+    id = Column(Integer, primary_key=True)
+    solicitacao_id = Column(Integer, ForeignKey('solicitacoes.id', ondelete='RESTRICT'), nullable=False, index=True)
+    tipo = Column(String(16), nullable=False)  # pagamento | estorno
+    valor_centavos = Column(BigInteger, nullable=False)
+    # Fotografia do excedente na inclusão (alerta persistente, não reescrito após estorno).
+    excedente_centavos_no_lancamento = Column(BigInteger, nullable=False, default=0)
+    data_pagamento = Column(Date, nullable=True)
+    estorno_de_id = Column(Integer, ForeignKey('financeiro_lancamentos.id', ondelete='RESTRICT'), nullable=True)
+    chave_operacao = Column(String(64), nullable=False)
+    observacao = Column(String(500), nullable=False, default='')
+    autor_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    autor_nome = Column(String(200), nullable=False)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FinanceiroComprovante(Base):
+    __tablename__ = 'financeiro_comprovantes'
+    id = Column(Integer, primary_key=True)
+    lancamento_id = Column(Integer, ForeignKey('financeiro_lancamentos.id', ondelete='RESTRICT'), unique=True, nullable=False)
+    nome_arquivo = Column(String(180), nullable=False)
+    mime = Column(String(40), nullable=False)
+    tamanho_bytes = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    conteudo = Column(LargeBinary, nullable=False)

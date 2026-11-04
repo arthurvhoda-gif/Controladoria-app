@@ -37,6 +37,7 @@ import auth_utils
 from servicos_api import router as servicos_router
 from usuarios_pendencias import contar_servicos_pendentes
 from whatsapp_alertas import router as whatsapp_router
+from financeiro_api import router as financeiro_router
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
@@ -44,6 +45,7 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Controladoria Haize API")
 app.include_router(servicos_router)
 app.include_router(whatsapp_router)
+app.include_router(financeiro_router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -54,6 +56,17 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     gestor = perfil == 'Controladoria'
     solicitante = perfil == 'Solicitante'
     vistoriador = perfil == 'Checklist'
+    financeiro = perfil == 'Financeiro'
+    if path == '/financeiro/solicitacoes' and method == 'GET':
+        return gestor or financeiro
+    if re.fullmatch(r'/financeiro/solicitacoes/\d+/lancamentos', path) and method == 'GET':
+        return gestor or financeiro
+    if re.fullmatch(r'/financeiro/solicitacoes/\d+/pagamentos', path) and method == 'POST':
+        return gestor  # Financeiro consulta, não registra pagamentos.
+    if re.fullmatch(r'/financeiro/comprovantes/\d+', path) and method == 'GET':
+        return gestor or financeiro
+    if re.fullmatch(r'/financeiro/lancamentos/\d+/estornar', path) and method == 'POST':
+        return gestor
     if path == '/checklists/alertas' and method == 'GET':
         return gestor or vistoriador
     if path == '/checklists/envios' and method == 'GET':
@@ -114,6 +127,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
     # Solicitante pode iniciar e finalizar SOMENTE as próprias solicitações,
     # e somente nos status correspondentes (validados dentro de cada rota).
     # Aprovação, reprovação e ajuste de status continuam só para Controladoria.
+    if re.fullmatch(r'/solicitacoes/\d+/vinculo-solicitante', path) and method == 'PUT':
+        return gestor
     if re.fullmatch(r'/solicitacoes/\d+/(?:iniciar-execucao|finalizar)', path):
         return (gestor or solicitante) and method == 'PUT'
     if re.fullmatch(r'/solicitacoes/\d+/status', path):
@@ -137,7 +152,7 @@ def _solicitacao_visivel(db: Session, user, sol_id: int):
     sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == sol_id).first()
     if not sol:
         raise HTTPException(status_code=404, detail='Solicitação não encontrada.')
-    if user.auth_user_role != 'Controladoria' and sol.solicitante != user.auth_user_name:
+    if user.auth_user_role != 'Controladoria' and sol.solicitante_id != user.auth_user_id:
         raise HTTPException(status_code=403, detail='Você não tem acesso a esta solicitação.')
     return sol
 
@@ -377,7 +392,7 @@ def listar_usuarios(db: Session = Depends(get_db)):
 @app.post('/usuarios', response_model=schemas.UsuarioResponse)
 def criar_usuario(user: schemas.UsuarioCreate, db: Session = Depends(get_db)):
     email_limpo = user.email.strip().lower()
-    if user.perfil not in ('Controladoria', 'Solicitante', 'Checklist'):
+    if user.perfil not in ('Controladoria', 'Solicitante', 'Checklist', 'Financeiro'):
         raise HTTPException(status_code=400, detail='Perfil inválido.')
     if db.query(models.Usuario).filter(models.Usuario.email == email_limpo).first():
         raise HTTPException(status_code=400, detail='Já existe um usuário com este e-mail.')
@@ -453,6 +468,10 @@ def excluir_usuario(usuario_id: int, request: Request, db: Session = Depends(get
             status_code=409,
             detail=f'Este usuário possui {pendentes} serviço(s) em aberto como criador, executor ou fiscalizador. Resolva as responsabilidades antes de excluí-lo.',
         )
+    if db.query(models.Solicitacao.id).filter(models.Solicitacao.solicitante_id == usuario_id).first():
+        raise HTTPException(status_code=409, detail='Usuário tem solicitações vinculadas. Não exclua a identidade; preserve a auditoria.')
+    if db.query(models.FinanceiroLancamento.id).filter(models.FinanceiroLancamento.autor_id == usuario_id).first():
+        raise HTTPException(status_code=409, detail='Usuário possui lançamentos financeiros auditados. Não exclua a identidade.')
     db.delete(usuario)
     db.commit()
     return {'mensagem': 'Usuário removido com sucesso.'}
@@ -788,7 +807,7 @@ def registrar_historico_seguro(db: Session, solicitacao_id: int, acao: str, resp
 def listar_solicitacoes(request: Request, db: Session = Depends(get_db)):
     query = db.query(models.Solicitacao)
     if request.state.auth_user_role == 'Solicitante':
-        query = query.filter(models.Solicitacao.solicitante == request.state.auth_user_name)
+        query = query.filter(models.Solicitacao.solicitante_id == request.state.auth_user_id)
     return query.order_by(models.Solicitacao.id.desc()).all()
 
 
@@ -822,6 +841,7 @@ def criar_solicitacao(sol: schemas.SolicitacaoCreate, request: Request, db: Sess
         valor_aprovado=valor_aprovado_inicial,
         valor_realizado=0.0,
         solicitante=request.state.auth_user_name,
+        solicitante_id=request.state.auth_user_id,
         status=status_inicial,
         observacao=sol.observacao
     )
@@ -848,6 +868,9 @@ def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, r
         _solicitacao_visivel(db, request.state, solicitacao_id)
         if db_sol.status not in ('Aprovação pendente', 'Ajuste solicitado'):
             raise HTTPException(status_code=403, detail='Este pedido não pode mais ser editado.')
+
+    if db.query(models.FinanceiroLancamento.id).filter_by(solicitacao_id=solicitacao_id).first():
+        raise HTTPException(409, detail='Compra com movimentação financeira não pode ser editada. Solicite análise da Controladoria.')
 
     valor_servico = float(sol.valor_servico or 0.0)
     valor_produto = float(sol.valor_produto or 0.0)
@@ -890,6 +913,9 @@ def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdat
     if not db_sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
 
+    if (db.query(models.FinanceiroLancamento.id).filter_by(solicitacao_id=solicitacao_id).first()
+            and (dados.valor_aprovado is not None or dados.status not in ('Aprovada', 'Em execução', 'Finalizada'))):
+        raise HTTPException(409, detail='Compra com lançamentos financeiros não permite alterar valor aprovado nem retornar ao fluxo de aprovação.')
     db_sol.status = dados.status
     if dados.valor_aprovado is not None:
         db_sol.valor_aprovado = float(dados.valor_aprovado)
@@ -982,6 +1008,9 @@ def excluir_solicitacao(solicitacao_id: int, request: Request, db: Session = Dep
         if db_sol.status not in ('Aprovação pendente', 'Ajuste solicitado'):
             raise HTTPException(status_code=403, detail='Este pedido não pode mais ser excluído.')
 
+    if db.query(models.FinanceiroLancamento.id).filter_by(solicitacao_id=solicitacao_id).first():
+        raise HTTPException(409, detail='Solicitação com histórico financeiro não pode ser excluída.')
+
     # Não apague os arquivos antes de o banco confirmar a exclusão.
     try:
         # Um SELECT do modelo inteiro exige todas as colunas de anexos.
@@ -1026,6 +1055,39 @@ def excluir_solicitacao(solicitacao_id: int, request: Request, db: Session = Dep
             logging.warning("Não foi possível limpar anexo após excluir solicitação %s", solicitacao_id, exc_info=True)
 
     return {"mensagem": "Solicitação excluída com sucesso."}
+
+
+class VincularSolicitanteEntrada(BaseModel):
+    usuario_id: int
+    justificativa: str
+
+
+@app.put('/solicitacoes/{solicitacao_id}/vinculo-solicitante')
+def vincular_solicitante_legado(solicitacao_id: int, dados: VincularSolicitanteEntrada,
+                               request: Request, db: Session = Depends(get_db)):
+    """Controladoria vincula MANUALMENTE apenas pedidos legados sem ID."""
+    if request.state.auth_user_role != 'Controladoria':
+        raise HTTPException(403, detail='Acesso somente à Controladoria.')
+    sol = db.query(models.Solicitacao).filter_by(id=solicitacao_id).with_for_update().first()
+    if sol is None:
+        raise HTTPException(404, detail='Solicitação não encontrada.')
+    if sol.solicitante_id is not None:
+        raise HTTPException(409, detail='Solicitação já tem responsável identificado.')
+    user = db.get(models.Usuario, dados.usuario_id)
+    if user is None or user.perfil not in ('Solicitante', 'Controladoria'):
+        raise HTTPException(422, detail='Selecione usuário elegível.')
+    motivo = dados.justificativa.strip()
+    if len(motivo) < 10 or len(motivo) > 500:
+        raise HTTPException(422, detail='Justificativa deve conter entre 10 e 500 caracteres.')
+    sol.solicitante_id = user.id
+    db.add(models.HistoricoSolicitacao(
+        solicitacao_id=sol.id,
+        acao=f'Vínculo de identidade legada definido para usuário #{user.id}. Justificativa: {motivo}',
+        responsavel=request.state.auth_user_name,
+    ))
+    db.commit()
+    db.refresh(sol)
+    return {'solicitacao_id': sol.id, 'solicitante_id': sol.solicitante_id}
 
 
 @app.get("/solicitacoes/{solicitacao_id}/historico")
