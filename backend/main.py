@@ -1152,7 +1152,11 @@ def listar_destinatarios_atrasos(db: Session = Depends(get_db)):
         if pessoais:
             destinatarios.append({'email': usuario.email.strip().lower(), 'nome': usuario.nome,
                                   'perfil': usuario.perfil, 'alertas': pessoais})
-    return {'total_atividades_atrasadas': len(alertas), 'destinatarios': destinatarios}
+    return {
+        'total_atividades_atrasadas': len(alertas),
+        'alertas': alertas,
+        'destinatarios': destinatarios,
+    }
 
 
 def formatar_item_checklist(db: Session, item: models.ChecklistItem):
