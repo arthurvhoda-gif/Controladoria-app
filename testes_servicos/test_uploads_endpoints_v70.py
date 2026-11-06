@@ -62,7 +62,7 @@ class UploadsEndpointsV70(unittest.TestCase):
             auth_condominio_id=condominio_id,
         ))
 
-    def enviar_anexo(self, nome, bytes_pdf=b"%PDF-1.7\nDocumento fictício", request=None):
+    def enviar_anexo(self, nome, bytes_pdf=b"%PDF-1.7\nDocumento teste", request=None):
         arq = UploadFile(filename=nome, file=io.BytesIO(bytes_pdf))
         return api.upload_anexo_solicitacao(
             10, request or self.req(), arq, "Orçamento", "Usuário", self.db
@@ -74,7 +74,7 @@ class UploadsEndpointsV70(unittest.TestCase):
         self.assertEqual(anexo.nome_arquivo, "pedido.pdf")
         self.assertEqual(caminho.parent, Path(self.temp.name).resolve())
         self.assertNotIn("pedido", caminho.name)
-        self.assertEqual(caminho.read_bytes(), b"%PDF-1.7\nDocumento fictício")
+        self.assertEqual(caminho.read_bytes(), b"%PDF-1.7\nDocumento teste")
         baixado = api.download_anexo(anexo.id, self.req(), self.db)
         self.assertEqual(baixado.filename, "pedido.pdf")
         self.assertTrue(Path(baixado.path).is_file())
