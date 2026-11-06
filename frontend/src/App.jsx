@@ -726,11 +726,14 @@ function App() {
   const atualizarAlertasNoEfeito = useEffectEvent(() => { carregarAlertasChecklist() })
   useEffect(() => {
     if (!usuarioLogado?.token || !['Controladoria', 'Checklist'].includes(usuarioLogado?.perfil)) return
-    atualizarAlertasNoEfeito()
+    // A consulta com estado inicia apos o ciclo de commit, preservando os
+    // controles de abort, concorrencia e token implementados na rotina.
+    let ativo = true
+    queueMicrotask(() => { if (ativo) atualizarAlertasNoEfeito() })
     const atualizar = () => { if (document.visibilityState === 'visible') atualizarAlertasNoEfeito() }
     const intervalo = setInterval(atualizar, 60000)
     window.addEventListener('focus', atualizar)
-    return () => { clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+    return () => { ativo = false; clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
   }, [usuarioLogado?.token, usuarioLogado?.perfil])
 
   async function reprocessarEmailsChecklist() {
@@ -845,7 +848,8 @@ function App() {
   })
   useEffect(() => {
     if (!usuarioLogado?.token || usuarioLogado.perfil === 'Financeiro') return
-    sincronizarDadosNoEfeito()
+    let ativo = true
+    queueMicrotask(() => { if (ativo) sincronizarDadosNoEfeito() })
     const atualizarSeVisivel = () => {
       if (document.visibilityState === 'visible') sincronizarDadosNoEfeito()
     }
@@ -853,6 +857,7 @@ function App() {
     document.addEventListener('visibilitychange', atualizarSeVisivel)
     window.addEventListener('focus', atualizarSeVisivel)
     return () => {
+      ativo = false
       clearInterval(intervalo)
       document.removeEventListener('visibilitychange', atualizarSeVisivel)
       window.removeEventListener('focus', atualizarSeVisivel)
