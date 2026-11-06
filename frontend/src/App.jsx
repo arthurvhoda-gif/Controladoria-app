@@ -247,8 +247,7 @@ function App() {
   const [listaUnidades, setListaUnidades] = useState([])
   const [carregandoUnidades, setCarregandoUnidades] = useState(false)
   const [novaUnidade, setNovaUnidade] = useState({ identificacao: '', fracao_ideal: '' })
-  const [rateioDados, setRateioDados] = useState(null)
-  const [carregandoRateio, setCarregandoRateio] = useState(false)
+  const [resultadoRateio, setResultadoRateio] = useState({ chave: '', dados: null })
 
   // GESTÃO DE CHECKLIST E VISTORIAS
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
@@ -362,6 +361,14 @@ function App() {
   const [filtroDataInicio, setFiltroDataInicio] = useState('')
   const [filtroDataFim, setFiltroDataFim] = useState('')
   const [filtroCondominioAnalise, setFiltroCondominioAnalise] = useState('todos')
+
+  const idRateio = condominios.find(c => c.nome === filtroCondominioAnalise)?.id
+  const tokenRateio = usuarioLogado?.token
+  const mesRateio = filtroDataInicio ? filtroDataInicio.substring(0, 7) : ''
+  const chaveRateio = JSON.stringify([pagina, filtroCondominioAnalise, idRateio, mesRateio, tokenRateio])
+  const rateioDados = resultadoRateio.chave === chaveRateio ? resultadoRateio.dados : null
+  const carregandoRateio = pagina === 'analises' && filtroCondominioAnalise !== 'todos' &&
+    Boolean(idRateio && tokenRateio) && resultadoRateio.chave !== chaveRateio
 
   const [formulario, setFormulario] = useState({
     condominio: '', categoria: '', fornecedor: '', descricao: '',
@@ -1532,36 +1539,28 @@ function App() {
     }, true)
   }
 
-  async function calcularRateioCondominio(condominioNome) {
-    const condObj = condominios.find(c => c.nome === condominioNome)
-    if (!condObj) {
-      setRateioDados(null)
-      return
-    }
-    setCarregandoRateio(true)
-    try {
-      const mesParam = filtroDataInicio ? `?mes=${filtroDataInicio.substring(0, 7)}` : ''
-      const res = await fetch(`${API_URL}/condominios/${condObj.id}/rateio${mesParam}`, { headers: getAuthHeaders() })
-      if (res.ok) {
-        const dados = await res.json()
-        setRateioDados(dados)
-      } else {
-        setRateioDados(null)
-      }
-    } catch {
-      setRateioDados(null)
-    } finally {
-      setCarregandoRateio(false)
-    }
-  }
-
+  // Consultar rateio sem atualizar estado durante a montagem do efeito.
+  // Cada resposta e associada ao condominio, mes e token que a originaram.
   useEffect(() => {
-    if (pagina === 'analises' && filtroCondominioAnalise !== 'todos') {
-      calcularRateioCondominio(filtroCondominioAnalise)
-    } else {
-      setRateioDados(null)
+    if (pagina !== 'analises' || filtroCondominioAnalise === 'todos' || !idRateio || !tokenRateio) return
+    const controller = new AbortController()
+    async function consultarRateio() {
+      try {
+        const mesParam = mesRateio ? `?mes=${mesRateio}` : ''
+        const res = await fetch(`${API_URL}/condominios/${idRateio}/rateio${mesParam}`, {
+          headers: { Authorization: `Bearer ${tokenRateio}` },
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        const dados = res.ok ? await res.json() : null
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados })
+      } catch {
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados: null })
+      }
     }
-  }, [filtroCondominioAnalise, filtroDataInicio, pagina, condominios])
+    consultarRateio()
+    return () => controller.abort()
+  }, [pagina, filtroCondominioAnalise, idRateio, tokenRateio, mesRateio, chaveRateio])
 
   const somaFracaoTotal = useMemo(() => {
     return listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
