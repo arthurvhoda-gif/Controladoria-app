@@ -203,7 +203,14 @@ function App() {
   const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [servicoLinkId, setServicoLinkId] = useState(lerServicoLink)
-  const [pagina, setPagina] = useState(usuarioLogado?.token && servicoLinkId ? 'servicos' : paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const [paginaSolicitada, setPagina] = useState(usuarioLogado?.token && servicoLinkId ? 'servicos' : paginaInicialPorPerfil(usuarioLogado?.perfil))
+  // Perfil invalido ou alterado nunca deixa a interface numa pagina proibida.
+  // A pagina efetiva e derivada, nao sincronizada em um efeito.
+  const pagina = usuarioLogado?.perfil === 'Financeiro'
+    ? 'financeiro'
+    : usuarioLogado?.perfil === 'Checklist' && !['checklist', 'servicos'].includes(paginaSolicitada)
+      ? 'checklist'
+      : paginaSolicitada
   const concluirAberturaLink = useCallback((id) => {
     // Remove apenas o parâmetro de tarefa, preservando outros parâmetros e o hash.
     const url = new URL(window.location.href)
@@ -312,12 +319,41 @@ function App() {
   const [filtroInicioSolicitacao, setFiltroInicioSolicitacao] = useState('')
   const [filtroFimSolicitacao, setFiltroFimSolicitacao] = useState('')
   const [ordenacaoSolicitacao, setOrdenacaoSolicitacao] = useState('recentes')
-  const [paginaSolicitacoes, setPaginaSolicitacoes] = useState(1)
+  const [paginacaoSolicitacoes, setPaginacaoSolicitacoes] = useState({ chave: '', pagina: 1 })
   const [filtroCompra, setFiltroCompra] = useState('')
   const [filtroCondominioCompra, setFiltroCondominioCompra] = useState('todos')
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('todos')
   const [ordenacaoCompra, setOrdenacaoCompra] = useState('recentes')
-  const [paginaCompra, setPaginaCompra] = useState(1)
+  const [paginacaoCompra, setPaginacaoCompra] = useState({ chave: '', pagina: 1 })
+
+  // Mudar qualquer filtro reinicia a pagina exibida, sem provocar render em cascata.
+  // O setter preserva o contrato das botoes de paginacao ja existentes.
+  const chaveFiltrosSolicitacoes = JSON.stringify([
+    filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao,
+    filtroCategoriaSolicitacao, filtroInicioSolicitacao, filtroFimSolicitacao,
+    ordenacaoSolicitacao
+  ])
+  const paginaSolicitacoes = paginacaoSolicitacoes.chave === chaveFiltrosSolicitacoes
+    ? paginacaoSolicitacoes.pagina : 1
+  function setPaginaSolicitacoes(proxima) {
+    setPaginacaoSolicitacoes(anterior => {
+      const paginaAtual = anterior.chave === chaveFiltrosSolicitacoes ? anterior.pagina : 1
+      return { chave: chaveFiltrosSolicitacoes,
+        pagina: typeof proxima === 'function' ? proxima(paginaAtual) : proxima }
+    })
+  }
+
+  const chaveFiltrosCompra = JSON.stringify([
+    filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra
+  ])
+  const paginaCompra = paginacaoCompra.chave === chaveFiltrosCompra ? paginacaoCompra.pagina : 1
+  function setPaginaCompra(proxima) {
+    setPaginacaoCompra(anterior => {
+      const paginaAtual = anterior.chave === chaveFiltrosCompra ? anterior.pagina : 1
+      return { chave: chaveFiltrosCompra,
+        pagina: typeof proxima === 'function' ? proxima(paginaAtual) : proxima }
+    })
+  }
   const [buscaCondominioCadastro, setBuscaCondominioCadastro] = useState('')
   const [buscaCategoriaCadastro, setBuscaCategoriaCadastro] = useState('')
   const [buscaFornecedorCadastro, setBuscaFornecedorCadastro] = useState('')
@@ -800,13 +836,7 @@ function App() {
 
   useEffect(() => {
     if (!usuarioLogado?.token) return
-    if (usuarioLogado.perfil === 'Financeiro') {
-      if (pagina !== 'financeiro') setPagina('financeiro')
-      return
-    }
-    if (usuarioLogado.perfil === 'Checklist' && !['checklist', 'servicos'].includes(pagina)) {
-      setPagina('checklist')
-    }
+    if (usuarioLogado.perfil === 'Financeiro') return
     carregarDados(false)
     if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
 
@@ -962,11 +992,6 @@ function App() {
   const inicioSolicitacoes = (paginaAtualSolicitacoes - 1) * solicitacoesPorPagina
   const solicitacoesPaginadas = solicitacoesFiltradas.slice(inicioSolicitacoes, inicioSolicitacoes + solicitacoesPorPagina)
 
-  useEffect(() => { setPaginaSolicitacoes(1) }, [
-    filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao, filtroCategoriaSolicitacao,
-    filtroInicioSolicitacao, filtroFimSolicitacao, ordenacaoSolicitacao
-  ])
-
   function limparFiltrosSolicitacoes() {
     setFiltroSolicitacao('')
     setFiltroStatus('todos')
@@ -1017,7 +1042,6 @@ function App() {
   const totalPaginasCompra = Math.max(1, Math.ceil(comprasFiltradas.length / comprasPorPagina))
   const paginaAtualCompra = Math.min(paginaCompra, totalPaginasCompra)
   const comprasPaginadas = comprasFiltradas.slice((paginaAtualCompra - 1) * comprasPorPagina, paginaAtualCompra * comprasPorPagina)
-  useEffect(() => { setPaginaCompra(1) }, [filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
   function limparFiltrosCompra() {
     setFiltroCompra('')
     setFiltroCondominioCompra('todos')
