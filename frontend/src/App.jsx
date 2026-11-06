@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useEffect, useEffectEvent, useState, useRef, useMemo, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
@@ -472,6 +472,8 @@ function App() {
     }
   }, [])
 
+  const reiniciarSessaoNoEfeito = useEffectEvent(() => reiniciarDadosDaSessao())
+
   useEffect(() => {
     if (!usuarioLogado?.token) return
     let canceled = false
@@ -486,7 +488,7 @@ function App() {
       .catch(() => {
         if (!canceled) {
           sessionStorage.removeItem('usuarioControladoria')
-          reiniciarDadosDaSessao()
+          reiniciarSessaoNoEfeito()
           setUsuarioLogado(null)
         }
       })
@@ -527,31 +529,26 @@ function App() {
     }
   }
 
+  // Mantem a ordem de fechamento das janelas, com o estado mais recente.
+  const tratarEscape = useEffectEvent(() => {
+    if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
+    if (dialog.isOpen) { fecharDialog(); return }
+    if (itemChecklistExecutando) { if (!salvandoExecucaoChecklist) setItemChecklistExecutando(null); return }
+    if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
+    if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
+    if (condominioUnidades) { setCondominioUnidades(null); return }
+    if (mostrarFormularioCondominio) { fecharFormularioCondominio(); return }
+    if (mostrarFormularioCategoria) { fecharFormularioCategoria(); return }
+    if (mostrarFormularioFornecedor) { fecharFormularioFornecedor(); return }
+    if (mostrarFormulario) { fecharFormulario(); return }
+    if (solicitacaoSelecionada) { fecharSolicitacao(); return }
+    if (mostrarMenuNotificacoes) setMostrarMenuNotificacoes(false)
+  })
   useEffect(() => {
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') {
-        if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
-        if (dialog.isOpen) { fecharDialog(); return }
-        if (itemChecklistExecutando) { if (!salvandoExecucaoChecklist) setItemChecklistExecutando(null); return }
-        if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
-        if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
-        if (condominioUnidades) { setCondominioUnidades(null); return }
-        if (mostrarFormularioCondominio) { fecharFormularioCondominio(); return }
-        if (mostrarFormularioCategoria) { fecharFormularioCategoria(); return }
-        if (mostrarFormularioFornecedor) { fecharFormularioFornecedor(); return }
-        if (mostrarFormulario) { fecharFormulario(); return }
-        if (solicitacaoSelecionada) { fecharSolicitacao(); return }
-        if (mostrarMenuNotificacoes) { setMostrarMenuNotificacoes(false); return }
-      }
-    }
+    const handleKeyDown = e => { if (e.key === 'Escape') tratarEscape() }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [
-    alertaPlanoAcao, dialog.isOpen, itemChecklistExecutando, salvandoExecucaoChecklist, itemChecklistHistorico,
-    mostrarModalNovoChecklist, condominioUnidades, mostrarFormularioCondominio,
-    mostrarFormularioCategoria, mostrarFormularioFornecedor, mostrarFormulario,
-    solicitacaoSelecionada, mostrarMenuNotificacoes
-  ])
+  }, [])
 
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
@@ -726,10 +723,11 @@ function App() {
     }
   }
 
+  const atualizarAlertasNoEfeito = useEffectEvent(() => { carregarAlertasChecklist() })
   useEffect(() => {
     if (!usuarioLogado?.token || !['Controladoria', 'Checklist'].includes(usuarioLogado?.perfil)) return
-    carregarAlertasChecklist()
-    const atualizar = () => { if (document.visibilityState === 'visible') carregarAlertasChecklist() }
+    atualizarAlertasNoEfeito()
+    const atualizar = () => { if (document.visibilityState === 'visible') atualizarAlertasNoEfeito() }
     const intervalo = setInterval(atualizar, 60000)
     window.addEventListener('focus', atualizar)
     return () => { clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
@@ -841,16 +839,15 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    if (!usuarioLogado?.token) return
-    if (usuarioLogado.perfil === 'Financeiro') return
+  const sincronizarDadosNoEfeito = useEffectEvent(() => {
     carregarDados(false)
     if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
-
+  })
+  useEffect(() => {
+    if (!usuarioLogado?.token || usuarioLogado.perfil === 'Financeiro') return
+    sincronizarDadosNoEfeito()
     const atualizarSeVisivel = () => {
-      if (document.visibilityState !== 'visible') return
-      carregarDados(false)
-      if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
+      if (document.visibilityState === 'visible') sincronizarDadosNoEfeito()
     }
     const intervalo = setInterval(atualizarSeVisivel, 12000)
     document.addEventListener('visibilitychange', atualizarSeVisivel)
@@ -860,7 +857,7 @@ function App() {
       document.removeEventListener('visibilitychange', atualizarSeVisivel)
       window.removeEventListener('focus', atualizarSeVisivel)
     }
-  }, [usuarioLogado?.token, pagina, abaChecklist])
+  }, [usuarioLogado?.token, usuarioLogado?.perfil, pagina, abaChecklist])
 
   function renderBadge(sol) {
     if (!sol) return null
@@ -2287,8 +2284,9 @@ function App() {
   function atualizarCampoCategoria(campo, valor) { setFormularioCategoria(atual => ({ ...atual, [campo]: valor })) }
   function atualizarCampoFornecedor(campo, valor) { setFormularioFornecedor(atual => ({ ...atual, [campo]: valor })) }
 
+  const carregarZeladoresNoEfeito = useEffectEvent(() => { carregarZeladores() })
   useEffect(() => {
-    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
+    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladoresNoEfeito()
   }, [pagina, abaChecklist, usuarioLogado?.perfil, usuarioLogado?.token])
 
   async function carregarZeladores() {
