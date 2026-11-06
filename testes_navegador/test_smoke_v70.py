@@ -198,7 +198,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.locator(".login-screen")).to_have_count(0)
 
     def menu(self, nome):
-        self.page.locator(".sidebar-nav").get_by_role("button", name=nome, exact=True).click()
+        # O contador de pendências pode acrescentar um número ao nome acessível.
+        self.page.locator(".sidebar-nav").get_by_role("button", name=nome, exact=False).click()
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
