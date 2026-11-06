@@ -49,8 +49,9 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
 
   useEffect(() => {
     let ativo = true
-    setErro('')
-    carregar().catch(e => { if (ativo) setErro(e.message) })
+    carregar()
+      .then(() => { if (ativo) setErro('') })
+      .catch(e => { if (ativo) setErro(e.message) })
     return () => { ativo = false }
   }, [carregar])
 
