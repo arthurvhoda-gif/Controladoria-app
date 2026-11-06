@@ -1577,7 +1577,14 @@ function App() {
       return
     }
 
-    const XLSX = await carregarAdaptadorXlsx()
+    let XLSX
+    try {
+      XLSX = await carregarAdaptadorXlsx()
+    } catch (erro) {
+      console.error('Não foi possível inicializar o exportador Excel:', erro)
+      mostrarToast('Não foi possível iniciar a exportação Excel. Tente novamente.', 'error')
+      return
+    }
     const wb = XLSX.utils.book_new()
     const periodoFormatado = filtroDataInicio || filtroDataFim ? `De ${filtroDataInicio ? new Date(filtroDataInicio + 'T00:00:00').toLocaleDateString('pt-BR') : 'Início'} até ${filtroDataFim ? new Date(filtroDataFim + 'T00:00:00').toLocaleDateString('pt-BR') : 'Hoje'}` : 'Todo o Período'
     const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
