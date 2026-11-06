@@ -38,7 +38,7 @@ PEDIDOS = [
         "condominio": "Condomínio Fictício A",
         "condominio_id": 1,
         "categoria": "Manutenção",
-        "fornecedor": "Fornecedor Fictício",
+        "fornecedor": '=HYPERLINK("https://exemplo-invalido.test","Clique")' if i == 2 else "Fornecedor Fictício",
         "descricao": "Pedido especialmente identificável" if i == 1 else f"Compra simulada número {i}",
         "valor": 100.0 + i,
         "valor_aprovado": 0.0,
@@ -285,6 +285,14 @@ class HaizeNavegadorV70(unittest.TestCase):
                 extrato = pacote.read("xl/worksheets/sheet2.xml").decode("utf-8")
                 self.assertIn("SUM(F5:F", extrato)
                 self.assertIn("SUM(G5:G", extrato)
+                # Fornecedor controlado pelo usuário é texto literal, nunca
+                # fórmula executável, mesmo começando com '='.
+                strings = pacote.read("xl/sharedStrings.xml").decode("utf-8") if "xl/sharedStrings.xml" in nomes else extrato
+                self.assertIn("HYPERLINK", strings)
+                import re
+                formulas = re.findall(r"<f(?: [^>]*)?>(.*?)</f>", extrato)
+                self.assertTrue(formulas, "Fórmulas consolidadas precisam existir")
+                self.assertFalse(any("HYPERLINK" in formula for formula in formulas))
                 resumo = pacote.read("xl/worksheets/sheet1.xml").decode("utf-8")
                 self.assertIn("mergeCell", resumo)
                 estilos = pacote.read("xl/styles.xml").decode("utf-8")
