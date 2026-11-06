@@ -13,8 +13,8 @@ PESOS = ("critical", "high", "moderate", "low")
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("Uso: python scripts/resumir_npm_audit_v70.py <arquivo-json>")
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--fail-high"):
+        raise SystemExit("Uso: python scripts/resumir_npm_audit_v70.py <arquivo-json> [--fail-high]")
     arquivo = Path(sys.argv[1])
     dados = json.loads(arquivo.read_text(encoding="utf-8"))
     if "error" in dados or "vulnerabilities" not in dados or "metadata" not in dados:
@@ -34,6 +34,8 @@ def main():
     risco_alto = sum(int(totais.get(s, 0)) for s in ("high", "critical"))
     if risco_alto:
         print(f"::warning::Existem {risco_alto} vulnerabilidades altas/críticas a tratar antes de produção.")
+        if "--fail-high" in sys.argv:
+            raise SystemExit("BLOQUEADO: dependências com vulnerabilidades altas/críticas.")
     else:
         print("Sem vulnerabilidades altas/críticas no escopo auditado.")
 
