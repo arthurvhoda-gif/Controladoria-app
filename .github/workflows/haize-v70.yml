@@ -138,7 +138,7 @@ jobs:
         run: python scripts/ensaio_pg_v70.py preparar
       - name: Backup completo, restauracao independente e conferência
         run: |
-          pg_dump -Fc -f "$RUNNER_TEMP/haize_v70_ci.dump"
+          pg_dump -d haize_v70_testes -Fc -f "$RUNNER_TEMP/haize_v70_ci.dump"
           createdb haize_v70_restauracao
           pg_restore --exit-on-error --no-owner --no-acl -d haize_v70_restauracao "$RUNNER_TEMP/haize_v70_ci.dump"
           DATABASE_URL='postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v70_restauracao' python scripts/ensaio_pg_v70.py verificar-restauracao
