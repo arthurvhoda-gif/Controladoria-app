@@ -102,7 +102,7 @@ export function criarAdaptadorXlsx(ExcelJS) {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = String(nome).replace(/[\\/\u0000-\u001F\u007F]/g, '_').slice(0, 160)
+      link.download = String(nome).replace(/[\\/\p{Cc}]/gu, '_').slice(0, 160)
       document.body.appendChild(link)
       try {
         link.click()
