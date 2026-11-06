@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 import time
 import unittest
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 from urllib.request import urlopen
 from urllib.error import URLError
 
@@ -256,6 +258,38 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.get_by_text("Cadastros existentes")).to_be_visible()
         self.page.get_by_role("button", name="Exibir prévias").click()
         expect(self.page.get_by_text("Nenhuma notificação preparada no momento.")).to_be_visible()
+
+    def test_07_exportacao_excel_preserva_duas_abas_e_formulas(self):
+        self.login()
+        self.menu("Análises & Rateio")
+        botao = self.page.get_by_role("button", name="Exportar Excel")
+        expect(botao).to_be_enabled()
+        # Exercita a biblioteca ExcelJS REAL no Chromium, não um mock.
+        with self.page.expect_download(timeout=45000) as evento:
+            botao.click()
+        arquivo = evento.value
+        self.assertTrue(arquivo.suggested_filename.endswith(".xlsx"))
+        with TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "relatorio.xlsx"
+            arquivo.save_as(caminho)
+            with ZipFile(caminho) as pacote:
+                self.assertIsNone(pacote.testzip(), "Arquivo XLSX inválido")
+                nomes = set(pacote.namelist())
+                self.assertIn("xl/workbook.xml", nomes)
+                self.assertIn("xl/worksheets/sheet1.xml", nomes)
+                self.assertIn("xl/worksheets/sheet2.xml", nomes)
+                self.assertIn("xl/styles.xml", nomes)
+                workbook = pacote.read("xl/workbook.xml").decode("utf-8")
+                self.assertIn("Resumo por Condomínio", workbook)
+                self.assertIn("Extrato de Solicitações", workbook)
+                extrato = pacote.read("xl/worksheets/sheet2.xml").decode("utf-8")
+                self.assertIn("SUM(F5:F", extrato)
+                self.assertIn("SUM(G5:G", extrato)
+                resumo = pacote.read("xl/worksheets/sheet1.xml").decode("utf-8")
+                self.assertIn("mergeCell", resumo)
+                estilos = pacote.read("xl/styles.xml").decode("utf-8")
+                self.assertIn("numFmt", estilos)
+        expect(self.page.get_by_text("Relatório Executivo Excel (.xlsx) gerado com sucesso!")).to_be_visible()
 
     def test_06_sessao_rejeitada_retorna_ao_login(self):
         self.sessao_invalida = True
