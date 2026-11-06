@@ -184,10 +184,11 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   useEffect(() => {
     // O componente eh remontado por token na App: inicia com listas vazias.
     // Nao limpamos dados sincronamente em useEffect para evitar render em cascata.
-    atualizarNoEfeito()
+    let ativo = true
+    queueMicrotask(() => { if (ativo) atualizarNoEfeito() })
     const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizarNoEfeito(true) }, 60000)
     const ref = ultimaRequisicao
-    return () => { ref.current++; clearInterval(timer) }
+    return () => { ativo = false; ref.current++; clearInterval(timer) }
   }, [atualizar])
 
   // Abertura direta após login: sempre consulta o endpoint protegido de detalhes.
