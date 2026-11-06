@@ -212,7 +212,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.login("compras@teste.local")
         self.menu("Solicitações")
         expect(self.page.locator(".central-solicitacao-linha")).to_have_count(10)
-        self.page.locator(".cadastro-paginacao, .central-paginacao").last.get_by_role("button", name="Próxima").click()
+        self.page.locator(".central-paginacao").get_by_role("button", name="Próxima").click()
         expect(self.page.locator(".central-solicitacao-linha")).to_have_count(5)
         self.page.get_by_role("searchbox", name="Pesquisar solicitações").fill("especialmente identificável")
         expect(self.page.locator(".central-solicitacao-linha")).to_have_count(1)
