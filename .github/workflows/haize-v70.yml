@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - estabilizacao-v70-20261106
+      - seguranca-v71-20261106
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
+      - estabilizacao-v70-20261106
 
 permissions:
   contents: read
@@ -55,6 +57,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Instalar dependencias reproduziveis
         run: npm ci
+        working-directory: frontend
+      - name: Testar a compatibilidade e segurança das exportações Excel
+        run: npm run test:exportacao
         working-directory: frontend
       - name: Compilar frontend
         run: npm run build
