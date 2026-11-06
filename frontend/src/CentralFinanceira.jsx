@@ -32,10 +32,18 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
   const chaveRef = useRef(null)
   const headers = { Authorization: `Bearer ${token}` }
 
-  const carregar = useCallback(async (id = null) => {
-    const res = await fetch(`${apiUrl}/financeiro/solicitacoes`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+  // A consulta pura e compartilhada pelo carregamento inicial e pela atualizacao.
+  // Nenhuma resposta pode atravessar sessoes quando o componente desmonta.
+  const buscarSolicitacoes = useCallback(async (signal) => {
+    const res = await fetch(`${apiUrl}/financeiro/solicitacoes`, {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal
+    })
     if (!res.ok) throw new Error(await erroHttp(res))
-    const data = await res.json()
+    return res.json()
+  }, [apiUrl, token])
+
+  const carregar = useCallback(async (id = null) => {
+    const data = await buscarSolicitacoes()
     setItens(data.solicitacoes || [])
     setEstado(`${data.solicitacoes?.length ?? 0} solicitações listadas (limite de ${data.limite}).`)
     if (id != null) {
@@ -45,15 +53,20 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
       setDetalhe(d)
       setSelecionado(id)
     }
-  }, [apiUrl, token])
+  }, [apiUrl, token, buscarSolicitacoes])
 
   useEffect(() => {
-    let ativo = true
-    carregar()
-      .then(() => { if (ativo) setErro('') })
-      .catch(e => { if (ativo) setErro(e.message) })
-    return () => { ativo = false }
-  }, [carregar])
+    const controller = new AbortController()
+    buscarSolicitacoes(controller.signal)
+      .then(data => {
+        if (controller.signal.aborted) return
+        setItens(data.solicitacoes || [])
+        setEstado(`${data.solicitacoes?.length ?? 0} solicitações listadas (limite de ${data.limite}).`)
+        setErro('')
+      })
+      .catch(e => { if (!controller.signal.aborted) setErro(e.message) })
+    return () => controller.abort()
+  }, [buscarSolicitacoes])
 
   const abrir = async id => {
     setErro('')
