@@ -64,7 +64,8 @@ jobs:
 
   navegador:
     name: Chromium - navegacao e permissoes (API ficticia)
-    runs-on: ubuntu-latest
+    # Playwright 1.56 suporta Ubuntu 24.04; ubuntu-latest ja pode usar 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
