@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useState, useRef, useMemo, useCallback } fro
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
-import XLSX from 'xlsx-js-style'
+import { carregarAdaptadorXlsx } from './exportarXlsxSeguro'
 import './App.css'
 import CentralServicos from './CentralServicos'
 import PreferenciasWhatsApp from './PreferenciasWhatsApp'
@@ -1571,12 +1571,20 @@ function App() {
   // =========================================================================
   // EXPORTAÇÃO EXCEL (.XLSX) E PDF FINANCEIRO
   // =========================================================================
-  function exportarRelatorioExcel() {
+  async function exportarRelatorioExcel() {
     if (solicitacoesAnaliseFiltradas.length === 0 && listaOrcamentoCondominio.length === 0) {
       mostrarToast('Não existem dados para exportar no filtro selecionado.', 'error')
       return
     }
 
+    let XLSX
+    try {
+      XLSX = await carregarAdaptadorXlsx()
+    } catch (erro) {
+      console.error('Não foi possível inicializar o exportador Excel:', erro)
+      mostrarToast('Não foi possível iniciar a exportação Excel. Tente novamente.', 'error')
+      return
+    }
     const wb = XLSX.utils.book_new()
     const periodoFormatado = filtroDataInicio || filtroDataFim ? `De ${filtroDataInicio ? new Date(filtroDataInicio + 'T00:00:00').toLocaleDateString('pt-BR') : 'Início'} até ${filtroDataFim ? new Date(filtroDataFim + 'T00:00:00').toLocaleDateString('pt-BR') : 'Hoje'}` : 'Todo o Período'
     const condFormatado = filtroCondominioAnalise === 'todos' ? 'Todos os Condomínios' : filtroCondominioAnalise
@@ -1712,8 +1720,13 @@ function App() {
     XLSX.utils.book_append_sheet(wb, wsExtrato, 'Extrato de Solicitações')
 
     const nomeArquivo = `Relatorio_Controladoria_${filtroCondominioAnalise !== 'todos' ? filtroCondominioAnalise : 'Geral'}.xlsx`
-    XLSX.writeFile(wb, nomeArquivo)
-    mostrarToast('Relatório Executivo Excel (.xlsx) gerado com sucesso!', 'success')
+    try {
+      await XLSX.writeFile(wb, nomeArquivo)
+      mostrarToast('Relatório Executivo Excel (.xlsx) gerado com sucesso!', 'success')
+    } catch (erro) {
+      console.error('Falha ao exportar planilha XLSX:', erro)
+      mostrarToast('Não foi possível gerar o Excel. Tente novamente.', 'error')
+    }
   }
 
   function exportarRelatorioPDF() {

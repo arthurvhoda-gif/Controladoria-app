@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - estabilizacao-v70-20261106
+      - seguranca-v71-20261106
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
+      - estabilizacao-v70-20261106
 
 permissions:
   contents: read
@@ -55,6 +57,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Instalar dependencias reproduziveis
         run: npm ci
+        working-directory: frontend
+      - name: Testar a compatibilidade e segurança das exportações Excel
+        run: npm run test:exportacao
         working-directory: frontend
       - name: Compilar frontend
         run: npm run build
@@ -162,14 +167,14 @@ jobs:
           cd frontend
           npm audit --json > "$RUNNER_TEMP/npm-audit-all.json" || test "$?" -eq 1
           cd ..
-          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-all.json"
+          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-all.json" --fail-high
         working-directory: .
       - name: Inventariar apenas dependencias usadas em producao
         run: |
           cd frontend
           npm audit --omit=dev --json > "$RUNNER_TEMP/npm-audit-runtime.json" || test "$?" -eq 1
           cd ..
-          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-runtime.json"
+          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-runtime.json" --fail-high
 
 
   seguranca_git:
