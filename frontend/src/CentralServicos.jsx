@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import './CentralServicos.css'
 
 // V3: apresentação e usabilidade. Mantém os contratos HTTP da Central de Serviços V2.
@@ -180,16 +180,18 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
     finally { if (!silencioso && chave === ultimaRequisicao.current) setCarregando(false) }
   }, [token, gestor, requisitar])
 
+  const atualizarNoEfeito = useEffectEvent((silencioso = false) => atualizar(silencioso))
   useEffect(() => {
     // O componente eh remontado por token na App: inicia com listas vazias.
     // Nao limpamos dados sincronamente em useEffect para evitar render em cascata.
-    atualizar()
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizar(true) }, 60000)
+    atualizarNoEfeito()
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizarNoEfeito(true) }, 60000)
     const ref = ultimaRequisicao
     return () => { ref.current++; clearInterval(timer) }
   }, [atualizar])
 
   // Abertura direta após login: sempre consulta o endpoint protegido de detalhes.
+  const abrirServicoDoEfeito = useEffectEvent(detalhes => abrirServico(detalhes))
   useEffect(() => {
     if (!linkServicoId || !token || carregando) return
     const controller = new AbortController()
@@ -208,7 +210,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
         const detalhes = await resposta.json()
         if (controller.signal.aborted) return
         focoAnteriorGaveta.current = document.activeElement
-        abrirServico(detalhes)
+        abrirServicoDoEfeito(detalhes)
         onLinkConcluido?.(linkServicoId)
       } catch {
         if (!controller.signal.aborted) setErro('Falha de conexão ao abrir a tarefa. Verifique a rede e atualize a página para tentar novamente.')
@@ -236,11 +238,12 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
     return () => { ativo = false }
   }, [selecionado, fotosVersao, requisitar])
 
+  const fecharModalDoEfeito = useEffectEvent(() => fecharModal())
   useEffect(() => {
     if (!novoAberto) return
     const anterior = document.activeElement
     const tecla = e => {
-      if (e.key === 'Escape' && !salvando) fecharModal()
+      if (e.key === 'Escape' && !salvando) fecharModalDoEfeito()
       if (e.key !== 'Tab' || !modalRef.current) return
       const focaveis = [...modalRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')]
       if (!focaveis.length) return
