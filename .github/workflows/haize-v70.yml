@@ -1,0 +1,182 @@
+name: Haize V7 - Regressao e seguranca
+
+on:
+  push:
+    branches:
+      - estabilizacao-v70-20261106
+  pull_request:
+    branches:
+      - central-servicos-notificacoes-2026
+
+permissions:
+  contents: read
+
+concurrency:
+  group: haize-v70-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Testes Python (sem producao)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Instalar dependencias de backend e cliente HTTP de testes
+        run: |
+          python -m pip install -r backend/requirements.txt
+          python -m pip install 'httpx==0.28.1'
+      - name: Executar todos os testes offline
+        env:
+          DATABASE_URL: 'sqlite://'
+          AUTH_SECRET_KEY: 'apenas-para-ci-sem-acesso-a-producao-2026'
+          ENABLE_CHECKLIST_EMAILS: 'false'
+          GAS_WEB_APP_URL: ''
+          HAIZE_SECRET: ''
+          AUTOMATION_SECRET: ''
+          FRONTEND_PUBLIC_URL: 'http://127.0.0.1:5173'
+        run: python -m unittest discover -s testes_servicos -p 'test_*.py' -v
+
+  frontend:
+    name: Build e lint React
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependencias reproduziveis
+        run: npm ci
+        working-directory: frontend
+      - name: Compilar frontend
+        run: npm run build
+        working-directory: frontend
+      - name: Verificar lint
+        run: npm run lint
+        working-directory: frontend
+
+
+  navegador:
+    name: Chromium - navegacao e permissoes (API ficticia)
+    # Playwright 1.56 suporta Ubuntu 24.04; ubuntu-latest ja pode usar 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Instalar frontend
+        run: npm ci
+        working-directory: frontend
+      - name: Instalar Chromium e driver Python
+        run: |
+          python -m pip install "playwright==1.56.0"
+          python -m playwright install --with-deps chromium
+      - name: Exercitar telas com API totalmente simulada
+        env:
+          CI: 'true'
+          HAIZE_ATRASOS_ENVIO_ATIVO: 'NAO'
+        run: python -m unittest discover -s testes_navegador -p 'test_*.py' -v
+
+
+  postgres_descartavel:
+    name: PostgreSQL - migracoes, backup e restauracao ficticios
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: haize_ci
+          POSTGRES_PASSWORD: senha-temporaria-ci-nao-produção
+          POSTGRES_DB: haize_v70_testes
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haize_ci -d haize_v70_testes"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: haize_ci
+      PGPASSWORD: senha-temporaria-ci-nao-produção
+      DATABASE_URL: 'postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v70_testes'
+      AUTH_SECRET_KEY: 'somente-testes-postgres-v70-sem-relacao-com-producao'
+      ENABLE_CHECKLIST_EMAILS: 'false'
+      GAS_WEB_APP_URL: ''
+      HAIZE_SECRET: ''
+      AUTOMATION_SECRET: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Instalar PostgreSQL client e backend
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16
+          python -m pip install -r backend/requirements.txt
+      - name: Criar schema, migrar duas vezes e inserir registros ficticios
+        run: python scripts/ensaio_pg_v70.py preparar
+      - name: Backup completo, restauracao independente e conferência
+        run: |
+          pg_dump -d haize_v70_testes -Fc -f "$RUNNER_TEMP/haize_v70_ci.dump"
+          createdb haize_v70_restauracao
+          pg_restore --exit-on-error --no-owner --no-acl -d haize_v70_restauracao "$RUNNER_TEMP/haize_v70_ci.dump"
+          DATABASE_URL='postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v70_restauracao' python scripts/ensaio_pg_v70.py verificar-restauracao
+
+  dependencia_npm:
+    name: Auditoria npm - inventario de riscos existentes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar a versao exata do lockfile
+        run: npm ci --ignore-scripts
+        working-directory: frontend
+      - name: Inventariar todas as dependencias
+        run: |
+          cd frontend
+          npm audit --json > "$RUNNER_TEMP/npm-audit-all.json" || test "$?" -eq 1
+          cd ..
+          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-all.json"
+        working-directory: .
+      - name: Inventariar apenas dependencias usadas em producao
+        run: |
+          cd frontend
+          npm audit --omit=dev --json > "$RUNNER_TEMP/npm-audit-runtime.json" || test "$?" -eq 1
+          cd ..
+          python3 scripts/resumir_npm_audit_v70.py "$RUNNER_TEMP/npm-audit-runtime.json"
+
+
+  seguranca_git:
+    name: Bloquear novos arquivos sensiveis
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Auditar arquivos rastreados sem abrir conteudo
+        run: python3 scripts/verificar_artefatos_git_v70.py

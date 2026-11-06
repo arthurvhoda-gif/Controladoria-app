@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './GestaoContatosWhatsApp.css'
 import PreviaAvisosWhatsApp from './PreviaAvisosWhatsApp'
 
@@ -16,21 +16,34 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
   const [numero, setNumero] = useState('')
   const [salvando, setSalvando] = useState(false)
 
+  const buscarUsuarios = useCallback(async () => {
+    const resposta = await fetch(`${apiUrl}/avisos-whatsapp/admin/usuarios`, {
+      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store'
+    })
+    const dados = await resposta.json()
+    if (!resposta.ok) throw new Error(dados.detail || 'Não foi possível carregar os cadastros.')
+    if (!Array.isArray(dados)) throw new Error('Lista de usuários inválida.')
+    return dados
+  }, [apiUrl, token])
+
   async function carregar(silencioso = false) {
     if (!silencioso) setCarregando(true)
-    setErro('')
     try {
-      const resposta = await fetch(`${apiUrl}/avisos-whatsapp/admin/usuarios`, {
-        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store'
-      })
-      const dados = await resposta.json()
-      if (!resposta.ok) throw new Error(dados.detail || 'Não foi possível carregar os cadastros.')
+      const dados = await buscarUsuarios()
       setUsuarios(dados)
+      setErro('')
     } catch (e) { setErro(e.message) }
     finally { setCarregando(false) }
   }
 
-  useEffect(() => { carregar() }, [apiUrl, token])
+  useEffect(() => {
+    let ativo = true
+    buscarUsuarios()
+      .then(dados => { if (ativo) { setUsuarios(dados); setErro('') } })
+      .catch(e => { if (ativo) setErro(e.message) })
+      .finally(() => { if (ativo) setCarregando(false) })
+    return () => { ativo = false }
+  }, [buscarUsuarios])
 
   const filtrados = useMemo(() => usuarios.filter(u => {
     const termo = texto(busca.trim())

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useEffect, useEffectEvent, useState, useRef, useMemo, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer
 } from 'recharts'
@@ -31,7 +31,10 @@ function lerCache(chave, padrao = []) {
 function salvarCache(chave, dados) {
   try {
     sessionStorage.setItem(`haize_cache_${chave}`, JSON.stringify(dados))
-  } catch { }
+  } catch (erro) {
+    // Cache opcional: quotas e privacidade não podem interromper o aplicativo.
+    if (import.meta.env.DEV) console.debug('Cache temporário indisponível:', erro)
+  }
 }
 
 function parseDataSegura(dataStr) {
@@ -200,7 +203,14 @@ function App() {
   const [trocandoSenha, setTrocandoSenha] = useState(false)
   const [carregandoLogin, setCarregandoLogin] = useState(false)
   const [servicoLinkId, setServicoLinkId] = useState(lerServicoLink)
-  const [pagina, setPagina] = useState(usuarioLogado?.token && servicoLinkId ? 'servicos' : paginaInicialPorPerfil(usuarioLogado?.perfil))
+  const [paginaSolicitada, setPagina] = useState(usuarioLogado?.token && servicoLinkId ? 'servicos' : paginaInicialPorPerfil(usuarioLogado?.perfil))
+  // Perfil invalido ou alterado nunca deixa a interface numa pagina proibida.
+  // A pagina efetiva e derivada, nao sincronizada em um efeito.
+  const pagina = usuarioLogado?.perfil === 'Financeiro'
+    ? 'financeiro'
+    : usuarioLogado?.perfil === 'Checklist' && !['checklist', 'servicos'].includes(paginaSolicitada)
+      ? 'checklist'
+      : paginaSolicitada
   const concluirAberturaLink = useCallback((id) => {
     // Remove apenas o parâmetro de tarefa, preservando outros parâmetros e o hash.
     const url = new URL(window.location.href)
@@ -237,8 +247,7 @@ function App() {
   const [listaUnidades, setListaUnidades] = useState([])
   const [carregandoUnidades, setCarregandoUnidades] = useState(false)
   const [novaUnidade, setNovaUnidade] = useState({ identificacao: '', fracao_ideal: '' })
-  const [rateioDados, setRateioDados] = useState(null)
-  const [carregandoRateio, setCarregandoRateio] = useState(false)
+  const [resultadoRateio, setResultadoRateio] = useState({ chave: '', dados: null })
 
   // GESTÃO DE CHECKLIST E VISTORIAS
   const [filtroCondominioChecklist, setFiltroCondominioChecklist] = useState('todos')
@@ -270,7 +279,9 @@ function App() {
 
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
-  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
+  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(
+    () => 'Notification' in window && Notification.permission === 'granted'
+  )
   const [alertasChecklist, setAlertasChecklist] = useState([])
   const [erroAlertasChecklist, setErroAlertasChecklist] = useState('')
 
@@ -307,12 +318,41 @@ function App() {
   const [filtroInicioSolicitacao, setFiltroInicioSolicitacao] = useState('')
   const [filtroFimSolicitacao, setFiltroFimSolicitacao] = useState('')
   const [ordenacaoSolicitacao, setOrdenacaoSolicitacao] = useState('recentes')
-  const [paginaSolicitacoes, setPaginaSolicitacoes] = useState(1)
+  const [paginacaoSolicitacoes, setPaginacaoSolicitacoes] = useState({ chave: '', pagina: 1 })
   const [filtroCompra, setFiltroCompra] = useState('')
   const [filtroCondominioCompra, setFiltroCondominioCompra] = useState('todos')
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('todos')
   const [ordenacaoCompra, setOrdenacaoCompra] = useState('recentes')
-  const [paginaCompra, setPaginaCompra] = useState(1)
+  const [paginacaoCompra, setPaginacaoCompra] = useState({ chave: '', pagina: 1 })
+
+  // Mudar qualquer filtro reinicia a pagina exibida, sem provocar render em cascata.
+  // O setter preserva o contrato das botoes de paginacao ja existentes.
+  const chaveFiltrosSolicitacoes = JSON.stringify([
+    filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao,
+    filtroCategoriaSolicitacao, filtroInicioSolicitacao, filtroFimSolicitacao,
+    ordenacaoSolicitacao
+  ])
+  const paginaSolicitacoes = paginacaoSolicitacoes.chave === chaveFiltrosSolicitacoes
+    ? paginacaoSolicitacoes.pagina : 1
+  function setPaginaSolicitacoes(proxima) {
+    setPaginacaoSolicitacoes(anterior => {
+      const paginaAtual = anterior.chave === chaveFiltrosSolicitacoes ? anterior.pagina : 1
+      return { chave: chaveFiltrosSolicitacoes,
+        pagina: typeof proxima === 'function' ? proxima(paginaAtual) : proxima }
+    })
+  }
+
+  const chaveFiltrosCompra = JSON.stringify([
+    filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra
+  ])
+  const paginaCompra = paginacaoCompra.chave === chaveFiltrosCompra ? paginacaoCompra.pagina : 1
+  function setPaginaCompra(proxima) {
+    setPaginacaoCompra(anterior => {
+      const paginaAtual = anterior.chave === chaveFiltrosCompra ? anterior.pagina : 1
+      return { chave: chaveFiltrosCompra,
+        pagina: typeof proxima === 'function' ? proxima(paginaAtual) : proxima }
+    })
+  }
   const [buscaCondominioCadastro, setBuscaCondominioCadastro] = useState('')
   const [buscaCategoriaCadastro, setBuscaCategoriaCadastro] = useState('')
   const [buscaFornecedorCadastro, setBuscaFornecedorCadastro] = useState('')
@@ -321,6 +361,14 @@ function App() {
   const [filtroDataInicio, setFiltroDataInicio] = useState('')
   const [filtroDataFim, setFiltroDataFim] = useState('')
   const [filtroCondominioAnalise, setFiltroCondominioAnalise] = useState('todos')
+
+  const idRateio = condominios.find(c => c.nome === filtroCondominioAnalise)?.id
+  const tokenRateio = usuarioLogado?.token
+  const mesRateio = filtroDataInicio ? filtroDataInicio.substring(0, 7) : ''
+  const chaveRateio = JSON.stringify([pagina, filtroCondominioAnalise, idRateio, mesRateio, tokenRateio])
+  const rateioDados = resultadoRateio.chave === chaveRateio ? resultadoRateio.dados : null
+  const carregandoRateio = pagina === 'analises' && filtroCondominioAnalise !== 'todos' &&
+    Boolean(idRateio && tokenRateio) && resultadoRateio.chave !== chaveRateio
 
   const [formulario, setFormulario] = useState({
     condominio: '', categoria: '', fornecedor: '', descricao: '',
@@ -424,6 +472,8 @@ function App() {
     }
   }, [])
 
+  const reiniciarSessaoNoEfeito = useEffectEvent(() => reiniciarDadosDaSessao())
+
   useEffect(() => {
     if (!usuarioLogado?.token) return
     let canceled = false
@@ -438,7 +488,7 @@ function App() {
       .catch(() => {
         if (!canceled) {
           sessionStorage.removeItem('usuarioControladoria')
-          reiniciarDadosDaSessao()
+          reiniciarSessaoNoEfeito()
           setUsuarioLogado(null)
         }
       })
@@ -479,41 +529,32 @@ function App() {
     }
   }
 
+  // Mantem a ordem de fechamento das janelas, com o estado mais recente.
+  const tratarEscape = useEffectEvent(() => {
+    if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
+    if (dialog.isOpen) { fecharDialog(); return }
+    if (itemChecklistExecutando) { if (!salvandoExecucaoChecklist) setItemChecklistExecutando(null); return }
+    if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
+    if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
+    if (condominioUnidades) { setCondominioUnidades(null); return }
+    if (mostrarFormularioCondominio) { fecharFormularioCondominio(); return }
+    if (mostrarFormularioCategoria) { fecharFormularioCategoria(); return }
+    if (mostrarFormularioFornecedor) { fecharFormularioFornecedor(); return }
+    if (mostrarFormulario) { fecharFormulario(); return }
+    if (solicitacaoSelecionada) { fecharSolicitacao(); return }
+    if (mostrarMenuNotificacoes) setMostrarMenuNotificacoes(false)
+  })
   useEffect(() => {
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') {
-        if (alertaPlanoAcao) { setAlertaPlanoAcao(null); return }
-        if (dialog.isOpen) { fecharDialog(); return }
-        if (itemChecklistExecutando) { if (!salvandoExecucaoChecklist) setItemChecklistExecutando(null); return }
-        if (itemChecklistHistorico) { setItemChecklistHistorico(null); return }
-        if (mostrarModalNovoChecklist) { setMostrarModalNovoChecklist(false); return }
-        if (condominioUnidades) { setCondominioUnidades(null); return }
-        if (mostrarFormularioCondominio) { fecharFormularioCondominio(); return }
-        if (mostrarFormularioCategoria) { fecharFormularioCategoria(); return }
-        if (mostrarFormularioFornecedor) { fecharFormularioFornecedor(); return }
-        if (mostrarFormulario) { fecharFormulario(); return }
-        if (solicitacaoSelecionada) { fecharSolicitacao(); return }
-        if (mostrarMenuNotificacoes) { setMostrarMenuNotificacoes(false); return }
-      }
-    }
+    const handleKeyDown = e => { if (e.key === 'Escape') tratarEscape() }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [
-    alertaPlanoAcao, dialog.isOpen, itemChecklistExecutando, salvandoExecucaoChecklist, itemChecklistHistorico,
-    mostrarModalNovoChecklist, condominioUnidades, mostrarFormularioCondominio,
-    mostrarFormularioCategoria, mostrarFormularioFornecedor, mostrarFormulario,
-    solicitacaoSelecionada, mostrarMenuNotificacoes
-  ])
+  }, [])
 
   useEffect(() => {
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
-        setNotificacoesPushAtivas(true)
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(permission => {
-          if (permission === 'granted') setNotificacoesPushAtivas(true)
-        })
-      }
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') setNotificacoesPushAtivas(true)
+      })
     }
   }, [])
 
@@ -521,7 +562,9 @@ function App() {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         new Notification(titulo, { body: corpo, icon: '/logo.png' })
-      } catch { }
+      } catch (erro) {
+        if (import.meta.env.DEV) console.debug('Notificação nativa indisponível:', erro)
+      }
     }
   }
 
@@ -680,13 +723,17 @@ function App() {
     }
   }
 
+  const atualizarAlertasNoEfeito = useEffectEvent(() => { carregarAlertasChecklist() })
   useEffect(() => {
     if (!usuarioLogado?.token || !['Controladoria', 'Checklist'].includes(usuarioLogado?.perfil)) return
-    carregarAlertasChecklist()
-    const atualizar = () => { if (document.visibilityState === 'visible') carregarAlertasChecklist() }
+    // A consulta com estado inicia apos o ciclo de commit, preservando os
+    // controles de abort, concorrencia e token implementados na rotina.
+    let ativo = true
+    queueMicrotask(() => { if (ativo) atualizarAlertasNoEfeito() })
+    const atualizar = () => { if (document.visibilityState === 'visible') atualizarAlertasNoEfeito() }
     const intervalo = setInterval(atualizar, 60000)
     window.addEventListener('focus', atualizar)
-    return () => { clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+    return () => { ativo = false; clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
   }, [usuarioLogado?.token, usuarioLogado?.perfil])
 
   async function reprocessarEmailsChecklist() {
@@ -795,32 +842,27 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    if (!usuarioLogado?.token) return
-    if (usuarioLogado.perfil === 'Financeiro') {
-      if (pagina !== 'financeiro') setPagina('financeiro')
-      return
-    }
-    if (usuarioLogado.perfil === 'Checklist' && !['checklist', 'servicos'].includes(pagina)) {
-      setPagina('checklist')
-    }
+  const sincronizarDadosNoEfeito = useEffectEvent(() => {
     carregarDados(false)
     if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
-
+  })
+  useEffect(() => {
+    if (!usuarioLogado?.token || usuarioLogado.perfil === 'Financeiro') return
+    let ativo = true
+    queueMicrotask(() => { if (ativo) sincronizarDadosNoEfeito() })
     const atualizarSeVisivel = () => {
-      if (document.visibilityState !== 'visible') return
-      carregarDados(false)
-      if (pagina === 'checklist' && abaChecklist === 'vistorias') carregarChecklists()
+      if (document.visibilityState === 'visible') sincronizarDadosNoEfeito()
     }
     const intervalo = setInterval(atualizarSeVisivel, 12000)
     document.addEventListener('visibilitychange', atualizarSeVisivel)
     window.addEventListener('focus', atualizarSeVisivel)
     return () => {
+      ativo = false
       clearInterval(intervalo)
       document.removeEventListener('visibilitychange', atualizarSeVisivel)
       window.removeEventListener('focus', atualizarSeVisivel)
     }
-  }, [usuarioLogado?.token, pagina, abaChecklist])
+  }, [usuarioLogado?.token, usuarioLogado?.perfil, pagina, abaChecklist])
 
   function renderBadge(sol) {
     if (!sol) return null
@@ -959,11 +1001,6 @@ function App() {
   const inicioSolicitacoes = (paginaAtualSolicitacoes - 1) * solicitacoesPorPagina
   const solicitacoesPaginadas = solicitacoesFiltradas.slice(inicioSolicitacoes, inicioSolicitacoes + solicitacoesPorPagina)
 
-  useEffect(() => { setPaginaSolicitacoes(1) }, [
-    filtroSolicitacao, filtroStatus, filtroCondominioSolicitacao, filtroCategoriaSolicitacao,
-    filtroInicioSolicitacao, filtroFimSolicitacao, ordenacaoSolicitacao
-  ])
-
   function limparFiltrosSolicitacoes() {
     setFiltroSolicitacao('')
     setFiltroStatus('todos')
@@ -1014,7 +1051,6 @@ function App() {
   const totalPaginasCompra = Math.max(1, Math.ceil(comprasFiltradas.length / comprasPorPagina))
   const paginaAtualCompra = Math.min(paginaCompra, totalPaginasCompra)
   const comprasPaginadas = comprasFiltradas.slice((paginaAtualCompra - 1) * comprasPorPagina, paginaAtualCompra * comprasPorPagina)
-  useEffect(() => { setPaginaCompra(1) }, [filtroCompra, filtroCondominioCompra, filtroStatusCompra, ordenacaoCompra])
   function limparFiltrosCompra() {
     setFiltroCompra('')
     setFiltroCondominioCompra('todos')
@@ -1505,36 +1541,28 @@ function App() {
     }, true)
   }
 
-  async function calcularRateioCondominio(condominioNome) {
-    const condObj = condominios.find(c => c.nome === condominioNome)
-    if (!condObj) {
-      setRateioDados(null)
-      return
-    }
-    setCarregandoRateio(true)
-    try {
-      const mesParam = filtroDataInicio ? `?mes=${filtroDataInicio.substring(0, 7)}` : ''
-      const res = await fetch(`${API_URL}/condominios/${condObj.id}/rateio${mesParam}`, { headers: getAuthHeaders() })
-      if (res.ok) {
-        const dados = await res.json()
-        setRateioDados(dados)
-      } else {
-        setRateioDados(null)
-      }
-    } catch {
-      setRateioDados(null)
-    } finally {
-      setCarregandoRateio(false)
-    }
-  }
-
+  // Consultar rateio sem atualizar estado durante a montagem do efeito.
+  // Cada resposta e associada ao condominio, mes e token que a originaram.
   useEffect(() => {
-    if (pagina === 'analises' && filtroCondominioAnalise !== 'todos') {
-      calcularRateioCondominio(filtroCondominioAnalise)
-    } else {
-      setRateioDados(null)
+    if (pagina !== 'analises' || filtroCondominioAnalise === 'todos' || !idRateio || !tokenRateio) return
+    const controller = new AbortController()
+    async function consultarRateio() {
+      try {
+        const mesParam = mesRateio ? `?mes=${mesRateio}` : ''
+        const res = await fetch(`${API_URL}/condominios/${idRateio}/rateio${mesParam}`, {
+          headers: { Authorization: `Bearer ${tokenRateio}` },
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        const dados = res.ok ? await res.json() : null
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados })
+      } catch {
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados: null })
+      }
     }
-  }, [filtroCondominioAnalise, filtroDataInicio, pagina, condominios])
+    consultarRateio()
+    return () => controller.abort()
+  }, [pagina, filtroCondominioAnalise, idRateio, tokenRateio, mesRateio, chaveRateio])
 
   const somaFracaoTotal = useMemo(() => {
     return listaUnidades.reduce((acc, u) => acc + numero(u.fracao_ideal), 0)
@@ -1926,7 +1954,10 @@ function App() {
       ])
       if (resHist.ok) setHistoricoSolicitacao(await resHist.json())
       if (resAnexos.ok) setAnexosSolicitacao(await resAnexos.json())
-    } catch { }
+    } catch (erro) {
+      mostrarToast('Não foi possível atualizar o histórico ou os anexos desta solicitação.', 'error')
+      if (import.meta.env.DEV) console.debug('Detalhes da solicitação:', erro)
+    }
   }
 
   function fecharSolicitacao() { setSolicitacaoSelecionada(null); setHistoricoSolicitacao([]); setAnexosSolicitacao([]) }
@@ -2258,8 +2289,9 @@ function App() {
   function atualizarCampoCategoria(campo, valor) { setFormularioCategoria(atual => ({ ...atual, [campo]: valor })) }
   function atualizarCampoFornecedor(campo, valor) { setFormularioFornecedor(atual => ({ ...atual, [campo]: valor })) }
 
+  const carregarZeladoresNoEfeito = useEffectEvent(() => { carregarZeladores() })
   useEffect(() => {
-    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladores()
+    if (pagina === 'checklist' && abaChecklist === 'zeladores' && usuarioLogado?.perfil === 'Controladoria') carregarZeladoresNoEfeito()
   }, [pagina, abaChecklist, usuarioLogado?.perfil, usuarioLogado?.token])
 
   async function carregarZeladores() {
@@ -2639,19 +2671,19 @@ function App() {
 
         {(ehControladoria || ehFinanceiro) && pagina === 'financeiro' && (
           <div className="page">
-            <CentralFinanceira key={usuarioLogado.id} apiUrl={API_URL} token={usuarioLogado.token} perfil={usuarioLogado.perfil} />
+            <CentralFinanceira key={usuarioLogado.token} apiUrl={API_URL} token={usuarioLogado.token} perfil={usuarioLogado.perfil} />
           </div>
         )}
 
         {ehControladoria && pagina === 'contatos-whatsapp' && (
           <div className="page">
-            <GestaoContatosWhatsApp apiUrl={API_URL} token={usuarioLogado.token} />
+            <GestaoContatosWhatsApp key={usuarioLogado.token} apiUrl={API_URL} token={usuarioLogado.token} />
           </div>
         )}
 
         {!ehFinanceiro && pagina === 'servicos' && (
           <div className="page">
-            <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
+            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
           </div>
         )}
 

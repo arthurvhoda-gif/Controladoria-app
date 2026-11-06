@@ -1,6 +1,5 @@
 import os
 import json
-import shutil
 import hashlib
 import re
 import base64
@@ -13,7 +12,6 @@ from datetime import timedelta
 from html import escape
 from urllib import request as urllib_request, error as urllib_error
 from urllib.parse import urlparse
-import uuid
 from datetime import datetime
 from typing import Optional, List
 
@@ -34,6 +32,9 @@ import schemas
 from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
+from arquivos_seguros import (
+    salvar_upload_local, MAX_ANEXO_SOLICITACAO, MAX_FOTO_CHECKLIST
+)
 from servicos_api import router as servicos_router
 from usuarios_pendencias import contar_servicos_pendentes
 from whatsapp_alertas import router as whatsapp_router
@@ -1126,27 +1127,31 @@ def upload_anexo_solicitacao(
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
     _solicitacao_visivel(db, request.state, solicitacao_id)
 
-    nome_seguro = f"{solicitacao_id}_{uuid.uuid4().hex[:8]}_{arquivo.filename}"
-    caminho_completo = os.path.join(UPLOAD_DIR, nome_seguro)
-
-    with open(caminho_completo, "wb") as buffer:
-        shutil.copyfileobj(arquivo.file, buffer)
+    nome_original, caminho_completo = salvar_upload_local(
+        arquivo, UPLOAD_DIR, f"sol_{solicitacao_id}", MAX_ANEXO_SOLICITACAO
+    )
 
     novo_anexo = models.Anexo(
         solicitacao_id=solicitacao_id,
-        nome_arquivo=arquivo.filename,
+        nome_arquivo=nome_original,
         caminho=caminho_completo,
         tipo=tipo,
         responsavel=request.state.auth_user_name
     )
-    db.add(novo_anexo)
-    db.commit()
+    try:
+        db.add(novo_anexo)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if os.path.isfile(caminho_completo):
+            os.remove(caminho_completo)
+        raise
     db.refresh(novo_anexo)
 
     registrar_historico_seguro(
         db,
         solicitacao_id,
-        f"Arquivo anexado ({tipo}): {arquivo.filename}",
+        f"Arquivo anexado ({tipo}): {nome_original}",
         request.state.auth_user_name
     )
     return novo_anexo
@@ -1401,11 +1406,9 @@ def executar_checklist(
     caminho_foto = None
 
     if foto and foto.filename:
-        nome_foto = foto.filename
-        nome_seguro = f"chk_{item_id}_{uuid.uuid4().hex[:8]}_{foto.filename}"
-        caminho_foto = os.path.join(FOTOS_CHECKLIST_DIR, nome_seguro)
-        with open(caminho_foto, "wb") as buffer:
-            shutil.copyfileobj(foto.file, buffer)
+        nome_foto, caminho_foto = salvar_upload_local(
+            foto, FOTOS_CHECKLIST_DIR, f"chk_{item_id}", MAX_FOTO_CHECKLIST
+        )
 
     execucao = models.ChecklistExecucao(
         item_id=item_id,
@@ -1415,22 +1418,28 @@ def executar_checklist(
         nome_foto=nome_foto,
         caminho_foto=caminho_foto
     )
-    db.add(execucao)
-    db.flush()  # obtém o ID antes do commit para criar a fila na mesma transação
-    if ENVIO_AUTOMATICO_CHECKLIST:
-        db.flush()
-        dados_envio = _dados_pdf_execucao(item, execucao)
-        novo_envio = models.ChecklistEnvioRelatorio(
-            execucao_id=execucao.id,
-            dados_json=json.dumps(dados_envio, ensure_ascii=False),
-            status='pendente',
-        )
-        db.add(novo_envio)
-        db.flush()
-        envio_id = novo_envio.id
-    else:
-        envio_id = None
-    db.commit()
+    try:
+        db.add(execucao)
+        db.flush()  # obtém o ID antes do commit para criar a fila na mesma transação
+        if ENVIO_AUTOMATICO_CHECKLIST:
+            db.flush()
+            dados_envio = _dados_pdf_execucao(item, execucao)
+            novo_envio = models.ChecklistEnvioRelatorio(
+                execucao_id=execucao.id,
+                dados_json=json.dumps(dados_envio, ensure_ascii=False),
+                status='pendente',
+            )
+            db.add(novo_envio)
+            db.flush()
+            envio_id = novo_envio.id
+        else:
+            envio_id = None
+        db.commit()
+    except Exception:
+        db.rollback()
+        if caminho_foto and os.path.isfile(caminho_foto):
+            os.remove(caminho_foto)
+        raise
     db.refresh(execucao)
     if envio_id is not None:
         background_tasks.add_task(_processar_envio_execucao, envio_id)

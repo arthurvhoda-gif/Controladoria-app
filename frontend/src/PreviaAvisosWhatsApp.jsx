@@ -23,16 +23,18 @@ const rotulosPreenvio = {
 export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
   const [aberto, setAberto] = useState(false)
   const [recarregar, setRecarregar] = useState(0)
-  const [dados, setDados] = useState([])
-  const [carregando, setCarregando] = useState(false)
-  const [erro, setErro] = useState('')
+  // Cada consulta possui sua propria chave: dados de outra sessao nao aparecem.
+  const [resultado, setResultado] = useState({ chave: '', dados: [], erro: '' })
+  const chaveAtual = JSON.stringify([apiUrl, token, recarregar])
+  const atual = resultado.chave === chaveAtual
+  const dados = atual ? resultado.dados : []
+  const erro = atual ? resultado.erro : ''
+  const carregando = aberto && !atual
 
   useEffect(() => {
     if (!aberto) return undefined
     const controller = new AbortController()
     let ativo = true
-    setCarregando(true)
-    setErro('')
     fetch(`${apiUrl}/avisos-whatsapp/fila/previas`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
@@ -41,12 +43,14 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
       const corpo = await resposta.json().catch(() => ({}))
       if (!resposta.ok) throw new Error(corpo.detail || 'Não foi possível carregar as prévias.')
       if (!Array.isArray(corpo.previa)) throw new Error('Formato de resposta inesperado.')
-      if (ativo) setDados(corpo.previa)
+      if (ativo) setResultado({ chave: chaveAtual, dados: corpo.previa, erro: '' })
     }).catch(e => {
-      if (ativo && e.name !== 'AbortError') setErro(e.message || 'Erro ao carregar prévias.')
-    }).finally(() => { if (ativo) setCarregando(false) })
+      if (ativo && e.name !== 'AbortError') {
+        setResultado({ chave: chaveAtual, dados: [], erro: e.message || 'Erro ao carregar prévias.' })
+      }
+    })
     return () => { ativo = false; controller.abort() }
-  }, [aberto, recarregar, apiUrl, token])
+  }, [aberto, chaveAtual, apiUrl, token])
 
   return <section className="wa-previa" aria-label="Prévia de avisos WhatsApp">
     <div className="wa-previa-cabecalho">
@@ -54,7 +58,10 @@ export default function PreviaAvisosWhatsApp({ apiUrl, token }) {
         <h3>Prévia de notificações</h3>
         <p>Consulte as mensagens preparadas. Nenhum WhatsApp é enviado.</p>
       </div>
-      <button className="wa-previa-botao" type="button" aria-expanded={aberto} onClick={() => setAberto(!aberto)}>
+      <button className="wa-previa-botao" type="button" aria-expanded={aberto} onClick={() => {
+        if (!aberto) setRecarregar(i => i + 1)
+        setAberto(!aberto)
+      }}>
         {aberto ? 'Ocultar prévias' : 'Exibir prévias'}
       </button>
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import './CentralServicos.css'
 
 // V3: apresentação e usabilidade. Mantém os contratos HTTP da Central de Serviços V2.
@@ -79,13 +79,15 @@ function validarArquivos(arquivos) {
 }
 
 function GradeFotos({ fotos, apiUrl, token, servicoId }) {
-  const [links, setLinks] = useState({})
+  // Dados de outra tarefa/sessao nunca devem aparecer enquanto as fotos carregam.
+  const [resultado, setResultado] = useState({ chave: '', links: {} })
   const ids = fotos.map(f => f.id).join(',')
+  const chaveAtual = JSON.stringify([apiUrl, token, servicoId, ids])
+  const links = resultado.chave === chaveAtual ? resultado.links : {}
   useEffect(() => {
-    if (!servicoId || !ids || !token) { setLinks({}); return }
+    if (!servicoId || !ids || !token) return
     const controller = new AbortController()
     const gerados = []
-    setLinks({})
     Promise.all(fotos.map(async f => {
       const r = await fetch(`${apiUrl}/servicos/${servicoId}/fotos/${f.id}`, {
         headers: {Authorization: `Bearer ${token}`}, signal:controller.signal, cache:'no-store',
@@ -94,10 +96,13 @@ function GradeFotos({ fotos, apiUrl, token, servicoId }) {
       const url = URL.createObjectURL(await r.blob())
       gerados.push(url)
       return [f.id,url]
-    })).then(pares => { if (!controller.signal.aborted) setLinks(Object.fromEntries(pares)) })
-      .catch(() => { if (!controller.signal.aborted) setLinks({}) })
+    })).then(pares => {
+      if (!controller.signal.aborted) setResultado({ chave: chaveAtual, links: Object.fromEntries(pares) })
+    }).catch(() => {
+      if (!controller.signal.aborted) setResultado({ chave: chaveAtual, links: {} })
+    })
     return () => { controller.abort(); gerados.forEach(url => URL.revokeObjectURL(url)) }
-  }, [ids, servicoId, apiUrl, token])
+  }, [fotos, ids, chaveAtual, servicoId, apiUrl, token])
   if (!fotos.length) return <p className="hs-v5-empty">Nenhuma foto anexada a este serviço.</p>
   return <div className="hs-v5-photo-grid">{fotos.map(f => <a key={f.id} href={links[f.id] || undefined} target="_blank" rel="noreferrer" className="hs-v5-photo-card" onClick={e => { if (!links[f.id]) e.preventDefault() }} title="Abrir fotografia">
     <span className="hs-v5-photo-thumb">{links[f.id] ? <img src={links[f.id]} loading="lazy" alt={f.legenda || `Foto de ${FOTOS_TIPO[f.etapa] || f.etapa}`}/> : <SIcon nome="camera" size={24}/>}</span>
@@ -138,7 +143,6 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const [erroForm, setErroForm] = useState('')
   const [mensagem, setMensagem] = useState('')
   const [mostraAvisos, setMostraAvisos] = useState(false)
-  const [abaMobile, setAbaMobile] = useState('lista')
   const modalRef = useRef(null)
   const abrirRef = useRef(null)
   const ultimaRequisicao = useRef(0)
@@ -176,14 +180,19 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
     finally { if (!silencioso && chave === ultimaRequisicao.current) setCarregando(false) }
   }, [token, gestor, requisitar])
 
+  const atualizarNoEfeito = useEffectEvent((silencioso = false) => atualizar(silencioso))
   useEffect(() => {
-    setServicos([]); setAvisos([]); setSelecionado(null); setHistorico([])
-    atualizar()
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizar(true) }, 60000)
-    return () => { ultimaRequisicao.current++; clearInterval(timer) }
+    // O componente eh remontado por token na App: inicia com listas vazias.
+    // Nao limpamos dados sincronamente em useEffect para evitar render em cascata.
+    let ativo = true
+    queueMicrotask(() => { if (ativo) atualizarNoEfeito() })
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizarNoEfeito(true) }, 60000)
+    const ref = ultimaRequisicao
+    return () => { ativo = false; ref.current++; clearInterval(timer) }
   }, [atualizar])
 
   // Abertura direta após login: sempre consulta o endpoint protegido de detalhes.
+  const abrirServicoDoEfeito = useEffectEvent(detalhes => abrirServico(detalhes))
   useEffect(() => {
     if (!linkServicoId || !token || carregando) return
     const controller = new AbortController()
@@ -202,7 +211,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
         const detalhes = await resposta.json()
         if (controller.signal.aborted) return
         focoAnteriorGaveta.current = document.activeElement
-        abrirServico(detalhes)
+        abrirServicoDoEfeito(detalhes)
         onLinkConcluido?.(linkServicoId)
       } catch {
         if (!controller.signal.aborted) setErro('Falha de conexão ao abrir a tarefa. Verifique a rede e atualize a página para tentar novamente.')
@@ -213,28 +222,29 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   }, [linkServicoId, token, carregando, apiUrl, onLinkConcluido])
 
   useEffect(() => {
-    if (!selecionado) { setHistorico([]); return }
+    if (!selecionado) return
     let ativo = true
     requisitar(`/servicos/${selecionado.id}/historico`)
       .then(dados => { if (ativo) setHistorico(dados) })
       .catch(e => { if (ativo) setErro(e.message) })
     return () => { ativo = false }
-  }, [selecionado?.id, selecionado?.status, requisitar])
+  }, [selecionado, requisitar])
 
   useEffect(() => {
-    if (!selecionado?.id) { setFotos([]); return }
+    if (!selecionado?.id) return
     let ativo = true
     requisitar(`/servicos/${selecionado.id}/fotos`)
       .then(lista => { if (ativo) setFotos(Array.isArray(lista) ? lista : []) })
       .catch(e => { if (ativo) setErroFoto(e.message || 'Não foi possível carregar as fotos.') })
     return () => { ativo = false }
-  }, [selecionado?.id, fotosVersao, requisitar])
+  }, [selecionado, fotosVersao, requisitar])
 
+  const fecharModalDoEfeito = useEffectEvent(() => fecharModal())
   useEffect(() => {
     if (!novoAberto) return
     const anterior = document.activeElement
     const tecla = e => {
-      if (e.key === 'Escape' && !salvando) fecharModal()
+      if (e.key === 'Escape' && !salvando) fecharModalDoEfeito()
       if (e.key !== 'Tab' || !modalRef.current) return
       const focaveis = [...modalRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')]
       if (!focaveis.length) return
@@ -256,7 +266,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
     const overflowAnterior = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const fechar = e => {
-      if (e.key === 'Escape') { e.preventDefault(); setSelecionado(null); setAbaMobile('lista'); return }
+      if (e.key === 'Escape') { e.preventDefault(); setSelecionado(null); setHistorico([]); setFotos([]); return }
       if (e.key !== 'Tab' || !gavetaRef.current) return
       const elementos = [...gavetaRef.current.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]')]
       if (!elementos.length) return
@@ -271,9 +281,9 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       document.body.style.overflow = overflowAnterior
       retorno?.focus?.()
     }
-  }, [selecionado?.id])
+  }, [selecionado])
 
-  function fecharDetalhe() { setSelecionado(null); setAbaMobile('lista') }
+  function fecharDetalhe() { setSelecionado(null); setHistorico([]); setFotos([]) }
   function mostrarDetalhe(item) {
     focoAnteriorGaveta.current = document.activeElement
     abrirServico(item)
@@ -319,7 +329,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   }
 
   async function abrirServico(s) {
-    setSelecionado(s); setFotosEnvio([]); setEtapaFoto('durante'); setLegendaFoto(''); setErroFoto(''); setTextoAcao(''); setErro(''); setMensagem(''); setAbaMobile('detalhe')
+    setSelecionado(s); setHistorico([]); setFotos([]); setFotosEnvio([]); setEtapaFoto('durante'); setLegendaFoto(''); setErroFoto(''); setTextoAcao(''); setErro(''); setMensagem('')
     const pendentes = avisos.filter(a => a.servico_id === s.id && !a.lida)
     if (pendentes.length) {
       // A leitura é por usuário; o backend nunca altera avisos de terceiros.
@@ -384,7 +394,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       if (falhaFoto) setErro(`Serviço #${criado.id} foi criado, mas somente ${enviadas} foto(s) enviadas. ${falhaFoto}`)
       else if (enviadas) setMensagem(`Serviço criado com ${enviadas} foto(s) anexadas. Avisos internos enviados.`)
       await atualizar(true)
-      setSelecionado(criado); setAbaMobile('detalhe')
+      setSelecionado(criado); setFotos([])
       setHistorico(await requisitar(`/servicos/${criado.id}/historico`))
     } catch (e) { setErroForm(e.message || 'Não foi possível criar o serviço.') }
     finally { setSalvando(false) }
