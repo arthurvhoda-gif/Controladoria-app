@@ -28,6 +28,17 @@ Workflow: `.github/workflows/haize-v70.yml`.
 - Nenhum código de backend, migração, envio de email ou envio oficial WhatsApp alterado neste pacote.
 - **Ainda pendente:** validação funcional/visual em ambiente de desenvolvimento para troca de conta, navegação, upload e visualização de fotos, atualização de serviços, filtros e páginas, rateio, gestão de números e prévias de WhatsApp. O CI não cobre interações reais de navegador.
 
+## Verificação ampliada — navegador e uploads (06/11/2026)
+
+- Execução completa: https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42225911863
+- **184 testes Python aprovados**, inclusive testes novos de segurança dos nomes, limite, limpeza de arquivos e integração dos endpoints de anexos/fotos; download de anexos legados preservado.
+- **6 testes Chromium aprovados** com respostas fictícias: login, logout, expiração, navegação por perfil, filtros/paginação e consultas financeiras/WhatsApp.
+- Build, lint e verificação Git aprovados sem desativar regras.
+- Uploads novos agora usam nomes físicos imprevisíveis gerados no servidor, preservando o nome de exibição. Limites: 10 MB para anexos de compras; 20 MB para fotos de checklist.
+- **Não há migração de armazenamento nesta entrega**: os arquivos de compras e checklist continuam sujeitos ao disco efêmero no Render. Registros e arquivos antigos não foram apagados ou reescritos.
+- `npm ci` reportou 16 vulnerabilidades nas dependências (3 baixas, 7 moderadas, 6 altas); confirmar o detalhamento antes de atualizar os pacotes, sem `npm audit fix --force`.
+- Testes Chromium simulam o backend; ainda é necessária homologação com servidor e banco de testes, ensaio de migração e backup restaurável.
+
 ## Pendências de segurança e dados
 
 1. `backend/controladoria.db` e cinco `.pyc` rastreados desde antes da V7.0. O scanner não abre, apaga nem remove arquivos. Determinar se o banco contém informações reais; avaliar rotação de credenciais e, somente após plano seguro, remediação do histórico público.
@@ -56,6 +67,8 @@ Workflow: `.github/workflows/haize-v70.yml`.
 
 ## Próxima frente (sem publicar)
 
-- Tratar os **17 erros e 13 avisos** identificados pelo lint, distinguindo problemas de efeitos React de avisos sobre dependências, sem alterar fluxo de sessão, permissões ou notificações.
-- Adicionar suíte de regressão para fluxo de compras/checklists/armazenamento; validar dados legados em cópia do banco.
-- Planejar a promoção V6.8/V6.9 a partir de cópia de `main` com migração e compatibilidade, nunca merge irrestrito.
+- Homologar os fluxos de escrita com backend de testes e dados fictícios: compras, checklists, fotos, serviços, financeiro e consentimento.
+- Inventariar existência de arquivos em produção com consulta **somente leitura** executada no ambiente correto, sem expor nomes/caminhos no log; planejar cópia verificada para armazenamento durável.
+- Auditar `npm audit --json`, atualizar dependências seletivamente e validar todos os módulos.
+- Ensaio de migração V6.8/V6.9 em cópia restaurável do Neon; vincular pedidos antigos sem identidade de forma manual e auditável.
+- Revisar o PR, homologar no teste e só depois planejar publicação com autorização explícita.
