@@ -31,7 +31,10 @@ function lerCache(chave, padrao = []) {
 function salvarCache(chave, dados) {
   try {
     sessionStorage.setItem(`haize_cache_${chave}`, JSON.stringify(dados))
-  } catch { }
+  } catch (erro) {
+    // Cache opcional: quotas e privacidade não podem interromper o aplicativo.
+    if (import.meta.env.DEV) console.debug('Cache temporário indisponível:', erro)
+  }
 }
 
 function parseDataSegura(dataStr) {
@@ -270,7 +273,9 @@ function App() {
 
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
-  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(false)
+  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(
+    () => 'Notification' in window && Notification.permission === 'granted'
+  )
   const [alertasChecklist, setAlertasChecklist] = useState([])
   const [erroAlertasChecklist, setErroAlertasChecklist] = useState('')
 
@@ -506,14 +511,10 @@ function App() {
   ])
 
   useEffect(() => {
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
-        setNotificacoesPushAtivas(true)
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(permission => {
-          if (permission === 'granted') setNotificacoesPushAtivas(true)
-        })
-      }
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') setNotificacoesPushAtivas(true)
+      })
     }
   }, [])
 
@@ -521,7 +522,9 @@ function App() {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         new Notification(titulo, { body: corpo, icon: '/logo.png' })
-      } catch { }
+      } catch (erro) {
+        if (import.meta.env.DEV) console.debug('Notificação nativa indisponível:', erro)
+      }
     }
   }
 
@@ -1926,7 +1929,10 @@ function App() {
       ])
       if (resHist.ok) setHistoricoSolicitacao(await resHist.json())
       if (resAnexos.ok) setAnexosSolicitacao(await resAnexos.json())
-    } catch { }
+    } catch (erro) {
+      mostrarToast('Não foi possível atualizar o histórico ou os anexos desta solicitação.', 'error')
+      if (import.meta.env.DEV) console.debug('Detalhes da solicitação:', erro)
+    }
   }
 
   function fecharSolicitacao() { setSolicitacaoSelecionada(null); setHistoricoSolicitacao([]); setAnexosSolicitacao([]) }
@@ -2639,19 +2645,19 @@ function App() {
 
         {(ehControladoria || ehFinanceiro) && pagina === 'financeiro' && (
           <div className="page">
-            <CentralFinanceira key={usuarioLogado.id} apiUrl={API_URL} token={usuarioLogado.token} perfil={usuarioLogado.perfil} />
+            <CentralFinanceira key={usuarioLogado.token} apiUrl={API_URL} token={usuarioLogado.token} perfil={usuarioLogado.perfil} />
           </div>
         )}
 
         {ehControladoria && pagina === 'contatos-whatsapp' && (
           <div className="page">
-            <GestaoContatosWhatsApp apiUrl={API_URL} token={usuarioLogado.token} />
+            <GestaoContatosWhatsApp key={usuarioLogado.token} apiUrl={API_URL} token={usuarioLogado.token} />
           </div>
         )}
 
         {!ehFinanceiro && pagina === 'servicos' && (
           <div className="page">
-            <CentralServicos key={usuarioLogado.id} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
+            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
           </div>
         )}
 
