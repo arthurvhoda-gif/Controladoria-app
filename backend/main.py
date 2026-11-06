@@ -32,6 +32,9 @@ import schemas
 from database import engine, SessionLocal
 from pydantic import BaseModel
 import auth_utils
+from armazenamento_drive_v72 import (
+    salvar_upload_haize, eh_arquivo_drive, resposta_arquivo_drive,
+)
 from arquivos_seguros import (
     salvar_upload_local, MAX_ANEXO_SOLICITACAO, MAX_FOTO_CHECKLIST
 )
@@ -1127,7 +1130,7 @@ def upload_anexo_solicitacao(
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
     _solicitacao_visivel(db, request.state, solicitacao_id)
 
-    nome_original, caminho_completo = salvar_upload_local(
+    nome_original, caminho_completo = salvar_upload_haize(
         arquivo, UPLOAD_DIR, f"sol_{solicitacao_id}", MAX_ANEXO_SOLICITACAO
     )
 
@@ -1160,9 +1163,14 @@ def upload_anexo_solicitacao(
 @app.get("/anexos/{anexo_id}/download")
 def download_anexo(anexo_id: int, request: Request, db: Session = Depends(get_db)):
     anexo = db.query(models.Anexo).filter(models.Anexo.id == anexo_id).first()
-    if not anexo or not os.path.exists(anexo.caminho):
+    if not anexo:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor.")
+    # Autoriza o usuario ANTES da consulta ao armazenamento remoto.
     _solicitacao_visivel(db, request.state, anexo.solicitacao_id)
+    if eh_arquivo_drive(anexo.caminho):
+        return resposta_arquivo_drive(anexo.caminho, anexo.nome_arquivo)
+    if not anexo.caminho or not os.path.isfile(anexo.caminho):
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor.")
     return FileResponse(anexo.caminho, filename=anexo.nome_arquivo)
 
 
@@ -1406,7 +1414,7 @@ def executar_checklist(
     caminho_foto = None
 
     if foto and foto.filename:
-        nome_foto, caminho_foto = salvar_upload_local(
+        nome_foto, caminho_foto = salvar_upload_haize(
             foto, FOTOS_CHECKLIST_DIR, f"chk_{item_id}", MAX_FOTO_CHECKLIST
         )
 
@@ -1570,7 +1578,9 @@ def ver_foto_execucao(execucao_id: int, request: Request, db: Session = Depends(
     if not item:
         raise HTTPException(status_code=404, detail='Foto não encontrada.')
     _validar_acesso_item(request, item)
-    if not ex.caminho_foto or not os.path.exists(ex.caminho_foto):
+    if eh_arquivo_drive(ex.caminho_foto):
+        return resposta_arquivo_drive(ex.caminho_foto, ex.nome_foto or 'foto', inline=True)
+    if not ex.caminho_foto or not os.path.isfile(ex.caminho_foto):
         raise HTTPException(status_code=404, detail='Foto não encontrada.')
     return FileResponse(ex.caminho_foto)
 
