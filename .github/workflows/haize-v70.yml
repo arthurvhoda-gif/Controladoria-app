@@ -5,6 +5,7 @@ on:
     branches:
       - estabilizacao-v70-20261106
       - seguranca-v71-20261106
+      - trabalho-v72-local
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
