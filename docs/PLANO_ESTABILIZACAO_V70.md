@@ -18,6 +18,16 @@ Workflow: `.github/workflows/haize-v70.yml`.
 - Auditoria dos arquivos rastreados: **6 artefatos legados sinalizados**, nenhum artefato novo proibido.
 - Estes resultados são testes automatizados parciais, **não** comprovam comportamento integral em produção.
 
+## Resultado após correções do frontend (06/11/2026)
+
+- Execução CI: https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42223173495
+- **172 testes Python aprovados** (SQLite em memória, sem Neon).
+- **Build e lint do frontend aprovados**, com as regras originais de ESLint preservadas.
+- **Scanner de novos artefatos sensíveis aprovado**; 6 arquivos legados continuam sinalizados para revisão.
+- Refatoração dos efeitos de carregamento, de gerenciamento de contatos e das prévias WhatsApp; tratamento de falhas visível; isolamento por sessão; navegação por perfil e paginação com estado derivado.
+- Nenhum código de backend, migração, envio de email ou envio oficial WhatsApp alterado neste pacote.
+- **Ainda pendente:** validação funcional/visual em ambiente de desenvolvimento para troca de conta, navegação, upload e visualização de fotos, atualização de serviços, filtros e páginas, rateio, gestão de números e prévias de WhatsApp. O CI não cobre interações reais de navegador.
+
 ## Pendências de segurança e dados
 
 1. `backend/controladoria.db` e cinco `.pyc` rastreados desde antes da V7.0. O scanner não abre, apaga nem remove arquivos. Determinar se o banco contém informações reais; avaliar rotação de credenciais e, somente após plano seguro, remediação do histórico público.
