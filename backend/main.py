@@ -84,6 +84,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor
     if path == '/servicos/notificacoes' and method == 'GET':
         return gestor or vistoriador or solicitante
+    if path == '/servicos/alertas-prazos' and method == 'GET':
+        return gestor or vistoriador or solicitante
     if re.fullmatch(r'/servicos/notificacoes/\d+/ler', path) and method == 'POST':
         return gestor or vistoriador or solicitante
     if re.fullmatch(r'/servicos/\d+(?:/historico)?', path) and method == 'GET':
