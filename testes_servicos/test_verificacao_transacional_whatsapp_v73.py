@@ -94,7 +94,7 @@ class VerificacaoTransacionalWhatsAppV73(unittest.TestCase):
 
     def test_troca_numero_cancela_fila_e_conferencia_recusa(self):
         _, fila_id = self.preparar()
-        wa.salvar_numero_admin(2, wa.NumeroAdministrado(numero='43888887777'),
+        wa.salvar_numero_admin(2, wa.NumeroAdministrado(numero='43988882222'),
                                self.c.req(1), self.db)
         resposta = self.conferir(fila_id)
         self.assertEqual(resposta['situacao'], 'impedido')
