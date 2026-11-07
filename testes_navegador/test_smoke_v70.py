@@ -442,8 +442,11 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.get_by_role("button", name="Encerrar Sessão").click()
         expect(self.page.locator(".login-screen")).to_be_visible()
         self.login("compras@teste.local")
-        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        # Solicitante também tem 15 solicitações fictícias na central; validar
+        # o subtotal de TAREFAS, não o total agregado do sino.
+        expect(self.page.locator(".notification-badge")).to_be_visible()
         self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
         expect(self.page.get_by_text("Tarefa PRIVADA Colaborador")).to_be_visible()
         self.assertEqual(self.page.get_by_text("Tarefa PRIVADA Zelador A").count(), 0)
 
