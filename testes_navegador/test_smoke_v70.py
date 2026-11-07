@@ -669,6 +669,33 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.get_by_text("Aviso fictício de checklist")).to_have_count(0)
         expect(self.page.locator(".notification-badge")).to_have_count(0)
 
+    def test_25_controladoria_confere_fila_whatsapp_sem_envio_real(self):
+        self.previas_whatsapp_ficticias = [{
+            "fila_id": 901, "servico_id": 17, "destinatario": "Zelador Teste",
+            "status": "preparada", "evento": "nova_tarefa",
+            "elegivel_agora": True,
+            "mensagem": "AVISO FICTÍCIO — consulte o aplicativo",
+            "diagnostico": {"situacao": "coerente", "motivo": "Pendente"},
+            "diagnostico_historico": {
+                "situacao": "nao_comprovado", "motivo": "Sem prova de envio"
+            },
+            "diagnostico_preenvio": {
+                "situacao": "revisar", "motivo": "Sem prova de atividade"
+            },
+        }]
+        self.login()
+        self.menu("Contatos WhatsApp")
+        self.page.get_by_role("button", name="Exibir prévias").click()
+        expect(self.page.get_by_text("AVISO FICTÍCIO", exact=False)).to_be_visible()
+        self.page.get_by_role("button", name="Conferir segurança deste aviso").click()
+        expect(self.page.get_by_text("Conferência transacional: Revisão obrigatória")).to_be_visible()
+        expect(self.page.get_by_text("Nenhum envio autorizado. Nenhuma mensagem foi enviada.")).to_be_visible()
+        expect(self.page.get_by_text(
+            "Pendência: Despacho oficial e política de custos não estão habilitados."
+        )).to_be_visible()
+        self.assertEqual(self.verificacoes_whatsapp_ficticias, [901])
+        self.assertEqual(self.page.get_by_role("button", name="Enviar WhatsApp").count(), 0)
+
     def test_01_login_e_termino_da_sessao(self):
         self.login()
         self.menu("Solicitações")
