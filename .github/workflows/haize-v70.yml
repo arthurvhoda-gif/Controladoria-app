@@ -215,6 +215,7 @@ jobs:
       DATABASE_URL: 'postgresql://haize_ci:apenas-teste-local-sem-producao@127.0.0.1:5432/haize_v73_integracao'
       AUTH_SECRET_KEY: 'ci-homologacao-integrada-sem-relacao-com-producao-v73'
       FRONTEND_ORIGINS: 'http://127.0.0.1:4175'
+      FRONTEND_PUBLIC_URL: 'http://127.0.0.1:4175'
       VITE_API_URL: 'http://127.0.0.1:18773'
       ENABLE_CHECKLIST_EMAILS: 'false'
       GAS_WEB_APP_URL: ''
