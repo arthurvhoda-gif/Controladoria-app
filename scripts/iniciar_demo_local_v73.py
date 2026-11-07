@@ -42,6 +42,7 @@ def ambiente_isolado(pasta: Path):
         'FRONTEND_ORIGINS': SITE,
         'FRONTEND_PUBLIC_URL': SITE,
         'VITE_API_URL': API,
+        'VITE_HAIZE_DEMO_V73': '1',
         'ENABLE_CHECKLIST_EMAILS': 'false',
         'GAS_WEB_APP_URL': '',
         'HAIZE_SECRET': '',
