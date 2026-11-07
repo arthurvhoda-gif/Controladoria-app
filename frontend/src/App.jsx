@@ -10,6 +10,7 @@ import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
 import CentralFinanceira from './CentralFinanceira'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
+const DEMO_LOCAL_V73 = import.meta.env.VITE_HAIZE_DEMO_V73 === '1'
 
 // Links de avisos: /?servico=123. Não concede permissão; a API valida o acesso.
 function lerServicoLink() {
@@ -2476,6 +2477,7 @@ function App() {
   if (!usuarioLogado) {
     return (
       <div className="login-screen">
+      {DEMO_LOCAL_V73 && <div role="status" style={{ position: 'fixed', top: 0, left: 0, width: '100%', zIndex: 9999, padding: '9px', textAlign: 'center', background: '#ecfdf5', color: '#065f46', fontWeight: 800, fontSize: 12 }}>DEMONSTRAÇÃO LOCAL — DADOS FICTÍCIOS — WHATSAPP DESATIVADO</div>}
         <div className="toast-container">
           {toasts.map(t => (<div key={t.id} className={`toast ${t.tipo}`}><span className="toast-icon">{t.tipo === 'success' ? '✓' : '!'}</span><span>{t.mensagem}</span></div>))}
         </div>
@@ -2515,6 +2517,7 @@ function App() {
 
   return (
     <div className="app">
+      {DEMO_LOCAL_V73 && <div role="status" style={{ position: 'fixed', left: 0, bottom: 0, width: '100%', zIndex: 9999, padding: '8px', textAlign: 'center', background: '#ecfdf5', color: '#065f46', fontWeight: 800, fontSize: 12, pointerEvents: 'none' }}>DEMONSTRAÇÃO LOCAL — DADOS FICTÍCIOS — SEM ENVIOS EXTERNOS</div>}
       <div className="toast-container">
         {toasts.map(toast => (<div key={toast.id} className={`toast ${toast.tipo}`}><span className="toast-icon">{toast.tipo === 'success' ? '✓' : '!'}</span><span>{toast.mensagem}</span></div>))}
       </div>
