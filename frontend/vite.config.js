@@ -8,8 +8,9 @@ const semFontesExternasNaDemo = {
   name: 'haize-demo-v73-fontes-locais',
   enforce: 'pre',
   transform(codigo, id) {
+    const caminho = id.replaceAll(String.fromCharCode(92), '/').split('?')[0]
     if (process.env.VITE_HAIZE_DEMO_V73 !== '1' ||
-        !/[/\\]src[/\\]App\\.css(?:\\?.*)?$/.test(id)) return null
+        !caminho.endsWith('/src/App.css')) return null
     return codigo.replace(
       /^@import\s+url\(['"]https:\/\/fonts\.googleapis\.com\/[^'"]+['"]\);\s*/m,
       ''
