@@ -142,6 +142,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.atrasos_servicos_ficticios = []
         self.alertas_checklist_ficticios = []
         self.falha_alertas_checklist = False
+        self.alertas_checklist_malformados = False
         self.falha_consulta_servicos = False
         self.detalhe_servico_revogado = False
         self.lista_servicos_indisponivel = False
@@ -186,6 +187,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         elif caminho == "/checklists/alertas":
             if self.falha_alertas_checklist:
                 status, resposta = 403, {"detail": "Permissão de checklist alterada"}
+            elif self.alertas_checklist_malformados:
+                resposta = {"alertas": "dados indevidos"}
             else:
                 resposta = {"alertas": self.alertas_checklist_ficticios}
         elif caminho == "/servicos/notificacoes":
@@ -590,6 +593,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.falha_alertas_checklist = True
         sino.click()
         expect(self.page.get_by_text("Permissão de checklist alterada")).to_be_visible()
+        expect(self.page.get_by_text("Não foi possível confirmar todas as pendências.")).to_be_visible()
+        expect(self.page.get_by_text("Tudo em dia!", exact=False)).to_have_count(0)
         expect(self.page.get_by_text("Inspeção fictícia de bombas")).to_have_count(0)
         expect(self.page.locator(".notification-badge")).to_have_count(0)
         self.falha_alertas_checklist = False
@@ -614,6 +619,40 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.locator(".notification-badge")).to_have_count(0)
         self.page.get_by_role("button", name="Ver alertas e notificações").click()
         expect(self.page.get_by_text("Verificação fictícia de portão")).to_have_count(0)
+
+    def test_23_sincronizar_agora_recarrega_notificacoes_de_servicos(self):
+        self.avisos_servicos_ficticios = [{
+            "id": 801, "servico_id": 17,
+            "mensagem": "Tarefa fictícia de inspeção",
+            "lida": False, "criada_em": "2026-11-07T11:00:00",
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.falha_consulta_servicos = True
+        self.page.get_by_role("button", name="Sincronizar dados").click()
+        expect(self.page.locator(".notification-badge")).to_have_count(0)
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Não foi possível confirmar todas as pendências.")).to_be_visible()
+        self.falha_consulta_servicos = False
+        self.page.get_by_role("button", name="Sincronizar dados").click()
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        expect(self.page.get_by_text("Tarefa fictícia de inspeção")).to_be_visible()
+        expect(self.page.get_by_text("Não foi possível confirmar todas as pendências.")).to_have_count(0)
+
+    def test_24_resposta_checklist_malformada_nao_indica_tudo_em_dia(self):
+        self.alertas_checklist_ficticios = [{
+            "item_id": 303, "titulo": "Aviso fictício de checklist",
+            "condominio": "Condomínio Fictício A", "horas_atraso": 48,
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.alertas_checklist_malformados = True
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text(
+            "A API retornou alertas de checklist em formato inválido.")).to_be_visible()
+        expect(self.page.get_by_text("Não foi possível confirmar todas as pendências.")).to_be_visible()
+        expect(self.page.get_by_text("Aviso fictício de checklist")).to_have_count(0)
+        expect(self.page.locator(".notification-badge")).to_have_count(0)
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
