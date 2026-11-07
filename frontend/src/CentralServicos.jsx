@@ -321,7 +321,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       const atual = await requisitar(`/servicos/${item.id}`)
       if (tentativa !== ultimaAbertura.current) return
       abrirServico(atual)
-    } catch (e) {
+    } catch {
       if (tentativa !== ultimaAbertura.current) return
       setErro('Não foi possível abrir esta tarefa. Ela pode ter sido alterada ou seu acesso revogado.')
       // Atualiza a lista para remover tarefas que nao sao mais visiveis.
