@@ -69,6 +69,23 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
     Verifica também telefones duplicados de cadastros legados, bloqueando
     a triagem nesses casos mesmo se a migração UNIQUE ainda não ocorreu.
     Nenhum status de pré-envio é autorização para disparar mensagens.
+12. O botão **Conferir segurança deste aviso**, na tela da Controladoria,
+    chama `POST /avisos-whatsapp/fila/{id}/verificar`, sem enviar mensagens.
+    Em uma sessão transacional, verifica:
+    - a identidade e o perfil do destinatário, autorização individual atual
+      e telefone cadastrado sob bloqueio de linha PostgreSQL;
+    - o status da fila, os IDs de destinatário/serviço, participação no
+      condomínio, tipo explícito do aviso e o evento de origem;
+    - o histórico do ciclo, estado atual da atividade e duplicidades de
+      número, fila e evento/destinatário, sem inferir a partir da mensagem;
+    - o limite de 10.000 eventos históricos, sem presumir vigência quando
+      a análise não pode ser concluída.
+    O resultado é sempre **impedido ou revisar**, com
+    `envio_autorizado=false` e `envios_ativos=false`. A consulta não
+    muda a fila, não registra entrega e não consulta provedores externos.
+    O cadastro de usuários ainda não dispõe de prova de atividade da conta
+    ou do número junto ao WhatsApp; isso impede qualquer liberação automática.
+    A conferência é uma fotografia: NÃO é um mecanismo de reserva para envio.
 
 ### Barreiras obrigatórias para concluir o módulo
 
@@ -92,8 +109,14 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
       descartável: recusa bancos com duplicados sem alterar os dados;
       aplica UNIQUE após saneamento do cenário fictício.
 - [x] Prévia bloqueia telefones duplicados em base SQLite legada sem UNIQUE.
-- [ ] Verificação transacional, na mesma sessão DB, de identidade, consentimento,
-      acesso atual, evento/ciclo, vigência, duplicidade e bloqueio de reenvio.
+- [x] Conferência transacional SOMENTE LEITURA, na mesma sessão DB, de
+      identidade, consentimento, acesso atual, evento/ciclo, vigência e
+      duplicidades, sem liberação de despacho. PostgreSQL comprovou que uma
+      revogação concorrente cancela a fila e a consulta a vê como impedida,
+      sem deadlock.
+- [ ] Futura reserva transacional de envio com idempotência perante o
+      provedor e limites operacionais: NÃO implementada; depende da conta
+      oficial, orçamento e autorização específica.
 - [ ] Despachante oficial WhatsApp Business Platform: templates aprovados,
       token seguro, callbacks autenticados de entrega/erro, retentativas limitadas,
       idempotência, opt-out, auditoria e política de custos — DEPENDE de
@@ -128,8 +151,8 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
 - Consequentemente, não implementar serviços de disparo em massa por
   automação não oficial, nem ativar despacho real sem custo comprovado,
   conta do provedor e decisão explícita.
-- CI confirmada com **236 testes Python, 24 testes Chromium e ensaios
-  PostgreSQL descartáveis**; os seis jobs ficaram verdes na execução
-  https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42376103572
-  (commit `dee2fd9`).
+- CI inclui testes de pré-conferência, autorização HTTP/JWT, interface
+  administrativa e concorrência real de revogação no PostgreSQL descartável.
+  Os números e o link da última execução aprovada devem ser conferidos
+  no histórico da branch `notificacoes-v73-20261107` no GitHub Actions.
 - Código da branch de desenvolvimento não foi promovido à `main`.
