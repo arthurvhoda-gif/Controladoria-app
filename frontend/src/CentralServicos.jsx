@@ -113,7 +113,7 @@ function GradeFotos({ fotos, apiUrl, token, servicoId }) {
 function Etiqueta({ status }) { return <span className={`hs-v3-status hs-v3-${classeStatus(status)}`}>{status || 'Indefinido'}</span> }
 function Avatar({ nome }) { return <span className="hs-v3-avatar" aria-hidden="true">{iniciais(nome)}</span> }
 
-export default function CentralServicos({ apiUrl, usuario, condominios = [], linkServicoId = null, onLinkConcluido }) {
+export default function CentralServicos({ apiUrl, usuario, condominios = [], linkServicoId = null, onLinkConcluido, onAvisosLidos }) {
   const gestor = usuario?.perfil === 'Controladoria'
   const token = usuario?.token
   const [servicos, setServicos] = useState([])
@@ -336,6 +336,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       const resultados = await Promise.allSettled(pendentes.map(a => requisitar(`/servicos/notificacoes/${a.id}/ler`, { method: 'POST' })))
       const lidos = new Set(pendentes.filter((_, i) => resultados[i].status === 'fulfilled').map(a => a.id))
       setAvisos(anterior => anterior.map(a => lidos.has(a.id) ? { ...a, lida: true } : a))
+      if (lidos.size) onAvisosLidos?.([...lidos])
     }
   }
 
