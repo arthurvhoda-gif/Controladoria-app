@@ -57,6 +57,7 @@ def main():
         assert env['AUTOMATION_SECRET'] == ''
         assert env['FRONTEND_PUBLIC_URL'] == SITE
         assert env['VITE_API_URL'] == API
+        assert env['VITE_HAIZE_DEMO_V73'] == '1'
 
         backend = frontend = navegador = contexto = playwright = None
         try:
@@ -113,6 +114,7 @@ def main():
                 pagina.on('pageerror', lambda e: erros_js.append(str(e)))
                 pagina.goto(SITE, wait_until='domcontentloaded')
                 expect(pagina.locator('.login-screen')).to_be_visible()
+                expect(pagina.get_by_text('DEMONSTRAÇÃO LOCAL', exact=False)).to_be_visible()
                 pagina.get_by_placeholder('nome@haize.com.br').fill(
                     'zelador.alfa.demo@local.test')
                 pagina.locator('input[type=password]').fill(
