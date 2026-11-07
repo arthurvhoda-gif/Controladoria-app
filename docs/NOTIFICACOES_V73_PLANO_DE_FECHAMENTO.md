@@ -53,6 +53,8 @@
    a migração precisa ser aplicada SOMENTE depois de auditar duplicidades:
    `migracoes/v73_whatsapp_telefone_unico.sql`.
 11. Prévia de avisos é somente leitura e simulação conservadora.
+    Verifica também telefones duplicados de cadastros legados, bloqueando
+    a triagem nesses casos mesmo se a migração UNIQUE ainda não ocorreu.
     Nenhum status de pré-envio é autorização para disparar mensagens.
 
 ### Barreiras obrigatórias para concluir o módulo
@@ -66,6 +68,10 @@
       usando SOMENTE banco local descartável da CI.
 - [x] Confirmação do número visto na tela, proteção de duplicidades e
       ordenação de avisos pendentes antes do histórico já lido.
+- [x] Teste da migração `v73_whatsapp_telefone_unico.sql` no PostgreSQL
+      descartável: recusa bancos com duplicados sem alterar os dados;
+      aplica UNIQUE após saneamento do cenário fictício.
+- [x] Prévia bloqueia telefones duplicados em base SQLite legada sem UNIQUE.
 - [ ] Verificação transacional, na mesma sessão DB, de identidade, consentimento,
       acesso atual, evento/ciclo, vigência, duplicidade e bloqueio de reenvio.
 - [ ] Despachante oficial WhatsApp Business Platform: templates aprovados,
@@ -102,5 +108,6 @@
 - Consequentemente, não implementar serviços de disparo em massa por
   automação não oficial, nem ativar despacho real sem custo comprovado,
   conta do provedor e decisão explícita.
-- CI confirmada com 235 testes Python, 13 testes Chromium e 6 jobs verdes
-  na execução após `5198b95` (consultar GitHub Actions para versão atual).
+- CI confirmada com 236 testes Python, 13 testes Chromium e ensaios reais
+  de concorrência/migração em PostgreSQL descartável; 6 jobs verdes
+  na execução `42372944899` (consultar GitHub Actions para versão atual).
