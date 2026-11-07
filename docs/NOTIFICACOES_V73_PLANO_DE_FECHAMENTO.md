@@ -27,6 +27,10 @@
    ao ganhar foco e ao abrir a central; separada das consultas de checklist.
    Requisições antigas são canceladas em troca de sessão.
 5. Leitura é confirmada no frontend somente após resposta positiva da API.
+6. `GET /servicos/alertas-prazos` lista somente tarefas vencidas e abertas,
+   respeitando identidade, perfil, condomínio e vínculos de participação.
+   O sino global mostra o prazo vencido, abre a tarefa e para de alertar
+   quando ela é concluída. Não cria notificações repetidas nem WhatsApp.
 
 **Preparação WhatsApp, SEM qualquer disparo externo**
 6. Controladoria cadastra/altera números e usuários dão opt-in/opt-out
@@ -53,9 +57,10 @@
       token seguro, callbacks autenticados de entrega/erro, retentativas limitadas,
       idempotência, opt-out, auditoria e política de custos — DEPENDE de
       aprovação de orçamento/conta do provedor. Nenhum envio implementado.
-- [ ] Avaliar se os avisos de prazo de serviços precisam de escalonamento
-      automático e definir quem é destinatário (sem spam e sem enviar a
-      pessoas não participantes).
+- [x] Exibir atrasos existentes de serviços no sino, sem spam.
+- [ ] Definir política de escalonamento de atrasos de serviços (se necessária),
+      responsáveis, prazos e nível hierárquico, antes de criar disparos
+      externos ou alterar os destinatários atuais.
 - [ ] Verificar a lista de números duplicados na base real e aplicar a
       migração única em ambiente homologado, com backup.
 - [ ] Homologar com usuários fictícios e dispositivos móveis; validar
