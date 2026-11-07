@@ -113,7 +113,7 @@ function GradeFotos({ fotos, apiUrl, token, servicoId }) {
 function Etiqueta({ status }) { return <span className={`hs-v3-status hs-v3-${classeStatus(status)}`}>{status || 'Indefinido'}</span> }
 function Avatar({ nome }) { return <span className="hs-v3-avatar" aria-hidden="true">{iniciais(nome)}</span> }
 
-export default function CentralServicos({ apiUrl, usuario, condominios = [], linkServicoId = null, onLinkConcluido, onAvisosLidos }) {
+export default function CentralServicos({ apiUrl, usuario, condominios = [], linkServicoId = null, onLinkConcluido, onAvisosLidos, onAvisosAlterados }) {
   const gestor = usuario?.perfil === 'Controladoria'
   const token = usuario?.token
   const [servicos, setServicos] = useState([])
@@ -395,6 +395,8 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       if (falhaFoto) setErro(`Serviço #${criado.id} foi criado, mas somente ${enviadas} foto(s) enviadas. ${falhaFoto}`)
       else if (enviadas) setMensagem(`Serviço criado com ${enviadas} foto(s) anexadas. Avisos internos enviados.`)
       await atualizar(true)
+      // Criação altera pendências da Controladoria; sino global atualiza sem F5.
+      onAvisosAlterados?.()
       setSelecionado(criado); setFotos([])
       setHistorico(await requisitar(`/servicos/${criado.id}/historico`))
     } catch (e) { setErroForm(e.message || 'Não foi possível criar o serviço.') }
@@ -413,6 +415,8 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       setSelecionado(atualizado); setTextoAcao('')
       setMensagem('Atualização registrada no histórico do serviço.')
       await atualizar(true)
+      // Ação pode concluir/desatrasar tarefa ou gerar novo aviso de fiscalização.
+      onAvisosAlterados?.()
       setHistorico(await requisitar(`/servicos/${id}/historico`))
     } catch (e) { setErro(e.message || 'Não foi possível registrar a ação.'); await atualizar(true) }
     finally { setSalvando(false) }
