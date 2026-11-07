@@ -279,7 +279,9 @@ function App() {
 
   // NOTIFICAÇÕES E ALERTAS
   const [mostrarMenuNotificacoes, setMostrarMenuNotificacoes] = useState(false)
-  const [notificacoesPushAtivas, setNotificacoesPushAtivas] = useState(
+  // Permissão para avisos locais enquanto a página estiver aberta.
+  // NÃO há inscrição Push remota nem notificações com navegador fechado.
+  const [notificacoesNavegadorPermitidas, setNotificacoesNavegadorPermitidas] = useState(
     () => 'Notification' in window && Notification.permission === 'granted'
   )
   const [alertasChecklist, setAlertasChecklist] = useState([])
@@ -397,6 +399,9 @@ function App() {
   const requisicaoChecklistRef = useRef(null)
   const requisicaoAlertasRef = useRef(null)
   const requisicaoAvisosServicosRef = useRef(null)
+  // O primeiro carregamento é base de referência, não motivo para alertar
+  // sobre centenas de avisos antigos. Segregado por token de sessão.
+  const avisosServicosVistosRef = useRef({ token: null, ids: null })
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -455,6 +460,7 @@ function App() {
     requisicaoAvisosServicosRef.current?.abort()
     requisicaoAvisosServicosRef.current = null
     setAvisosServicos([])
+    avisosServicosVistosRef.current = { token: proximoToken, ids: null }
     setErroAvisosServicos('')
     setAtrasosServicos([])
     setTotalAtrasosServicos(0)
@@ -564,13 +570,13 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().then(permission => {
-        if (permission === 'granted') setNotificacoesPushAtivas(true)
-      })
-    }
-  }, [])
+  function ativarNotificacoesNavegador() {
+    // Solicitação apenas após clique voluntário; sem prompt no login.
+    if (!('Notification' in window) || Notification.permission !== 'default') return
+    Notification.requestPermission().then(permissao => {
+      setNotificacoesNavegadorPermitidas(permissao === 'granted')
+    }).catch(() => setNotificacoesNavegadorPermitidas(false))
+  }
 
   function dispararNotificacaoNativa(titulo, corpo) {
     if ('Notification' in window && Notification.permission === 'granted') {
@@ -761,6 +767,27 @@ function App() {
       ])
       if (tokenSessaoRef.current !== token || requisicaoAvisosServicosRef.current !== controller) return
       if (avisosResultado.status === 'fulfilled' && Array.isArray(avisosResultado.value)) {
+        const memoria = avisosServicosVistosRef.current
+        const idsAnteriores = memoria.token === token ? memoria.ids : null
+        if (idsAnteriores instanceof Set && document.visibilityState === 'visible') {
+          const novos = avisosResultado.value.filter(a => !a.lida && !idsAnteriores.has(a.id))
+          if (novos.length) {
+            dispararNotificacaoNativa('Novos avisos na Controladoria Haize',
+              novos.length === 1 ? 'Uma nova tarefa precisa da sua atenção.'
+                : `${novos.length} novos avisos de tarefas precisam da sua atenção.`)
+          }
+        }
+        // Mantém IDs já conhecidos para não disparar novamente após leitura
+        // ou reconexão. Limite evita crescimento de memória no uso prolongado.
+        avisosServicosVistosRef.current = {
+          token, ids: new Set([
+            ...Array.from(idsAnteriores instanceof Set ? idsAnteriores : []).slice(-900),
+            ...avisosResultado.value.map(a => a.id),
+          ]),
+        }
+        setNotificacoesNavegadorPermitidas(
+          'Notification' in window && Notification.permission === 'granted'
+        )
         setAvisosServicos(avisosResultado.value)
         setErroAvisosServicos('')
       } else {
@@ -2772,9 +2799,19 @@ function App() {
                       )}
                     </div>
                     <div style={{ padding: '10px', background: '#f8fafc', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
-                      <span style={{ fontSize: '11px', color: notificacoesPushAtivas ? '#059669' : '#d97706', fontWeight: '700' }}>
-                        {notificacoesPushAtivas ? '✓ Notificações Push ativas' : '⚠️ Notificações do navegador desativadas'}
+                      <span style={{ fontSize: '11px', color: '#475569', fontWeight: '600', lineHeight: 1.5 }}>
+                        {notificacoesNavegadorPermitidas
+                          ? '✓ Avisos locais permitidos enquanto o aplicativo estiver aberto.'
+                          : 'Avisos internos disponíveis enquanto o aplicativo estiver aberto.'}
                       </span>
+                      {!notificacoesNavegadorPermitidas && 'Notification' in window &&
+                        Notification.permission === 'default' && (
+                          <button type="button" onClick={ativarNotificacoesNavegador}
+                            style={{ marginLeft: 8, border: '1px solid #cbd5e1', borderRadius: 6,
+                              background: 'white', padding: '5px 8px', fontSize: 11, cursor: 'pointer' }}>
+                            Ativar aviso no navegador
+                          </button>
+                        )}
                     </div>
                   </div>
                 )}
