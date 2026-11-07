@@ -141,6 +141,10 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.pessoas_servicos_ficticios = []
         self.atrasos_servicos_ficticios = []
         self.falha_consulta_servicos = False
+        self.detalhe_servico_revogado = False
+        self.lista_servicos_indisponivel = False
+        self.link_servico_indisponivel = False
+        self.consultas_detalhe_servico = 0
         self.telefone_whatsapp_ficticio = '+5543999991111'
         self.ultimo_consentimento_ficticio = None
         self.consentimento_whatsapp_ficticio = False
@@ -202,15 +206,21 @@ class HaizeNavegadorV70(unittest.TestCase):
             except (ValueError, StopIteration):
                 status, resposta = 404, {"detail": "Aviso não encontrado."}
         elif caminho == "/servicos/17":
-            resposta = {
-                "id": 17, "titulo": "Verificar iluminação fictícia",
-                "descricao": "Conferência de teste da iluminação comum",
-                "condominio": "Condomínio Fictício A", "prioridade": "Normal",
-                "prazo": "2026-12-05", "status": "Aguardando ciência",
-                "criador": "Gestora Teste", "responsavel": "Zelador Teste",
-                "atrasado": False, "executores": [], "fiscalizadores": [],
-                "acoes_disponiveis": [],
-            }
+            self.consultas_detalhe_servico += 1
+            if self.link_servico_indisponivel:
+                status, resposta = 503, {"detail": "Falha temporária na rede de teste"}
+            elif self.detalhe_servico_revogado:
+                status, resposta = 404, {"detail": "Serviço não encontrado."}
+            else:
+                resposta = {
+                    "id": 17, "titulo": "Verificar iluminação fictícia",
+                    "descricao": "Conferência de teste da iluminação comum",
+                    "condominio": "Condomínio Fictício A", "prioridade": "Normal",
+                    "prazo": "2026-12-05", "status": "Aguardando ciência",
+                    "criador": "Gestora Teste", "responsavel": "Zelador Teste",
+                    "atrasado": False, "executores": [], "fiscalizadores": [],
+                    "acoes_disponiveis": [],
+                }
         elif caminho in ("/servicos/17/historico", "/servicos/17/fotos",
                            "/servicos/18/historico", "/servicos/18/fotos"):
             resposta = []
@@ -238,8 +248,11 @@ class HaizeNavegadorV70(unittest.TestCase):
                     "lida": False, "criada_em": "2026-11-07T11:40:00",
                 })
                 status = 201
+            elif self.lista_servicos_indisponivel:
+                status, resposta = 503, {"detail": "Serviços temporariamente indisponíveis"}
             else:
-                resposta = self.servicos_ficticios
+                resposta = [item for item in self.servicos_ficticios
+                            if not (self.detalhe_servico_revogado and item["id"] == 17)]
         elif caminho == "/financeiro/solicitacoes":
             resposta = FINANCEIRO
         elif caminho == "/financeiro/solicitacoes/15/lancamentos":
@@ -282,8 +295,8 @@ class HaizeNavegadorV70(unittest.TestCase):
             status, resposta = 404, {"detail": f"Rota ausente na simulação: {caminho}"}
         rota.fulfill(status=status, content_type="application/json", body=json.dumps(resposta, ensure_ascii=False))
 
-    def login(self, email="admin@teste.local"):
-        self.page.goto(BASE, wait_until="domcontentloaded")
+    def login(self, email="admin@teste.local", caminho=""):
+        self.page.goto(BASE + caminho, wait_until="domcontentloaded")
         expect(self.page.locator(".login-screen")).to_be_visible()
         self.page.get_by_placeholder("nome@haize.com.br").fill(email)
         self.page.locator('input[type="password"]').fill("SenhaFicticiaDeTeste123")
