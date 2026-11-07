@@ -5,6 +5,24 @@
 e aprovadas na suíte automatizada; **homologação implantada não realizada**.
 A preparação WhatsApp continua SEM despachante real. Este marco não libera produção.
 
+**Homologação manual local em 07/11/2026 (confirmada pelo usuário):**
+- Demonstração iniciada com sucesso no Windows, com React + FastAPI e SQLite
+  temporário, identificada visualmente como ambiente de dados fictícios.
+- Zelador Alfa visualizou a tarefa fictícia inicial e conseguiu abrir seus detalhes
+  e o histórico; Zelador Beta não visualizou essa tarefa de outro condomínio.
+- Foi criada também uma **nova tarefa** pela Controladoria na demonstração;
+  o usuário confirmou que a notificação apareceu ao Zelador Alfa e não ao Beta.
+  Assim, **criação real -> distribuição de aviso -> isolamento por condomínio**
+  passaram na homologação local.
+- Isto **não** confirma push com o navegador fechado, envio WhatsApp, operação em
+  produção, testes físicos de todos os dispositivos ou rollback implantado.
+- Execução automatizada aprovada em
+  https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42382331395:
+  245 testes Python, 25 testes Chromium, 5 cenários integrados PostgreSQL e
+  3 cenários do modo local isolado; sete jobs aprovados.
+- Instruções para reproduzir a demonstração:
+  `docs/DEMONSTRACAO_LOCAL_NOTIFICACOES_V73.md`.
+
 **Branch exclusiva de desenvolvimento:** `notificacoes-v73-20261107` (base V7.2).
 **Não enviar para `main` nem implantar em produção sem homologação e autorização explícita.**
 **WhatsApp real está DESATIVADO. Não há integração oficial de despacho ou contratação de custos.**
@@ -92,6 +110,9 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
 - [x] Testes unitários e de integração offline por perfil/condomínio.
 - [x] Testes de backend de consentimento e auditoria (banco fictício).
 - [x] Teste de navegação com sino, abertura de tarefa e confirmação de leitura.
+- [x] Homologação visual local no Windows: nova tarefa criada pela Controladoria
+      gerou aviso visível para Zelador Alfa e não para Zelador Beta, conforme
+      retorno direto do usuário. Não substitui homologação implantada.
 - [x] Teste Chromium de troca de contas sem vazamento de alertas.
 - [x] Teste Chromium de falha HTTP de checklist, descarte de aviso antigo,
       recuperação sem F5, payload incorreto e sincronização manual do sino.
