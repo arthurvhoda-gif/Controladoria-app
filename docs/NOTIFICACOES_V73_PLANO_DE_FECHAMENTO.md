@@ -21,29 +21,38 @@
 2. `GET /servicos/notificacoes` e `POST /servicos/notificacoes/{id}/ler`
    exigem sessão, identidade e acesso ATUAL à tarefa/condomínio, inclusive para
    avisos antigos de tarefas legadas. A filtragem ocorre antes do limite de 100.
-3. Sino global na interface consulta avisos de serviços, checklist atrasado
-   e solicitações pendentes; exibe contador e permite abrir a tarefa.
+3. Sino global na interface consulta avisos de serviços, prazos vencidos de
+   serviços, checklist atrasado e solicitações pendentes; exibe contador e
+   permite abrir a tarefa.
 4. Atualização de avisos de serviços a cada 45 s com a aplicação visível,
    ao ganhar foco e ao abrir a central; separada das consultas de checklist.
    Requisições antigas são canceladas em troca de sessão.
 5. Leitura é confirmada no frontend somente após resposta positiva da API.
+   Avisos não lidos têm prioridade antes do limite de 100 registros. Em erro
+   de API ou perda de acesso, o sino remove dados de serviços antigos e exibe
+   erro, sem continuar expondo possíveis tarefas de outro condomínio.
 6. `GET /servicos/alertas-prazos` lista somente tarefas vencidas e abertas,
    respeitando identidade, perfil, condomínio e vínculos de participação.
    O sino global mostra o prazo vencido, abre a tarefa e para de alertar
    quando ela é concluída. Não cria notificações repetidas nem WhatsApp.
 
 **Preparação WhatsApp, SEM qualquer disparo externo**
-6. Controladoria cadastra/altera números e usuários dão opt-in/opt-out
+7. Controladoria cadastra/altera números e usuários dão opt-in/opt-out
    individualmente na própria conta.
-7. Alteração de número revoga consentimento e cancela itens preparados.
-8. Histórico auditável de concessão/revogação e de alterações de telefone
+8. Alteração de número revoga consentimento e cancela itens preparados.
+   Para conceder opt-in, a pessoa confirma o E.164 que viu na tela;
+   número mudado nesse intervalo produz HTTP 409 sem novo consentimento.
+   PostgreSQL usa FOR UPDATE na mesma linha de titularidade para serializar
+   duas alterações simultâneas, comprovado por ensaio de concorrência real
+   na CI, isolado do Neon.
+9. Histórico auditável de concessão/revogação e de alterações de telefone
    acessível somente à Controladoria; exibe apenas os quatro últimos dígitos
    dos telefones, nunca números completos no histórico.
-9. Novo cadastro recusa um número compartilhado por duas contas (HTTP 409).
+10. Novo cadastro recusa um número compartilhado por duas contas (HTTP 409).
    Novos bancos também têm restrição UNIQUE. Para bancos existentes,
    a migração precisa ser aplicada SOMENTE depois de auditar duplicidades:
    `migracoes/v73_whatsapp_telefone_unico.sql`.
-10. Prévia de avisos é somente leitura e simulação conservadora.
+11. Prévia de avisos é somente leitura e simulação conservadora.
     Nenhum status de pré-envio é autorização para disparar mensagens.
 
 ### Barreiras obrigatórias para concluir o módulo
@@ -51,6 +60,12 @@
 - [x] Testes unitários e de integração offline por perfil/condomínio.
 - [x] Testes de backend de consentimento e auditoria (banco fictício).
 - [x] Teste de navegação com sino, abertura de tarefa e confirmação de leitura.
+- [x] HTTP FastAPI+JWT real com banco fictício, perfil/condomínio, opt-in
+      protegido, histórico auditável e negação de acesso após mudança.
+- [x] Ensaio PostgreSQL real de corrida entre troca do número e opt-in,
+      usando SOMENTE banco local descartável da CI.
+- [x] Confirmação do número visto na tela, proteção de duplicidades e
+      ordenação de avisos pendentes antes do histórico já lido.
 - [ ] Verificação transacional, na mesma sessão DB, de identidade, consentimento,
       acesso atual, evento/ciclo, vigência, duplicidade e bloqueio de reenvio.
 - [ ] Despachante oficial WhatsApp Business Platform: templates aprovados,
@@ -72,5 +87,20 @@
   PostgreSQL descartável, dependências e prevenção de arquivos sensíveis.
 - Sem segredos, números reais de telefone ou dados de condomínios reais na CI.
 - Rollback seguro: a versão fica na branch, sem merge/deploy.
-- Notificação interna não necessita comprar pacote WhatsApp; envio oficial,
-  caso escolhido, poderá ter custos e não deve ser ativado automaticamente.
+- Notificação interna não necessita comprar pacote WhatsApp; toda ação
+  efetiva é feita e registrada dentro do aplicativo.
+- Não confundir a API de Notification do navegador com push remoto: avisos
+  internos dependem de consultas do aplicativo aberto; não prometem alerta
+  quando o aparelho está offline ou o navegador fechado.
+- **Política de custo em novembro de 2026:** templates proativos de utilidade
+  da WhatsApp Business Platform estão sujeitos a cobrança por entrega,
+  inclusive dentro da janela de 24 h desde 01/10/2026. A franquia de
+  mensagens de serviço NÃO é uma autorização para disparar templates proativos
+  gratuitamente. Conferir custos e condições atuais antes de contratar:
+  https://developers.facebook.com/docs/whatsapp/pricing/
+  e https://respond.io/help/whatsapp/whatsapp-pricing
+- Consequentemente, não implementar serviços de disparo em massa por
+  automação não oficial, nem ativar despacho real sem custo comprovado,
+  conta do provedor e decisão explícita.
+- CI confirmada com 235 testes Python, 13 testes Chromium e 6 jobs verdes
+  na execução após `5198b95` (consultar GitHub Actions para versão atual).
