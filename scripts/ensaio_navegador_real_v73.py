@@ -143,7 +143,7 @@ def homologar(pagina):
     print('REAL 2/5: React abriu tarefa e API persistiu leitura do aviso.', flush=True)
 
     # A gaveta modal bloqueia cliques fora dela. Fechar antes do logout.
-    pagina.get_by_role('button', name='Fechar detalhes do serviço').click()
+    pagina.get_by_role('dialog', name=f'Serviço #{sid}').get_by_role('button', name='Fechar detalhes', exact=True).click()
     expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
     pagina.get_by_role('button', name='Encerrar Sessão').click()
     expect(pagina.locator('.login-screen')).to_be_visible()
