@@ -243,6 +243,18 @@ class WhatsAppAuditoriaContato(Base):
     consentimento_revogado = Column(Integer, nullable=False, default=0)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+
+# Evidencia append-only de opt-in/opt-out. Nao guarda numero completo.
+class WhatsAppAuditoriaConsentimento(Base):
+    __tablename__ = 'whatsapp_auditoria_consentimentos'
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    alterado_por_id = Column(Integer, ForeignKey('usuarios.id', ondelete='SET NULL'), nullable=True)
+    acao = Column(String(40), nullable=False)  # concedido | revogado | revogado_troca_numero
+    origem = Column(String(24), nullable=False)  # usuario | controladoria
+    telefone_final = Column(String(4), nullable=True)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
 # ========================================================================
 # CENTRAL FINANCEIRA: livro de lançamentos imutáveis (V6.8, desenvolvimento).
 # Valores inteiros em centavos; comprovantes persistidos em tabela separada.
