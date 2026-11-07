@@ -137,6 +137,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.usuario = USUARIOS["admin@teste.local"]
         self.sessao_invalida = False
         self.avisos_servicos_ficticios = []
+        self.servicos_ficticios = []
+        self.pessoas_servicos_ficticios = []
         self.atrasos_servicos_ficticios = []
         self.falha_consulta_servicos = False
         self.telefone_whatsapp_ficticio = '+5543999991111'
@@ -209,10 +211,35 @@ class HaizeNavegadorV70(unittest.TestCase):
                 "atrasado": False, "executores": [], "fiscalizadores": [],
                 "acoes_disponiveis": [],
             }
-        elif caminho in ("/servicos/17/historico", "/servicos/17/fotos"):
+        elif caminho in ("/servicos/17/historico", "/servicos/17/fotos",
+                           "/servicos/18/historico", "/servicos/18/fotos"):
             resposta = []
-        elif caminho in {"/servicos", "/servicos/responsaveis"}:
-            resposta = []
+        elif caminho == "/servicos/responsaveis":
+            resposta = self.pessoas_servicos_ficticios
+        elif caminho == "/servicos":
+            if metodo == "POST":
+                dados = json.loads(request.post_data or "{}")
+                resposta = {
+                    "id": 18, "titulo": dados["titulo"],
+                    "descricao": dados["descricao"],
+                    "condominio_id": dados["condominio_id"],
+                    "condominio": "Condomínio Fictício A",
+                    "prioridade": dados["prioridade"], "prazo": dados["prazo"],
+                    "status": "Aguardando ciência", "criador": "Gestora Teste",
+                    "responsavel": "Gestora Teste", "atrasado": False,
+                    "executores": [{"usuario_id": 1, "nome": "Gestora Teste",
+                                   "status": "Aguardando ciência"}],
+                    "fiscalizadores": [], "acoes_disponiveis": [],
+                }
+                self.servicos_ficticios.append(resposta)
+                self.avisos_servicos_ficticios.append({
+                    "id": 701, "servico_id": 18, "destinatario_id": 1,
+                    "mensagem": "Nova tarefa criada na Controladoria",
+                    "lida": False, "criada_em": "2026-11-07T11:40:00",
+                })
+                status = 201
+            else:
+                resposta = self.servicos_ficticios
         elif caminho == "/financeiro/solicitacoes":
             resposta = FINANCEIRO
         elif caminho == "/financeiro/solicitacoes/15/lancamentos":
@@ -449,6 +476,30 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
         expect(self.page.get_by_text("Tarefa PRIVADA Colaborador")).to_be_visible()
         self.assertEqual(self.page.get_by_text("Tarefa PRIVADA Zelador A").count(), 0)
+
+    def test_17_criar_servico_atualiza_sino_sem_f5(self):
+        self.pessoas_servicos_ficticios = [
+            {"id": 1, "nome": "Gestora Teste", "perfil": "Controladoria",
+             "condominio_id": None}
+        ]
+        self.login()
+        self.menu("Serviços Internos")
+        self.page.get_by_role("button", name="Novo serviço").first.click()
+        modal = self.page.get_by_role("dialog", name="Criar solicitação de serviço")
+        modal.locator("#hs-v3-titulo").fill("Revisar quadro elétrico")
+        modal.locator("#hs-v3-condominio").select_option("1")
+        modal.locator("#hs-v3-prazo").fill(
+            (__import__("datetime").date.today() +
+             __import__("datetime").timedelta(days=30)).isoformat()
+        )
+        modal.locator("#hs-v3-descricao").fill("Inspecionar quadro elétrico das áreas comuns")
+        modal.locator(".hs-v3-people-list[aria-label='Escolher executores'] input[type=checkbox]").first.check()
+        modal.get_by_role("button", name="Criar serviço", exact=False).click()
+        expect(self.page.get_by_role("dialog", name="Serviço #18")).to_be_visible()
+        self.page.get_by_role("button", name="Fechar detalhes do serviço").click()
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
+        expect(self.page.get_by_text("Nova tarefa criada na Controladoria")).to_be_visible()
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
