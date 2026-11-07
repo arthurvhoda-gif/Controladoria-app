@@ -68,6 +68,16 @@ def cancelar_pendentes(db: Session, usuario_id: int):
         models.FilaWhatsApp.status == 'preparada',
     ).update({'status': 'cancelada'}, synchronize_session=False)
 
+
+def registrar_consentimento(db: Session, usuario_id: int, ator_id: int,
+                            acao: str, origem: str, telefone: str | None):
+    """Registra opt-in e revogacao na mesma transacao, sem armazenar o numero."""
+    db.add(models.WhatsAppAuditoriaConsentimento(
+        usuario_id=usuario_id, alterado_por_id=ator_id,
+        acao=acao, origem=origem,
+        telefone_final=telefone[-4:] if telefone else None,
+    ))
+
 @router.get('/me')
 def minhas_preferencias(request: Request, db: Session = Depends(sessao)):
     usuario = usuario_atual(request, db)
@@ -86,8 +96,13 @@ def salvar_preferencias(dados: PreferenciaEntrada, request: Request, db: Session
         # Cada pessoa autoriza o número que já foi administrativamente cadastrado.
         if not prefs.consentimento:
             prefs.consentido_em = datetime.now(timezone.utc)
+            registrar_consentimento(db, usuario.id, usuario.id, 'concedido',
+                                    'usuario', prefs.telefone)
         prefs.consentimento = 1
     else:
+        if prefs.consentimento:
+            registrar_consentimento(db, usuario.id, usuario.id, 'revogado',
+                                    'usuario', prefs.telefone)
         prefs.consentimento = 0
         prefs.consentido_em = None
         cancelar_pendentes(db, usuario.id)
@@ -139,9 +154,45 @@ def salvar_numero_admin(usuario_id: int, dados: NumeroAdministrado, request: Req
         telefone_novo_final=novo[-4:] if novo else None,
         consentimento_revogado=int(estava_autorizado),
     ))
+    if estava_autorizado:
+        registrar_consentimento(db, usuario_id, admin.id,
+                                'revogado_troca_numero', 'controladoria', anterior)
     db.commit()
     return {'numero': novo or '', 'receber_alertas': False, 'alterado': True,
             'mensagem': 'Número atualizado. A pessoa deverá autorizar os avisos neste número.'}
+
+@router.get('/admin/usuarios/{usuario_id}/auditoria')
+def consultar_auditoria(usuario_id: int, request: Request, db: Session = Depends(sessao)):
+    """Historico auditavel restrito à Controladoria; sem telefones completos."""
+    exigir_controladoria(request, db)
+    if db.get(models.Usuario, usuario_id) is None:
+        raise HTTPException(404, detail='Cadastro não encontrado.')
+    contatos = (
+        db.query(models.WhatsAppAuditoriaContato)
+        .filter(models.WhatsAppAuditoriaContato.usuario_id == usuario_id)
+        .order_by(models.WhatsAppAuditoriaContato.id.desc()).limit(100).all()
+    )
+    consentimentos = (
+        db.query(models.WhatsAppAuditoriaConsentimento)
+        .filter(models.WhatsAppAuditoriaConsentimento.usuario_id == usuario_id)
+        .order_by(models.WhatsAppAuditoriaConsentimento.id.desc()).limit(100).all()
+    )
+    registros = [{
+        'tipo': 'numero_atualizado', 'origem': 'controladoria',
+        'alterado_por_id': x.alterado_por_id,
+        'telefone_anterior_final': x.telefone_anterior_final,
+        'telefone_novo_final': x.telefone_novo_final,
+        'consentimento_revogado': bool(x.consentimento_revogado),
+        'criado_em': x.criado_em.isoformat() if x.criado_em else None,
+    } for x in contatos] + [{
+        'tipo': x.acao, 'origem': x.origem,
+        'alterado_por_id': x.alterado_por_id,
+        'telefone_final': x.telefone_final,
+        'criado_em': x.criado_em.isoformat() if x.criado_em else None,
+    } for x in consentimentos]
+    registros.sort(key=lambda x: x['criado_em'] or '', reverse=True)
+    return {'usuario_id': usuario_id, 'historico': registros[:100], 'limite': 100}
+
 
 @router.get('/fila/resumo')
 def resumo_fila(request: Request, db: Session = Depends(sessao)):
