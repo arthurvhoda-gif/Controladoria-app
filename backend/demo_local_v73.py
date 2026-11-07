@@ -46,6 +46,12 @@ import main as principal
 
 app = principal.app
 
+# Anexos criados na demo também ficam dentro da pasta temporária. Não escrever
+# anexos nem fotografias de teste na pasta do projeto ou em serviços externos.
+principal.UPLOAD_DIR = str(raiz / 'uploads')
+principal.FOTOS_CHECKLIST_DIR = str(raiz / 'uploads' / 'checklists')
+Path(principal.FOTOS_CHECKLIST_DIR).mkdir(parents=True, exist_ok=True)
+
 # As migrações de main:app são exclusivas de PostgreSQL. Aqui apenas, sem
 # alterar a aplicação de produção, evitamos executar migrações em SQLite.
 if principal.startup_event not in app.router.on_startup:
