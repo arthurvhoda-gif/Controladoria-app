@@ -138,6 +138,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.sessao_invalida = False
         self.avisos_servicos_ficticios = []
         self.atrasos_servicos_ficticios = []
+        self.falha_consulta_servicos = False
         self.leituras_avisos_ficticios = []
         self.erros_js = []
         self.page.on("pageerror", lambda erro: self.erros_js.append(str(erro)))
@@ -174,10 +175,16 @@ class HaizeNavegadorV70(unittest.TestCase):
         elif caminho == "/checklists/alertas":
             resposta = {"alertas": []}
         elif caminho == "/servicos/notificacoes":
-            resposta = self.avisos_servicos_ficticios
+            if self.falha_consulta_servicos:
+                status, resposta = 403, {"detail": "Permissões alteradas. Faça nova consulta."}
+            else:
+                resposta = self.avisos_servicos_ficticios
         elif caminho == "/servicos/alertas-prazos":
-            resposta = {"total": len(self.atrasos_servicos_ficticios),
-                       "alertas": self.atrasos_servicos_ficticios, "limite": 100}
+            if self.falha_consulta_servicos:
+                status, resposta = 403, {"detail": "Permissões alteradas. Faça nova consulta."}
+            else:
+                resposta = {"total": len(self.atrasos_servicos_ficticios),
+                           "alertas": self.atrasos_servicos_ficticios, "limite": 100}
         elif caminho.startswith("/servicos/notificacoes/") and caminho.endswith("/ler") and metodo == "POST":
             try:
                 aviso_id = int(caminho.split("/")[3])
@@ -210,6 +217,14 @@ class HaizeNavegadorV70(unittest.TestCase):
                 {**u, "numero": None, "receber_alertas": False, "condominio_nome": "Condomínio Fictício A"}
                 for u in USUARIOS.values()
             ]
+        elif caminho.startswith("/avisos-whatsapp/admin/usuarios/") and caminho.endswith("/auditoria"):
+            resposta = {"usuario_id": int(caminho.split("/")[4]), "historico": [
+                {"tipo": "concedido", "origem": "usuario", "alterado_por_id": 2,
+                 "telefone_final": "1234", "criado_em": "2026-11-07T08:00:00"},
+                {"tipo": "numero_atualizado", "origem": "controladoria", "alterado_por_id": 1,
+                 "telefone_anterior_final": None, "telefone_novo_final": "1234",
+                 "criado_em": "2026-11-07T07:00:00"}
+            ], "limite": 100}
         elif caminho == "/avisos-whatsapp/fila/previas":
             resposta = {"previa": [], "envios_ativos": False}
         elif caminho == "/status":
@@ -266,6 +281,36 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.locator(".alertas-checklist-lista").first.locator("button").first.click()
         expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
         self.assertEqual(self.leituras_avisos_ficticios, [])
+
+    def test_10_api_revogada_limpa_avisos_antigos_do_sino(self):
+        self.avisos_servicos_ficticios = [{
+            "id": 501, "servico_id": 17,
+            "mensagem": "Nova tarefa para executar: Verificar iluminação fictícia",
+            "lida": False, "criada_em": "2026-11-07T11:00:00",
+        }]
+        self.atrasos_servicos_ficticios = [{
+            "servico_id": 17, "titulo": "Verificar iluminação fictícia",
+            "condominio": "Condomínio Fictício A", "prazo": "2026-10-30",
+            "dias_atraso": 8,
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("2")
+        self.falha_consulta_servicos = True
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Não foi possível atualizar as notificações de tarefas.")).to_be_visible()
+        expect(self.page.get_by_text("Não foi possível atualizar os serviços em atraso.")).to_be_visible()
+        expect(self.page.locator(".notification-badge")).to_have_count(0)
+
+    def test_11_controladoria_ve_historico_whatsapp_sem_numero_completo(self):
+        self.login()
+        self.menu("Contatos WhatsApp")
+        expect(self.page.get_by_role("heading", name="Contatos para notificações")).to_be_visible()
+        zelador = self.page.locator(".wa-admin-user").filter(has_text="Zelador Teste")
+        zelador.get_by_role("button", name="Ver histórico").click()
+        expect(zelador.get_by_text("Autorização concedida pela pessoa")).to_be_visible()
+        expect(zelador.get_by_text("Número atualizado pela Controladoria")).to_be_visible()
+        expect(zelador.locator(".wa-admin-auditoria")).to_contain_text("1234")
+        self.assertNotIn("+554399991234", zelador.locator(".wa-admin-auditoria").inner_text())
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
