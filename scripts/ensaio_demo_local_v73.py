@@ -133,7 +133,7 @@ def main():
 
                 # Fechar a gaveta antes do logout: o backdrop bloqueia cliques
                 # fora do detalhe por acessibilidade e comportamento esperado.
-                pagina.get_by_role('button', name='Fechar detalhes do serviço').click()
+                pagina.get_by_role('dialog', name=f'Serviço #{sid}').get_by_role('button', name='Fechar detalhes', exact=True).click()
                 expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
                 pagina.get_by_role('button', name='Encerrar Sessão').click()
                 expect(pagina.locator('.login-screen')).to_be_visible()
