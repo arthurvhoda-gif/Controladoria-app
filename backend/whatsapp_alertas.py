@@ -38,8 +38,10 @@ def exigir_controladoria(request: Request, db: Session):
     return usuario
 
 class PreferenciaEntrada(BaseModel):
-    # Número não é aceito: somente a Controladoria define telefones.
+    # O usuário não altera o número: só confirma o que viu na tela.
+    # Confirmação impede consentimento acidental em número que acabou de mudar.
     receber_alertas: bool
+    numero_confirmado: str | None = Field(default=None, max_length=18)
 
 class NumeroAdministrado(BaseModel):
     numero: str = Field(default='', max_length=35)
@@ -115,6 +117,10 @@ def salvar_preferencias(dados: PreferenciaEntrada, request: Request, db: Session
     if dados.receber_alertas:
         if not prefs.telefone:
             raise HTTPException(422, detail='A Controladoria precisa cadastrar seu número antes de você autorizar os avisos.')
+        # O usuário concordou com um número específico exibido em sua tela.
+        # Uma troca concorrente nunca pode autorizar automaticamente outro.
+        if not dados.numero_confirmado or dados.numero_confirmado != prefs.telefone:
+            raise HTTPException(409, detail='O número cadastrado mudou. Reabra as preferências e confira o telefone antes de autorizar.')
         # Cada pessoa autoriza o número que já foi administrativamente cadastrado.
         if not prefs.consentimento:
             prefs.consentido_em = datetime.now(timezone.utc)
