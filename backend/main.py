@@ -108,6 +108,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor
     if path == '/avisos-whatsapp/fila/resumo' and method == 'GET':
         return gestor
+    if re.fullmatch(r'/avisos-whatsapp/fila/\d+/verificar', path) and method == 'POST':
+        return gestor
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
