@@ -140,6 +140,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.servicos_ficticios = []
         self.pessoas_servicos_ficticios = []
         self.atrasos_servicos_ficticios = []
+        self.alertas_checklist_ficticios = []
+        self.falha_alertas_checklist = False
         self.falha_consulta_servicos = False
         self.detalhe_servico_revogado = False
         self.lista_servicos_indisponivel = False
@@ -182,7 +184,10 @@ class HaizeNavegadorV70(unittest.TestCase):
         elif caminho in {"/categorias", "/fornecedores", "/checklists", "/usuarios"}:
             resposta = []
         elif caminho == "/checklists/alertas":
-            resposta = {"alertas": []}
+            if self.falha_alertas_checklist:
+                status, resposta = 403, {"detail": "Permissão de checklist alterada"}
+            else:
+                resposta = {"alertas": self.alertas_checklist_ficticios}
         elif caminho == "/servicos/notificacoes":
             if self.falha_consulta_servicos:
                 status, resposta = 403, {"detail": "Permissões alteradas. Faça nova consulta."}
@@ -573,6 +578,42 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
         self.page.wait_for_function("() => !location.search.includes('servico=')")
         self.assertGreaterEqual(self.consultas_detalhe_servico, 2)
+
+    def test_21_alerta_checklist_invalido_sai_do_sino_e_recupera_ao_reconectar(self):
+        self.alertas_checklist_ficticios = [{
+            "item_id": 301, "titulo": "Inspeção fictícia de bombas",
+            "condominio": "Condomínio Fictício A", "horas_atraso": 25,
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        sino = self.page.get_by_role("button", name="Ver alertas e notificações")
+        self.falha_alertas_checklist = True
+        sino.click()
+        expect(self.page.get_by_text("Permissão de checklist alterada")).to_be_visible()
+        expect(self.page.get_by_text("Inspeção fictícia de bombas")).to_have_count(0)
+        expect(self.page.locator(".notification-badge")).to_have_count(0)
+        self.falha_alertas_checklist = False
+        # Segunda consulta deve restaurar os dados corretos, sem F5.
+        sino.click()
+        sino.click()
+        expect(self.page.get_by_text("Inspeção fictícia de bombas")).to_be_visible()
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        expect(self.page.get_by_text("Permissão de checklist alterada")).to_have_count(0)
+
+    def test_22_refresh_checklist_com_erro_nao_mantem_alerta_antigo(self):
+        self.alertas_checklist_ficticios = [{
+            "item_id": 302, "titulo": "Verificação fictícia de portão",
+            "condominio": "Condomínio Fictício A", "horas_atraso": 12,
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.falha_alertas_checklist = True
+        self.page.get_by_role("button", name="Sincronizar dados").click()
+        # A sincronização global pode falhar por outros motivos, mas o sino
+        # jamais pode continuar exibindo alerta antigo após a falha de escopo.
+        expect(self.page.locator(".notification-badge")).to_have_count(0)
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Verificação fictícia de portão")).to_have_count(0)
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
