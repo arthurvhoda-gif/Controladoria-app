@@ -105,6 +105,29 @@ class AuditoriaConsentimentoV73(unittest.TestCase):
             self.assertFalse(app._permissao_rota('GET', p, perfil))
         self.assertFalse(app._permissao_rota('POST', p, 'Controladoria'))
 
+    def test_nao_autoriza_numero_alterado_desde_abertura_da_tela(self):
+        original = self.numero()['numero']
+        self.numero('(43) 98888-2222')
+        with self.assertRaises(HTTPException) as erro:
+            self.consentir(True, confirmado=original)
+        self.assertEqual(erro.exception.status_code, 409)
+        self.assertFalse(self.db.get(models.PreferenciaWhatsApp, 2).consentimento)
+        self.assertEqual(self.db.query(models.WhatsAppAuditoriaConsentimento).count(), 0)
+        # Depois de reler o novo número, a pessoa ainda pode autorizar.
+        self.consentir(True)
+        self.assertTrue(self.db.get(models.PreferenciaWhatsApp, 2).consentimento)
+        self.assertEqual(self.db.query(models.WhatsAppAuditoriaConsentimento).count(), 1)
+
+    def test_optin_sem_confirmação_explicita_rejeitado(self):
+        self.numero()
+        with self.assertRaises(HTTPException) as erro:
+            wa.salvar_preferencias(
+                wa.PreferenciaEntrada(receber_alertas=True),
+                self.req(2), self.db)
+        self.assertEqual(erro.exception.status_code, 409)
+        self.assertFalse(self.db.get(models.PreferenciaWhatsApp, 2).consentimento)
+        self.assertEqual(self.db.query(models.WhatsAppAuditoriaConsentimento).count(), 0)
+
     def test_numero_duplicado_bloqueado_sem_revogar_consentimento(self):
         self.numero()
         self.consentir(True)
