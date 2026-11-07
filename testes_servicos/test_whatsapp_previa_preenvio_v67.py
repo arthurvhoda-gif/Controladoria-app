@@ -60,7 +60,7 @@ class TestesPreviaIntegrada(unittest.TestCase):
             uid, wa.NumeroAdministrado(numero=f'4399999{uid:04d}'),
             self.c.req(1), self.db)
         wa.salvar_preferencias(
-            wa.PreferenciaEntrada(receber_alertas=True),
+            wa.PreferenciaEntrada(receber_alertas=True, numero_confirmado=f'+554399999{uid:04d}'),
             self.c.req(uid), self.db)
 
     def previas(self, uid=1):
