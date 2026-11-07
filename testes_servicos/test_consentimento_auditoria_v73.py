@@ -101,6 +101,30 @@ class AuditoriaConsentimentoV73(unittest.TestCase):
             self.assertFalse(app._permissao_rota('GET', p, perfil))
         self.assertFalse(app._permissao_rota('POST', p, 'Controladoria'))
 
+    def test_numero_duplicado_bloqueado_sem_revogar_consentimento(self):
+        self.numero()
+        self.consentir(True)
+        antes = self.db.query(models.WhatsAppAuditoriaContato).count()
+        with self.assertRaises(HTTPException) as err:
+            wa.salvar_numero_admin(
+                3, wa.NumeroAdministrado(numero='+55 43 99999-1111'),
+                self.req(1), self.db)
+        self.assertEqual(err.exception.status_code, 409)
+        self.assertIsNone(self.db.get(models.PreferenciaWhatsApp, 3))
+        self.assertEqual(self.db.query(models.WhatsAppAuditoriaContato).count(), antes)
+        self.assertTrue(self.db.get(models.PreferenciaWhatsApp, 2).consentimento)
+
+    def test_schema_novo_impede_duplicacao_ate_sem_endpoint(self):
+        from sqlalchemy.exc import IntegrityError
+        self.numero()
+        self.db.add(models.PreferenciaWhatsApp(
+            usuario_id=3, telefone='+5543999991111', consentimento=0))
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+        self.assertIsNone(self.db.get(models.PreferenciaWhatsApp, 3))
+        self.assertEqual(self.db.get(models.PreferenciaWhatsApp, 2).telefone, '+5543999991111')
+
     def test_numero_sem_optin_nao_cria_auditoria_falsa(self):
         self.numero()
         self.consentir(False)
