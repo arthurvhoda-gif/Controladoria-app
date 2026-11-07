@@ -137,6 +137,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.usuario = USUARIOS["admin@teste.local"]
         self.sessao_invalida = False
         self.avisos_servicos_ficticios = []
+        self.atrasos_servicos_ficticios = []
         self.leituras_avisos_ficticios = []
         self.erros_js = []
         self.page.on("pageerror", lambda erro: self.erros_js.append(str(erro)))
@@ -174,6 +175,9 @@ class HaizeNavegadorV70(unittest.TestCase):
             resposta = {"alertas": []}
         elif caminho == "/servicos/notificacoes":
             resposta = self.avisos_servicos_ficticios
+        elif caminho == "/servicos/alertas-prazos":
+            resposta = {"total": len(self.atrasos_servicos_ficticios),
+                       "alertas": self.atrasos_servicos_ficticios, "limite": 100}
         elif caminho.startswith("/servicos/notificacoes/") and caminho.endswith("/ler") and metodo == "POST":
             try:
                 aviso_id = int(caminho.split("/")[3])
@@ -248,6 +252,20 @@ class HaizeNavegadorV70(unittest.TestCase):
             "() => document.querySelector('.notification-badge') === null"
         )
         self.assertEqual(self.leituras_avisos_ficticios, [501])
+
+    def test_09_servico_atrasado_no_sino_sem_criar_aviso_de_whatsapp(self):
+        self.atrasos_servicos_ficticios = [{
+            "servico_id": 17, "titulo": "Verificar iluminação fictícia",
+            "condominio": "Condomínio Fictício A", "prazo": "2026-10-30",
+            "dias_atraso": 8,
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Serviços em atraso (1)")).to_be_visible()
+        self.page.locator(".alertas-checklist-lista").first.locator("button").first.click()
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
+        self.assertEqual(self.leituras_avisos_ficticios, [])
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
