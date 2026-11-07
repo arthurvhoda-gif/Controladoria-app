@@ -248,3 +248,7 @@ jobs:
         run: python scripts/semear_fullstack_v73.py
       - name: Testar notificacoes entre navegador e servidor reais
         run: python scripts/ensaio_navegador_real_v73.py
+      - name: Homologar tambem modo de demonstracao local isolado
+        run: |
+          python -m py_compile scripts/iniciar_demo_local_v73.py backend/demo_local_v73.py
+          python scripts/ensaio_demo_local_v73.py
