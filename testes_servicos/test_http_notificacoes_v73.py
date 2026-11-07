@@ -171,5 +171,37 @@ class HTTPNotificacoesV73(unittest.TestCase):
         self.assertEqual(atual.json()['numero'], '+5543988882222')
 
 
+    def test_http_conferencia_transacional_protegida_sem_envio(self):
+        self.client.put('/avisos-whatsapp/admin/usuarios/2/numero',
+                        headers=self.auth(1),
+                        json={'numero': '(43) 99999-1111'})
+        aceite = self.client.put('/avisos-whatsapp/me',
+                                 headers=self.auth(2),
+                                 json={'receber_alertas': True,
+                                       'numero_confirmado': '+5543999991111'})
+        self.assertEqual(aceite.status_code, 200, aceite.text)
+        servico_id = self.criar_tarefa()
+        fila = (self.db.query(models.FilaWhatsApp)
+                .filter_by(usuario_id=2, servico_id=servico_id).one())
+        url = f'/avisos-whatsapp/fila/{fila.id}/verificar'
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self.assertEqual(self.client.post(url, headers=self.auth(2)).status_code, 403)
+        self.assertEqual(self.client.get(url, headers=self.auth(1)).status_code, 403)
+        resp = self.client.post(url, headers=self.auth(1))
+        self.assertEqual(resp.status_code, 200, resp.text)
+        dados = resp.json()
+        self.assertEqual(dados['fila_id'], fila.id)
+        self.assertEqual(dados['situacao'], 'revisar')
+        self.assertFalse(dados['envio_autorizado'])
+        self.assertFalse(dados['envios_ativos'])
+        self.assertNotIn('+5543999991111', resp.text)
+        self.assertEqual(self.client.post(
+            '/avisos-whatsapp/fila/999999/verificar',
+            headers=self.auth(1)).status_code, 404)
+        self.assertEqual(self.db.get(models.FilaWhatsApp, fila.id).status,
+                         'preparada')
+        self.assertFalse(hasattr(models.FilaWhatsApp, 'enviado_em'))
+
+
 if __name__ == '__main__':
     unittest.main()
