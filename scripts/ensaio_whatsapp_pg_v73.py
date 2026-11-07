@@ -158,3 +158,58 @@ with engine.connect() as conn:
         'Índice UNIQUE não criado após limpeza dos duplicados.'
     )
 print('V7.3: migração bloqueia legado duplicado e aplica UNIQUE após saneamento. OK.')
+
+
+# Pré-conferência transacional: garantir ordem de locks sem deadlock.
+# Uma alteração administrativa do telefone deve vencer e fazer a conferência
+# observar a fila CANCELADA. Nenhum serviço externo é acionado.
+from datetime import date, timedelta
+import servicos_api as servicos
+
+with SessionLocal() as db:
+    wa.salvar_preferencias(
+        wa.PreferenciaEntrada(receber_alertas=True,
+                             numero_confirmado='+5543988882222'),
+        req(2), db,
+    )
+    novo_servico = servicos.criar(servicos.ServicoNovo(
+        condominio_id=1, executores_ids=[2],
+        titulo='Conferir casa de máquinas',
+        descricao='Tarefa de concorrência inteiramente fictícia',
+        prazo=date.today() + timedelta(days=2),
+    ), req(1), db)
+    fila_id = db.query(models.FilaWhatsApp).filter(
+        models.FilaWhatsApp.servico_id == novo_servico['id'],
+        models.FilaWhatsApp.usuario_id == 2,
+    ).one().id
+
+verificacao_iniciada = Event()
+
+
+def verificar_com_lock():
+    with SessionLocal() as db:
+        verificacao_iniciada.set()
+        return wa.verificar_aviso_preparado(fila_id, req(1), db)
+
+
+with SessionLocal() as admin_db:
+    usuario_bloqueado, _ = wa.contato_bloqueado_para_edicao(admin_db, 2)
+    assert usuario_bloqueado.id == 2
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        conferencia = executor.submit(verificar_com_lock)
+        assert verificacao_iniciada.wait(timeout=5), 'Conferência não iniciou.'
+        time.sleep(0.25)
+        assert not conferencia.done(), 'Conferência ignorou lock administrativo.'
+        troca_final = wa.salvar_numero_admin(
+            2, wa.NumeroAdministrado(numero='43999993333'),
+            req(1), admin_db)
+        resultado_verificacao = conferencia.result(timeout=8)
+
+assert troca_final['alterado'] is True
+assert resultado_verificacao['situacao'] == 'impedido'
+assert resultado_verificacao['envio_autorizado'] is False
+assert resultado_verificacao['status_fila'] == 'cancelada'
+with SessionLocal() as db:
+    assert db.get(models.FilaWhatsApp, fila_id).status == 'cancelada'
+    assert not db.get(models.PreferenciaWhatsApp, 2).consentimento
+print('V7.3: pré-conferência observa revogação concorrente SEM deadlock. OK.')
