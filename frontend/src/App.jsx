@@ -735,7 +735,11 @@ function App() {
       setAlertasChecklist(Array.isArray(resultado.alertas) ? resultado.alertas : [])
       setErroAlertasChecklist('')
     } catch (erro) {
-      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token) {
+      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token &&
+          requisicaoAlertasRef.current === controller) {
+        // Em falha ou revogação de escopo, não preservar alertas antigos de
+        // outro condomínio. A próxima consulta pode recuperá-los normalmente.
+        setAlertasChecklist([])
         setErroAlertasChecklist(erro.message || 'Não foi possível buscar os alertas.')
       }
     } finally {
