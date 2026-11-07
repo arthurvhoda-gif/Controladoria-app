@@ -70,6 +70,27 @@ def cancelar_pendentes(db: Session, usuario_id: int):
     ).update({'status': 'cancelada'}, synchronize_session=False)
 
 
+def contato_bloqueado_para_edicao(db: Session, usuario_id: int):
+    """Serializa cadastro e opt-in usando a MESMA linha de usuário.
+
+    O bloqueio do usuário funciona mesmo antes de existir preferência,
+    evitando consentimento sobre telefone trocado em requisições concorrentes.
+    Em PostgreSQL, FOR UPDATE mantém o bloqueio até commit/rollback.
+    """
+    usuario = (
+        db.query(models.Usuario).filter(models.Usuario.id == usuario_id)
+        .with_for_update().populate_existing().one_or_none()
+    )
+    if usuario is None:
+        raise HTTPException(404, detail='Cadastro não encontrado.')
+    preferencia = (
+        db.query(models.PreferenciaWhatsApp).filter(
+            models.PreferenciaWhatsApp.usuario_id == usuario_id
+        ).with_for_update().populate_existing().one_or_none()
+    )
+    return usuario, preferencia
+
+
 def registrar_consentimento(db: Session, usuario_id: int, ator_id: int,
                             acao: str, origem: str, telefone: str | None):
     """Registra opt-in e revogacao na mesma transacao, sem armazenar o numero."""
@@ -87,7 +108,7 @@ def minhas_preferencias(request: Request, db: Session = Depends(sessao)):
 @router.put('/me')
 def salvar_preferencias(dados: PreferenciaEntrada, request: Request, db: Session = Depends(sessao)):
     usuario = usuario_atual(request, db)
-    prefs = db.get(models.PreferenciaWhatsApp, usuario.id)
+    usuario, prefs = contato_bloqueado_para_edicao(db, usuario.id)
     if prefs is None:
         prefs = models.PreferenciaWhatsApp(usuario_id=usuario.id)
         db.add(prefs)
@@ -131,11 +152,8 @@ def listar_contatos(request: Request, db: Session = Depends(sessao)):
 def salvar_numero_admin(usuario_id: int, dados: NumeroAdministrado, request: Request,
                         db: Session = Depends(sessao)):
     admin = exigir_controladoria(request, db)
-    destinatario = db.get(models.Usuario, usuario_id)
-    if destinatario is None:
-        raise HTTPException(404, detail='Cadastro não encontrado.')
+    destinatario, prefs = contato_bloqueado_para_edicao(db, usuario_id)
     novo = normalizar_numero(dados.numero) if dados.numero.strip() else None
-    prefs = db.get(models.PreferenciaWhatsApp, usuario_id)
     anterior = prefs.telefone if prefs else None
     if anterior == novo:
         return {'numero': anterior or '', 'receber_alertas': bool(prefs.consentimento) if prefs else False,
