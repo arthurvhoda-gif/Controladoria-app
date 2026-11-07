@@ -156,6 +156,6 @@ class WhatsappV61Teste(unittest.TestCase):
     def test_self_api_nao_permite_mudar_numero(self):
         self.admin_salva()
         # Cliente malicioso envia um campo extra; Pydantic não o utiliza.
-        data=wa.PreferenciaEntrada.model_validate({'numero':'43988887777','receber_alertas':True})
+        data=wa.PreferenciaEntrada.model_validate({'numero':'43988887777','receber_alertas':True,'numero_confirmado':'+5543999991111'})
         prefs=wa.salvar_preferencias(data,self.req(2),self.db)
         self.assertEqual(prefs['numero'],'+5543999991111')
