@@ -1,3 +1,4 @@
+import { env as nodeEnv } from 'node:process'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -9,7 +10,7 @@ const semFontesExternasNaDemo = {
   enforce: 'pre',
   transform(codigo, id) {
     const caminho = id.replaceAll(String.fromCharCode(92), '/').split('?')[0]
-    if (process.env.VITE_HAIZE_DEMO_V73 !== '1' ||
+    if (nodeEnv.VITE_HAIZE_DEMO_V73 !== '1' ||
         !caminho.endsWith('/src/App.css')) return null
     return codigo.replace(
       /^@import\s+url\(['"]https:\/\/fonts\.googleapis\.com\/[^'"]+['"]\);\s*/m,
