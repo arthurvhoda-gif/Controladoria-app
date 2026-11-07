@@ -88,6 +88,32 @@ class TesteEscopoNotificacoesV73(unittest.TestCase):
         self.assertEqual([a['id'] for a in avisos], [aviso_correto['id']])
         self.assertEqual(avisos[0]['servico_id'], visivel['id'])
 
+    def test_aviso_antigo_nao_lido_sobrevive_a_cem_lidos_recentissimos(self):
+        self.criar()
+        antigo = api.notificacoes(self.req(2), self.db)[0]
+        for indice in range(115):
+            self.db.add(models.ServicoAviso(
+                usuario_id=2, servico_id=antigo['servico_id'],
+                mensagem=f'Aviso recente já lido {indice}',
+                lida_em=api.agora(),
+            ))
+        self.db.commit()
+        avisos = api.notificacoes(self.req(2), self.db)
+        self.assertEqual(len(avisos), 100)
+        self.assertEqual(avisos[0]['id'], antigo['id'])
+        self.assertFalse(avisos[0]['lida'])
+        self.assertTrue(all(a['lida'] for a in avisos[1:]))
+
+    def test_ordem_pendentes_mais_recentes_e_depois_lidos(self):
+        self.criar()
+        primeiro = api.notificacoes(self.req(2), self.db)[0]
+        self.criar()
+        segundo = api.notificacoes(self.req(2), self.db)[0]
+        self.assertGreater(segundo['id'], primeiro['id'])
+        api.ler_aviso(segundo['id'], self.req(2), self.db)
+        avisos = api.notificacoes(self.req(2), self.db)
+        self.assertEqual([x['id'] for x in avisos], [primeiro['id'], segundo['id']])
+
     def test_legado_visivel_ate_participantes_assumirem_fonte_de_verdade(self):
         servico = models.ServicoInterno(
             condominio_id=1, condominio_nome='Condominio A',
