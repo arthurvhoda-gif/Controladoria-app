@@ -191,3 +191,59 @@ jobs:
       - uses: actions/checkout@v4
       - name: Auditar arquivos rastreados sem abrir conteudo
         run: python3 scripts/verificar_artefatos_git_v70.py
+
+  homologacao_integrada:
+    name: Homologacao integrada - React FastAPI PostgreSQL reais
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: haize_ci
+          POSTGRES_PASSWORD: apenas-teste-local-sem-producao
+          POSTGRES_DB: haize_v73_integracao
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haize_ci -d haize_v73_integracao"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      CI: 'true'
+      DATABASE_URL: 'postgresql://haize_ci:apenas-teste-local-sem-producao@127.0.0.1:5432/haize_v73_integracao'
+      AUTH_SECRET_KEY: 'ci-homologacao-integrada-sem-relacao-com-producao-v73'
+      FRONTEND_ORIGINS: 'http://127.0.0.1:4175'
+      VITE_API_URL: 'http://127.0.0.1:18773'
+      ENABLE_CHECKLIST_EMAILS: 'false'
+      GAS_WEB_APP_URL: ''
+      HAIZE_SECRET: ''
+      AUTOMATION_SECRET: ''
+      HAIZE_STORAGE_MODE: 'local'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar backend e Playwright
+        run: |
+          python -m pip install -r backend/requirements.txt
+          python -m pip install 'playwright==1.56.0'
+          python -m playwright install --with-deps chromium
+      - name: Compilar frontend com URL API estritamente local
+        run: |
+          npm ci
+          npm run build
+        working-directory: frontend
+      - name: Criar contas e condominios ficticios no PostgreSQL descartavel
+        run: python scripts/semear_fullstack_v73.py
+      - name: Testar notificacoes entre navegador e servidor reais
+        run: python scripts/ensaio_navegador_real_v73.py
