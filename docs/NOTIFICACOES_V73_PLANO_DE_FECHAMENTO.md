@@ -26,12 +26,17 @@
    permite abrir a tarefa.
 4. Atualização de avisos de serviços a cada 45 s com a aplicação visível,
    ao ganhar foco e ao abrir a central; separada das consultas de checklist.
+   Criação/atualização de tarefa sincroniza o sino imediatamente, sem F5.
    Requisições antigas são canceladas em troca de sessão.
 5. Leitura é confirmada no frontend somente após resposta positiva da API.
    Avisos não lidos têm prioridade antes do limite de 100 registros. Em erro
    de API ou perda de acesso, o sino remove dados de serviços antigos e exibe
    erro, sem continuar expondo possíveis tarefas de outro condomínio.
-6. `GET /servicos/alertas-prazos` lista somente tarefas vencidas e abertas,
+6. Avisos locais (Notification API) pedem permissão somente por clique:
+   o primeiro carregamento não dispara alertas antigos; avisos novos geram
+   notificação genérica sem dados sensíveis, uma vez por ID e por sessão.
+   Isto NÃO é Web Push remoto nem funciona com o navegador fechado.
+7. `GET /servicos/alertas-prazos` lista somente tarefas vencidas e abertas,
    respeitando identidade, perfil, condomínio e vínculos de participação.
    O sino global mostra o prazo vencido, abre a tarefa e para de alertar
    quando ela é concluída. Não cria notificações repetidas nem WhatsApp.
@@ -62,6 +67,9 @@
 - [x] Testes unitários e de integração offline por perfil/condomínio.
 - [x] Testes de backend de consentimento e auditoria (banco fictício).
 - [x] Teste de navegação com sino, abertura de tarefa e confirmação de leitura.
+- [x] Teste Chromium de troca de contas sem vazamento de alertas.
+- [x] Teste Chromium de permissão só após clique, alerta local sem repetição
+      e novo serviço atualizando o sino automaticamente sem F5.
 - [x] HTTP FastAPI+JWT real com banco fictício, perfil/condomínio, opt-in
       protegido, histórico auditável e negação de acesso após mudança.
 - [x] Ensaio PostgreSQL real de corrida entre troca do número e opt-in,
@@ -108,6 +116,6 @@
 - Consequentemente, não implementar serviços de disparo em massa por
   automação não oficial, nem ativar despacho real sem custo comprovado,
   conta do provedor e decisão explícita.
-- CI confirmada com 236 testes Python, 13 testes Chromium e ensaios reais
+- CI confirmada com 236 testes Python, 17 testes Chromium e ensaios reais
   de concorrência/migração em PostgreSQL descartável; 6 jobs verdes
-  na execução `42372944899` (consultar GitHub Actions para versão atual).
+  na execução `42374344813` (consultar GitHub Actions para versão atual).
