@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 from fastapi import HTTPException
+from sqlalchemy import text
 import test_multiplos_participantes as base
 import whatsapp_alertas as wa
 from whatsapp_preenvio import avaliar_preenvio
@@ -100,6 +101,33 @@ class TestesPreviaIntegrada(unittest.TestCase):
         aviso = next(a for a in self.previas() if a['servico_id'] == tarefa['id'] and a['evento'] == 'nova_tarefa')
         self.assertEqual(aviso['diagnostico_preenvio']['situacao'], 'revisar')
         self.assertIs(aviso['diagnostico_preenvio']['envio_autorizado'], False)
+
+    def test_10_numero_compartilhado_em_base_legada_eh_impedido(self):
+        # Apenas SQLite descartavel: simula tabela legada sem UNIQUE,
+        # ANTES de aplicar a migracao opcional em PostgreSQL.
+        self.autorizar(2)
+        servico = self.c.novo(execs=[2], fisc=[])
+        with self.db.begin_nested():
+            self.db.execute(text('DROP TABLE whatsapp_preferencias'))
+            self.db.execute(text(
+                'CREATE TABLE whatsapp_preferencias ('
+                'usuario_id INTEGER PRIMARY KEY, telefone VARCHAR(18), '
+                'consentimento INTEGER NOT NULL, consentido_em DATETIME, '
+                'atualizado_em DATETIME NOT NULL)'
+            ))
+            self.db.execute(text(
+                "INSERT INTO whatsapp_preferencias "
+                "(usuario_id, telefone, consentimento, atualizado_em) VALUES "
+                "(2, '+5543999990002', 1, CURRENT_TIMESTAMP), "
+                "(3, '+5543999990002', 1, CURRENT_TIMESTAMP)"
+            ))
+        self.db.commit()
+        self.db.expire_all()
+        aviso = next(x for x in self.previas() if x['servico_id'] == servico['id'])
+        diag = aviso['diagnostico_preenvio']
+        self.assertEqual(diag['situacao'], 'impedido')
+        self.assertIn('duplicidade', diag['motivo'].lower())
+        self.assertFalse(diag['envio_autorizado'])
 
     def test_09_restricao_controladoria_403(self):
         self.autorizar(2)
