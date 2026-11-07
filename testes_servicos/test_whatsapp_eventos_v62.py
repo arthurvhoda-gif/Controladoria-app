@@ -35,7 +35,7 @@ class FilaWhatsAppEventosV62Teste(unittest.TestCase):
                 self.cenario.req(1), self.db,
             )
             wa.salvar_preferencias(
-                wa.PreferenciaEntrada(receber_alertas=True),
+                wa.PreferenciaEntrada(receber_alertas=True, numero_confirmado='+55'+numero),
                 self.cenario.req(uid), self.db,
             )
 
