@@ -45,7 +45,11 @@ class WhatsappV61Teste(unittest.TestCase):
     def admin_salva(self,usuario_id=2,numero='(43) 99999-1111'):
         return wa.salvar_numero_admin(usuario_id,wa.NumeroAdministrado(numero=numero),self.req(1),self.db)
     def aceitar(self,uid=2):
-        return wa.salvar_preferencias(wa.PreferenciaEntrada(receber_alertas=True),self.req(uid),self.db)
+        pref = self.db.get(models.PreferenciaWhatsApp,uid)
+        return wa.salvar_preferencias(
+            wa.PreferenciaEntrada(receber_alertas=True,
+                numero_confirmado=pref.telefone if pref else None),
+            self.req(uid),self.db)
 
     def test_admin_cadastra_numero_e_pessoa_autoriza(self):
         r=self.admin_salva()
