@@ -114,6 +114,46 @@ class TesteEscopoNotificacoesV73(unittest.TestCase):
             api.ler_aviso(aviso.id, self.req(2), self.db)
         self.assertEqual(cm.exception.status_code, 404)
 
+    def test_alertas_atraso_somente_de_servicos_abertos_do_proprio_condominio(self):
+        self.criar()  # prazo no futuro: não deve aparecer no alerta
+        for ident, condo, responsavel, status in (
+            (41, 1, 2, 'Em andamento'),
+            (42, 2, 3, 'Aguardando ciência'),
+            (43, 1, 2, 'Concluído'),
+        ):
+            self.db.add(models.ServicoInterno(
+                id=ident, condominio_id=condo, condominio_nome=f'Condominio {condo}',
+                responsavel_id=responsavel, responsavel_nome='Zelador',
+                criador_id=1, criador_nome='Gestora',
+                titulo=f'Serviço atrasado {ident}', descricao='Atividade fictícia',
+                status=status, prazo=date.today() - timedelta(days=3),
+            ))
+        self.db.commit()
+        admin = api.alertas_prazos(self.req(1), self.db)
+        self.assertEqual(admin['total'], 2)
+        self.assertEqual({x['servico_id'] for x in admin['alertas']}, {41, 42})
+        zelador_a = api.alertas_prazos(self.req(2), self.db)
+        self.assertEqual(zelador_a['total'], 1)
+        self.assertEqual(zelador_a['alertas'][0]['servico_id'], 41)
+        self.assertGreaterEqual(zelador_a['alertas'][0]['dias_atraso'], 1)
+        zelador_b = api.alertas_prazos(self.req(3), self.db)
+        self.assertEqual(zelador_b['alertas'][0]['servico_id'], 42)
+        self.assertEqual(api.alertas_prazos(self.req(4), self.db)['alertas'], [])
+
+    def test_alerta_atraso_revogado_ao_perder_vinculo(self):
+        self.db.add(models.ServicoInterno(
+            id=44, condominio_id=1, condominio_nome='Condominio A',
+            responsavel_id=2, responsavel_nome='Zelador A',
+            criador_id=1, criador_nome='Gestora',
+            titulo='Serviço legado em atraso', descricao='Atividade fictícia',
+            status='Em andamento', prazo=date.today() - timedelta(days=2),
+        ))
+        self.db.commit()
+        self.assertEqual(api.alertas_prazos(self.req(2), self.db)['total'], 1)
+        self.db.get(models.Usuario, 2).condominio_id = 2
+        self.db.commit()
+        self.assertEqual(api.alertas_prazos(self.req(2), self.db)['total'], 0)
+
     def test_outro_usuario_nao_pode_marcar_aviso_como_lido(self):
         self.criar()
         aviso = api.notificacoes(self.req(2), self.db)[0]
