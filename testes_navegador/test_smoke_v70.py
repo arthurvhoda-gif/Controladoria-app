@@ -528,7 +528,7 @@ class HaizeNavegadorV70(unittest.TestCase):
     def test_18_tarefa_da_lista_e_revalidada_antes_de_abrir(self):
         self.preparar_servico_listado()
         self.login("zelador@teste.local")
-        self.menu("Serviços Internos")
+        self.menu("Minhas Tarefas")
         linha = self.page.get_by_role(
             "button", name="Abrir serviço 17: Verificar iluminação fictícia")
         expect(linha).to_be_visible()
@@ -544,7 +544,7 @@ class HaizeNavegadorV70(unittest.TestCase):
     def test_19_falha_no_refresh_remove_dados_de_tarefa_em_tela(self):
         self.preparar_servico_listado()
         self.login("zelador@teste.local")
-        self.menu("Serviços Internos")
+        self.menu("Minhas Tarefas")
         linha = self.page.get_by_role(
             "button", name="Abrir serviço 17: Verificar iluminação fictícia")
         expect(linha).to_be_visible()
