@@ -357,6 +357,72 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.assertEqual(self.ultimo_consentimento_ficticio['numero_confirmado'], '+5543999991111')
         self.assertFalse(self.consentimento_whatsapp_ficticio)
 
+    def test_14_nao_pede_permissao_sem_clique_e_nao_promete_push_remoto(self):
+        self.page.add_init_script("""
+          window.__permRequestCount = 0;
+          class LocalNotification {
+            static permission = 'default';
+            static requestPermission() {
+              window.__permRequestCount += 1;
+              LocalNotification.permission = 'granted';
+              return Promise.resolve('granted');
+            }
+            constructor() {}
+          }
+          Object.defineProperty(window, 'Notification', {
+            configurable: true, value: LocalNotification,
+          });
+        """)
+        self.login("zelador@teste.local")
+        self.assertEqual(self.page.evaluate("window.__permRequestCount"), 0)
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text(
+            "Avisos internos disponíveis enquanto o aplicativo estiver aberto."
+        )).to_be_visible()
+        self.assertEqual(self.page.get_by_text("Notificações Push ativas").count(), 0)
+        self.page.get_by_role("button", name="Ativar aviso no navegador").click()
+        self.page.wait_for_function("() => window.__permRequestCount === 1")
+        expect(self.page.get_by_text(
+            "Avisos locais permitidos enquanto o aplicativo estiver aberto."
+        )).to_be_visible()
+
+    def test_15_apenas_aviso_novo_gera_notificacao_local_uma_vez(self):
+        self.page.add_init_script("""
+          window.__avisosNativos = [];
+          class LocalNotification {
+            static permission = 'granted';
+            constructor(titulo, opcoes) {
+              window.__avisosNativos.push({titulo, corpo: opcoes?.body});
+            }
+          }
+          Object.defineProperty(window, 'Notification', {
+            configurable: true, value: LocalNotification,
+          });
+        """)
+        self.avisos_servicos_ficticios = [{
+            "id": 501, "servico_id": 17,
+            "mensagem": "Aviso antigo de tarefa fictícia",
+            "lida": False, "criada_em": "2026-11-06T11:00:00",
+        }]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        # O primeiro carregamento define a referência, sem alarme de mensagens antigas.
+        self.assertEqual(self.page.evaluate("window.__avisosNativos"), [])
+        self.avisos_servicos_ficticios.append({
+            "id": 502, "servico_id": 17,
+            "mensagem": "Nova atividade fictícia",
+            "lida": False, "criada_em": "2026-11-07T11:30:00",
+        })
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.locator(".notification-badge")).to_have_text("2")
+        self.page.wait_for_function("() => window.__avisosNativos.length === 1")
+        novo = self.page.evaluate("window.__avisosNativos[0]")
+        self.assertIn("Controladoria Haize", novo["titulo"])
+        self.assertNotIn("Nova atividade fictícia", novo["corpo"])
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        self.page.wait_for_timeout(150)
+        self.assertEqual(len(self.page.evaluate("window.__avisosNativos")), 1)
+
     def test_01_login_e_termino_da_sessao(self):
         self.login()
         self.menu("Solicitações")
