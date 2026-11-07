@@ -41,10 +41,32 @@ def verificar_fila_transacional(db: Session, fila_id: int):
     por contato_bloqueado_para_edicao(). Isso evita consentimento baseado em
     telefone revogado durante a verificação, no PostgreSQL.
     """
+    # A primeira leitura identifica a conta SEM bloquear a fila. O bloqueio
+    # da conta vem antes de preferencias e fila, como na troca de telefone.
+    # Caso contrario, duas transacoes poderiam se bloquear mutuamente:
+    # (verificador fila->usuario; administrador usuario->fila).
+    usuario_inicial = db.query(models.FilaWhatsApp.usuario_id).filter(
+        models.FilaWhatsApp.id == fila_id
+    ).scalar()
+    if usuario_inicial is None:
+        raise HTTPException(404, detail='Aviso preparado não encontrado.')
+
+    destinatario = (
+        db.query(models.Usuario)
+        .filter(models.Usuario.id == usuario_inicial)
+        .with_for_update().populate_existing()
+        .one_or_none()
+    )
+    preferencia = (
+        db.query(models.PreferenciaWhatsApp)
+        .filter(models.PreferenciaWhatsApp.usuario_id == usuario_inicial)
+        .with_for_update().populate_existing()
+        .one_or_none()
+    )
     fila = (
         db.query(models.FilaWhatsApp)
         .filter(models.FilaWhatsApp.id == fila_id)
-        .with_for_update()
+        .with_for_update().populate_existing()
         .one_or_none()
     )
     if fila is None:
@@ -59,23 +81,13 @@ def verificar_fila_transacional(db: Session, fila_id: int):
     def revisar(texto):
         pendencias.append(texto)
 
+    if fila.usuario_id != usuario_inicial:
+        impedir('Destinatário da fila mudou durante a verificação.')
     if fila.status != 'preparada':
         impedir('Fila não está preparada: item cancelado ou em estado desconhecido.')
 
-    destinatario = (
-        db.query(models.Usuario)
-        .filter(models.Usuario.id == fila.usuario_id)
-        .with_for_update()
-        .one_or_none()
-    )
     if destinatario is None:
         impedir('Destinatário não existe mais.')
-    preferencia = (
-        db.query(models.PreferenciaWhatsApp)
-        .filter(models.PreferenciaWhatsApp.usuario_id == fila.usuario_id)
-        .with_for_update()
-        .one_or_none()
-    )
     if not preferencia or not preferencia.telefone or not preferencia.consentimento:
         impedir('Sem número cadastrado e autorização individual válidos.')
     elif preferencia.consentido_em is None:
@@ -85,7 +97,7 @@ def verificar_fila_transacional(db: Session, fila_id: int):
     servico = (
         db.query(models.ServicoInterno)
         .filter(models.ServicoInterno.id == fila.servico_id)
-        .with_for_update()
+        .with_for_update().populate_existing()
         .one_or_none()
     )
     if aviso is None or servico is None:
