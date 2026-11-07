@@ -138,6 +138,9 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const [ordem, setOrdem] = useState('recentes')
   const [busca, setBusca] = useState('')
   const [carregando, setCarregando] = useState(true)
+  const [abrindoServicoId, setAbrindoServicoId] = useState(null)
+  const [falhaLink, setFalhaLink] = useState(false)
+  const [tentativaLink, setTentativaLink] = useState(0)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [erroForm, setErroForm] = useState('')
@@ -146,6 +149,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const modalRef = useRef(null)
   const abrirRef = useRef(null)
   const ultimaRequisicao = useRef(0)
+  const ultimaAbertura = useRef(0)
   const gavetaRef = useRef(null)
   const focoAnteriorGaveta = useRef(null)
 
@@ -176,7 +180,19 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       if (gestor) setPessoas(Array.isArray(responsaveis) ? responsaveis : [])
       setSelecionado(anterior => anterior ? (lista.find(s => s.id === anterior.id) || null) : null)
       setErro('')
-    } catch (e) { if (!silencioso && chave === ultimaRequisicao.current) setErro(e.message || 'Falha ao atualizar os serviços.') }
+    } catch (e) {
+      if (chave === ultimaRequisicao.current) {
+        // Nao conservar em tela detalhes ou avisos potencialmente revogados.
+        // Isso se aplica tambem ao refresh silencioso.
+        setServicos([])
+        setAvisos([])
+        setPessoas([])
+        setSelecionado(null)
+        setHistorico([])
+        setFotos([])
+        setErro('Não foi possível confirmar suas permissões e atualizar os serviços. Tente novamente.')
+      }
+    }
     finally { if (!silencioso && chave === ultimaRequisicao.current) setCarregando(false) }
   }, [token, gestor, requisitar])
 
@@ -203,23 +219,33 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
         })
         if (controller.signal.aborted) return
         if (resposta.status === 401) return // Mantém o link para uma nova autenticação.
-        if (!resposta.ok) {
+        if (resposta.status === 403 || resposta.status === 404) {
+          setFalhaLink(false)
           setErro('A tarefa do link não existe ou não está disponível para seu perfil.')
           onLinkConcluido?.(linkServicoId)
           return
         }
+        if (!resposta.ok) {
+          setFalhaLink(true)
+          setErro('O servidor está temporariamente indisponível. Tente abrir o link novamente.')
+          return
+        }
         const detalhes = await resposta.json()
         if (controller.signal.aborted) return
+        setFalhaLink(false)
         focoAnteriorGaveta.current = document.activeElement
         abrirServicoDoEfeito(detalhes)
         onLinkConcluido?.(linkServicoId)
       } catch {
-        if (!controller.signal.aborted) setErro('Falha de conexão ao abrir a tarefa. Verifique a rede e atualize a página para tentar novamente.')
+        if (!controller.signal.aborted) {
+          setFalhaLink(true)
+          setErro('Falha de conexão ao abrir a tarefa. Verifique sua rede e tente novamente.')
+        }
       }
     }
     abrirLink()
     return () => { controller.abort() }
-  }, [linkServicoId, token, carregando, apiUrl, onLinkConcluido])
+  }, [linkServicoId, token, carregando, apiUrl, onLinkConcluido, tentativaLink])
 
   useEffect(() => {
     if (!selecionado) return
@@ -284,9 +310,25 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   }, [selecionado])
 
   function fecharDetalhe() { setSelecionado(null); setHistorico([]); setFotos([]) }
-  function mostrarDetalhe(item) {
+  async function mostrarDetalhe(item) {
+    if (!item?.id || abrindoServicoId !== null) return
+    // A lista pode ter sido obtida ANTES de uma revogacao de acesso.
+    // Consultar o detalhe protegido no servidor ANTES de renderizar a gaveta.
+    const tentativa = ++ultimaAbertura.current
     focoAnteriorGaveta.current = document.activeElement
-    abrirServico(item)
+    setAbrindoServicoId(item.id)
+    try {
+      const atual = await requisitar(`/servicos/${item.id}`)
+      if (tentativa !== ultimaAbertura.current) return
+      abrirServico(atual)
+    } catch (e) {
+      if (tentativa !== ultimaAbertura.current) return
+      setErro('Não foi possível abrir esta tarefa. Ela pode ter sido alterada ou seu acesso revogado.')
+      // Atualiza a lista para remover tarefas que nao sao mais visiveis.
+      await atualizar(true)
+    } finally {
+      if (tentativa === ultimaAbertura.current) setAbrindoServicoId(null)
+    }
   }
 
   const candidatos = useMemo(() => form.condominio_id ? pessoas.filter(p => p.perfil !== 'Checklist' || Number(p.condominio_id) === Number(form.condominio_id)) : [], [pessoas, form.condominio_id])
@@ -439,7 +481,8 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       </button>)}
     </div>
 
-    {erro && <div className="hs-v3-flash hs-v3-flash-error" role="alert"><SIcon nome="alert"/><span>{erro}</span><button type="button" aria-label="Fechar mensagem" onClick={() => setErro('')}><SIcon nome="close" size={16}/></button></div>}
+    {erro && <div className="hs-v3-flash hs-v3-flash-error" role="alert"><SIcon nome="alert"/><span>{erro}</span>{falhaLink && linkServicoId && <button type="button" onClick={() => { setFalhaLink(false); setTentativaLink(v => v + 1) }}>Tentar abrir novamente</button>}<button type="button" aria-label="Fechar mensagem" onClick={() => setErro('')}><SIcon nome="close" size={16}/></button></div>}
+    {abrindoServicoId !== null && <p role="status" className="hs-v3-loading">Confirmando acesso ao serviço #{abrindoServicoId}...</p>}
     {mensagem && <div className="hs-v3-flash hs-v3-flash-ok" role="status"><SIcon nome="checkCircle"/><span>{mensagem}</span><button type="button" aria-label="Fechar mensagem" onClick={() => setMensagem('')}><SIcon nome="close" size={16}/></button></div>}
 
     {naoLidas.length > 0 && <div className={`hs-v4-notification ${mostraAvisos ? 'is-open' : ''}`}>
