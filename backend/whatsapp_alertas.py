@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import models
 from database import SessionLocal
@@ -139,6 +140,14 @@ def salvar_numero_admin(usuario_id: int, dados: NumeroAdministrado, request: Req
     if anterior == novo:
         return {'numero': anterior or '', 'receber_alertas': bool(prefs.consentimento) if prefs else False,
                 'alterado': False, 'mensagem': 'Nenhuma alteração necessária.'}
+    # Evita que mensagens direcionadas a pessoas distintas cheguem ao mesmo número.
+    if novo:
+        duplicado = db.query(models.PreferenciaWhatsApp.usuario_id).filter(
+            models.PreferenciaWhatsApp.telefone == novo,
+            models.PreferenciaWhatsApp.usuario_id != usuario_id,
+        ).first()
+        if duplicado is not None:
+            raise HTTPException(409, detail='Número já atribuído a outro cadastro. Revise os contatos antes de prosseguir.')
     if prefs is None:
         prefs = models.PreferenciaWhatsApp(usuario_id=usuario_id)
         db.add(prefs)
@@ -157,7 +166,13 @@ def salvar_numero_admin(usuario_id: int, dados: NumeroAdministrado, request: Req
     if estava_autorizado:
         registrar_consentimento(db, usuario_id, admin.id,
                                 'revogado_troca_numero', 'controladoria', anterior)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # A restrição UNIQUE evita corrida entre dois administradores (em bases
+        # migradas). Não divulga telefone/identidade de outras pessoas.
+        db.rollback()
+        raise HTTPException(409, detail='Número já atribuído a outro cadastro. Revise os contatos antes de prosseguir.') from None
     return {'numero': novo or '', 'receber_alertas': False, 'alterado': True,
             'mensagem': 'Número atualizado. A pessoa deverá autorizar os avisos neste número.'}
 
