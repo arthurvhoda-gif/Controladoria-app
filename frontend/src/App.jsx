@@ -2840,7 +2840,7 @@ function App() {
 
         {!ehFinanceiro && pagina === 'servicos' && (
           <div className="page">
-            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} onAvisosLidos={ids => { const lidos = new Set(ids); setAvisosServicos(atuais => atuais.map(a => lidos.has(a.id) ? { ...a, lida: true } : a)) }} />
+            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} onAvisosAlterados={carregarAvisosServicos} onAvisosLidos={ids => { const lidos = new Set(ids); setAvisosServicos(atuais => atuais.map(a => lidos.has(a.id) ? { ...a, lida: true } : a)) }} />
           </div>
         )}
 
