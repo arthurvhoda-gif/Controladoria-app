@@ -296,8 +296,21 @@ class HaizeNavegadorV70(unittest.TestCase):
                 resposta = {"numero": self.telefone_whatsapp_ficticio,
                            "receber_alertas": self.consentimento_whatsapp_ficticio,
                            "envios_ativos": False}
+        elif (caminho.startswith("/avisos-whatsapp/fila/")
+              and caminho.endswith("/verificar") and metodo == "POST"):
+            fila_id = int(caminho.split("/")[3])
+            self.verificacoes_whatsapp_ficticias.append(fila_id)
+            resposta = {
+                "fila_id": fila_id, "servico_id": 17, "status_fila": "preparada",
+                "situacao": "revisar", "impedimentos": [],
+                "pendencias": ["Despacho oficial e política de custos não estão habilitados."],
+                "diagnostico_atual": "coerente",
+                "diagnostico_historico": "nao_comprovado",
+                "conferencia_transacional": True,
+                "envio_autorizado": False, "envios_ativos": False,
+            }
         elif caminho == "/avisos-whatsapp/fila/previas":
-            resposta = {"previa": [], "envios_ativos": False}
+            resposta = {"previa": self.previas_whatsapp_ficticias, "envios_ativos": False}
         elif caminho == "/status":
             resposta = {"status": "online"}
         else:
