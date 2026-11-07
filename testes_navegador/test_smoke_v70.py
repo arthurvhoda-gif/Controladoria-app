@@ -139,6 +139,9 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.avisos_servicos_ficticios = []
         self.atrasos_servicos_ficticios = []
         self.falha_consulta_servicos = False
+        self.telefone_whatsapp_ficticio = '+5543999991111'
+        self.ultimo_consentimento_ficticio = None
+        self.consentimento_whatsapp_ficticio = False
         self.leituras_avisos_ficticios = []
         self.erros_js = []
         self.page.on("pageerror", lambda erro: self.erros_js.append(str(erro)))
@@ -225,6 +228,22 @@ class HaizeNavegadorV70(unittest.TestCase):
                  "telefone_anterior_final": None, "telefone_novo_final": "1234",
                  "criado_em": "2026-11-07T07:00:00"}
             ], "limite": 100}
+        elif caminho == "/avisos-whatsapp/me":
+            if metodo == "PUT":
+                dados = json.loads(request.post_data or "{}")
+                self.ultimo_consentimento_ficticio = dados
+                if (dados.get("receber_alertas") and
+                        dados.get("numero_confirmado") != self.telefone_whatsapp_ficticio):
+                    status, resposta = 409, {"detail": "Telefone alterado pela Controladoria. Reabra a tela."}
+                else:
+                    self.consentimento_whatsapp_ficticio = bool(dados.get("receber_alertas"))
+                    resposta = {"numero": self.telefone_whatsapp_ficticio,
+                               "receber_alertas": self.consentimento_whatsapp_ficticio,
+                               "envios_ativos": False}
+            else:
+                resposta = {"numero": self.telefone_whatsapp_ficticio,
+                           "receber_alertas": self.consentimento_whatsapp_ficticio,
+                           "envios_ativos": False}
         elif caminho == "/avisos-whatsapp/fila/previas":
             resposta = {"previa": [], "envios_ativos": False}
         elif caminho == "/status":
@@ -311,6 +330,32 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(zelador.get_by_text("Número atualizado pela Controladoria")).to_be_visible()
         expect(zelador.locator(".wa-admin-auditoria")).to_contain_text("1234")
         self.assertNotIn("+554399991234", zelador.locator(".wa-admin-auditoria").inner_text())
+
+    def test_12_optin_envia_apenas_o_numero_que_usuario_viu(self):
+        self.login("zelador@teste.local")
+        self.page.get_by_role("button", name="Avisos pelo WhatsApp").click()
+        modal = self.page.get_by_role("dialog", name="Avisos pelo WhatsApp")
+        expect(modal).to_contain_text('+5543999991111')
+        modal.get_by_role("checkbox").check()
+        modal.get_by_role("button", name="Salvar preferências").click()
+        expect(modal.get_by_text("Preferências salvas.", exact=False)).to_be_visible()
+        self.assertEqual(self.ultimo_consentimento_ficticio, {
+            "receber_alertas": True, "numero_confirmado": '+5543999991111'
+        })
+        self.assertTrue(self.consentimento_whatsapp_ficticio)
+
+    def test_13_troca_telefone_enquanto_modal_aberto_bloqueia_optin(self):
+        self.login("zelador@teste.local")
+        self.page.get_by_role("button", name="Avisos pelo WhatsApp").click()
+        modal = self.page.get_by_role("dialog", name="Avisos pelo WhatsApp")
+        expect(modal).to_contain_text('+5543999991111')
+        # A Controladoria altera o número no servidor antes de salvar.
+        self.telefone_whatsapp_ficticio = '+5543988882222'
+        modal.get_by_role("checkbox").check()
+        modal.get_by_role("button", name="Salvar preferências").click()
+        expect(modal.get_by_role("alert")).to_contain_text("Telefone alterado pela Controladoria")
+        self.assertEqual(self.ultimo_consentimento_ficticio['numero_confirmado'], '+5543999991111')
+        self.assertFalse(self.consentimento_whatsapp_ficticio)
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
