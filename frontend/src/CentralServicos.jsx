@@ -180,7 +180,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       if (gestor) setPessoas(Array.isArray(responsaveis) ? responsaveis : [])
       setSelecionado(anterior => anterior ? (lista.find(s => s.id === anterior.id) || null) : null)
       setErro('')
-    } catch (e) {
+    } catch {
       if (chave === ultimaRequisicao.current) {
         // Nao conservar em tela detalhes ou avisos potencialmente revogados.
         // Isso se aplica tambem ao refresh silencioso.
