@@ -131,6 +131,10 @@ def main():
                 assert not destinos_externos, destinos_externos
                 print('DEMO 2/3: navegador real abre e lê tarefa sem rede externa.', flush=True)
 
+                # Fechar a gaveta antes do logout: o backdrop bloqueia cliques
+                # fora do detalhe por acessibilidade e comportamento esperado.
+                pagina.get_by_role('button', name='Fechar detalhes do serviço').click()
+                expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
                 pagina.get_by_role('button', name='Encerrar Sessão').click()
                 expect(pagina.locator('.login-screen')).to_be_visible()
                 pagina.get_by_placeholder('nome@haize.com.br').fill(
