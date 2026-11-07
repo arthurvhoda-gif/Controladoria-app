@@ -213,6 +213,9 @@ from sqlalchemy import UniqueConstraint
 
 class PreferenciaWhatsApp(Base):
     __tablename__ = 'whatsapp_preferencias'
+    # Nova instalação: unicidade atômica. Instalações existentes exigem
+    # migração explícita após auditar possíveis números duplicados.
+    __table_args__ = (UniqueConstraint('telefone', name='uq_whatsapp_preferencias_telefone'),)
     usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), primary_key=True)
     telefone = Column(String(18), nullable=True)
     consentimento = Column(Integer, nullable=False, default=0)
