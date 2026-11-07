@@ -1,6 +1,10 @@
 # Controladoria Haize — notificações V7.3
 ## Registro objetivo do que foi implementado e do que falta
 
+**Marco de 07/11/2026:** notificações internas concluídas em desenvolvimento
+e aprovadas na suíte automatizada; **homologação implantada não realizada**.
+A preparação WhatsApp continua SEM despachante real. Este marco não libera produção.
+
 **Branch exclusiva de desenvolvimento:** `notificacoes-v73-20261107` (base V7.2).
 **Não enviar para `main` nem implantar em produção sem homologação e autorização explícita.**
 **WhatsApp real está DESATIVADO. Não há integração oficial de despacho ou contratação de custos.**
@@ -32,6 +36,10 @@
    Avisos não lidos têm prioridade antes do limite de 100 registros. Em erro
    de API ou perda de acesso, o sino remove dados de serviços antigos e exibe
    erro, sem continuar expondo possíveis tarefas de outro condomínio.
+   Alertas de checklist também são limpos quando a API falha ou devolve
+   estrutura inválida; o usuário vê aviso de consulta incompleta, **não**
+   a afirmação enganosa de "Tudo em dia!". Reconexão e sincronização manual
+   recuperam os registros corretos.
 6. Avisos locais (Notification API) pedem permissão somente por clique:
    o primeiro carregamento não dispara alertas antigos; avisos novos geram
    notificação genérica sem dados sensíveis, uma vez por ID e por sessão.
@@ -68,6 +76,10 @@
 - [x] Testes de backend de consentimento e auditoria (banco fictício).
 - [x] Teste de navegação com sino, abertura de tarefa e confirmação de leitura.
 - [x] Teste Chromium de troca de contas sem vazamento de alertas.
+- [x] Teste Chromium de falha HTTP de checklist, descarte de aviso antigo,
+      recuperação sem F5, payload incorreto e sincronização manual do sino.
+- [x] Teste Chromium de acesso revogado entre listagem e abertura de tarefa
+      e de retentativa de link após indisponibilidade temporária.
 - [x] Teste Chromium de permissão só após clique, alerta local sem repetição
       e novo serviço atualizando o sino automaticamente sem F5.
 - [x] HTTP FastAPI+JWT real com banco fictício, perfil/condomínio, opt-in
@@ -116,6 +128,8 @@
 - Consequentemente, não implementar serviços de disparo em massa por
   automação não oficial, nem ativar despacho real sem custo comprovado,
   conta do provedor e decisão explícita.
-- CI confirmada com 236 testes Python, 17 testes Chromium e ensaios reais
-  de concorrência/migração em PostgreSQL descartável; 6 jobs verdes
-  na execução `42374344813` (consultar GitHub Actions para versão atual).
+- CI confirmada com **236 testes Python, 24 testes Chromium e ensaios
+  PostgreSQL descartáveis**; os seis jobs ficaram verdes na execução
+  https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42376103572
+  (commit `dee2fd9`).
+- Código da branch de desenvolvimento não foi promovido à `main`.
