@@ -26,7 +26,7 @@ class DiagnosticoPreviaV64Teste(unittest.TestCase):
                 self.cenario.req(1), self.db,
             )
             wa.salvar_preferencias(
-                wa.PreferenciaEntrada(receber_alertas=True),
+                wa.PreferenciaEntrada(receber_alertas=True, numero_confirmado=f'+554399999{uid:04d}'),
                 self.cenario.req(uid), self.db,
             )
 
