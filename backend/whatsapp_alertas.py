@@ -268,6 +268,25 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
         .limit(30)
         .all()
     )
+    # Consulta em lote os números de destino que ainda apareçam em mais de
+    # um cadastro legado. A migração de unicidade pode estar pendente no Neon.
+    # Isso bloqueia a triagem, mas NAO equivale a validação para envio.
+    numeros_pagina = {
+        pref.telefone for _, _, _, _, pref in registros
+        if pref is not None and pref.telefone
+    }
+    numeros_duplicados = set()
+    if numeros_pagina:
+        contagens = (
+            db.query(models.PreferenciaWhatsApp.telefone,
+                     func.count(models.PreferenciaWhatsApp.usuario_id))
+            .filter(models.PreferenciaWhatsApp.telefone.in_(numeros_pagina))
+            .group_by(models.PreferenciaWhatsApp.telefone)
+            .having(func.count(models.PreferenciaWhatsApp.usuario_id) > 1)
+            .all()
+        )
+        numeros_duplicados = {numero for numero, _ in contagens}
+
     # Carrega apenas os participantes relacionados aos avisos exibidos (maximo 30).
     # Consulta somente leitura; nao muda a fila ou o andamento dos servicos.
     participantes = {}
@@ -341,7 +360,8 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
         # V6.7 - TRIAGEM EXCLUSIVAMENTE INFORMATIVA (SEM ENVIOS).
         # O cadastro atual nao possui campo "usuario_ativo". O telefone
         # cadastrado nao prova que sua linha esta ativa. E a deteccao de
-        # duplicidades ainda nao foi aferida atomicamente. Usar None.
+        # duplicidades e aferida na consulta em lote, mas nao bloqueia
+        # alteracoes concorrentes nem autoriza envio (nao ha despachante).
         if previa['evento'] == 'validacao_final':
             acesso_destinatario = bool(
                 servico.criador_id == destinatario.id and
@@ -384,7 +404,10 @@ def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
             evento_origem_id=aviso.evento_id,
             diagnostico_atual=diagnostico['situacao'],
             diagnostico_historico=diagnostico_historico['situacao'],
-            duplicidade_detectada=None,
+            duplicidade_detectada=(
+                preferencia.telefone in numeros_duplicados
+                if preferencia is not None and preferencia.telefone else None
+            ),
         )
         itens.append({
             'fila_id': fila.id,
