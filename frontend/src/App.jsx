@@ -284,6 +284,9 @@ function App() {
   )
   const [alertasChecklist, setAlertasChecklist] = useState([])
   const [erroAlertasChecklist, setErroAlertasChecklist] = useState('')
+  // Avisos de tarefas internos persistidos por usuário e validados na API.
+  const [avisosServicos, setAvisosServicos] = useState([])
+  const [erroAvisosServicos, setErroAvisosServicos] = useState('')
 
   const [toasts, setToasts] = useState([])
   const [dialog, setDialog] = useState({
@@ -390,6 +393,7 @@ function App() {
   // A sincronização do checklist tem requisição independente dos demais módulos.
   const requisicaoChecklistRef = useRef(null)
   const requisicaoAlertasRef = useRef(null)
+  const requisicaoAvisosServicosRef = useRef(null)
 
   function getAuthHeaders(isFormData = false) {
     const headers = {}
@@ -445,6 +449,10 @@ function App() {
     requisicaoAlertasRef.current = null
     setAlertasChecklist([])
     setErroAlertasChecklist('')
+    requisicaoAvisosServicosRef.current?.abort()
+    requisicaoAvisosServicosRef.current = null
+    setAvisosServicos([])
+    setErroAvisosServicos('')
     setMostrarMenuNotificacoes(false)
     setCarregandoChecklist(false)
     setErroChecklist('')
@@ -722,6 +730,47 @@ function App() {
       if (requisicaoAlertasRef.current === controller) requisicaoAlertasRef.current = null
     }
   }
+
+  // Canal independente: consultas não devem cancelar ou atrasar o checklist.
+  async function carregarAvisosServicos() {
+    const token = usuarioLogado?.token
+    const perfil = usuarioLogado?.perfil
+    if (!token || !['Controladoria', 'Checklist', 'Solicitante'].includes(perfil)) return
+    if (tokenSessaoRef.current !== token) return
+    requisicaoAvisosServicosRef.current?.abort()
+    const controller = new AbortController()
+    requisicaoAvisosServicosRef.current = controller
+    try {
+      const resposta = await fetch(`${API_URL}/servicos/notificacoes`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store', signal: controller.signal,
+      })
+      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Falha ao buscar notificações de serviços.'))
+      const dados = await resposta.json()
+      if (tokenSessaoRef.current !== token || requisicaoAvisosServicosRef.current !== controller) return
+      if (!Array.isArray(dados)) throw new Error('Formato inválido de notificações de serviços.')
+      setAvisosServicos(dados)
+      setErroAvisosServicos('')
+    } catch (erro) {
+      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token &&
+          requisicaoAvisosServicosRef.current === controller) {
+        setErroAvisosServicos(erro.message || 'Não foi possível carregar notificações de serviços.')
+      }
+    } finally {
+      if (requisicaoAvisosServicosRef.current === controller) requisicaoAvisosServicosRef.current = null
+    }
+  }
+
+  const atualizarAvisosServicosNoEfeito = useEffectEvent(() => { carregarAvisosServicos() })
+  useEffect(() => {
+    if (!usuarioLogado?.token || !['Controladoria', 'Checklist', 'Solicitante'].includes(usuarioLogado?.perfil)) return
+    let ativo = true
+    queueMicrotask(() => { if (ativo) atualizarAvisosServicosNoEfeito() })
+    const atualizar = () => { if (document.visibilityState === 'visible') atualizarAvisosServicosNoEfeito() }
+    const intervalo = setInterval(atualizar, 45000)
+    window.addEventListener('focus', atualizar)
+    return () => { ativo = false; clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+  }, [usuarioLogado?.token, usuarioLogado?.perfil])
 
   const atualizarAlertasNoEfeito = useEffectEvent(() => { carregarAlertasChecklist() })
   useEffect(() => {
@@ -2405,6 +2454,7 @@ function App() {
   const ehControladoria = usuarioLogado.perfil === 'Controladoria'
   const ehChecklist = usuarioLogado.perfil === 'Checklist'
   const ehFinanceiro = usuarioLogado.perfil === 'Financeiro'
+  const avisosServicosNaoLidos = avisosServicos.filter(a => !a.lida)
 
   return (
     <div className="app">
@@ -2611,12 +2661,12 @@ function App() {
                 <button
                   className="icon-button"
                   aria-label="Ver alertas e notificações"
-                  onClick={() => { setMostrarMenuNotificacoes(!mostrarMenuNotificacoes); carregarAlertasChecklist() }}
+                  onClick={() => { setMostrarMenuNotificacoes(!mostrarMenuNotificacoes); carregarAlertasChecklist(); carregarAvisosServicos() }}
                   title="Central de Alertas e Notificações"
                 >
                   <IconeHaize nome="bell" tamanho={18} />
-                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)) > 0 && (
-                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes)}</span>
+                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length) > 0 && (
+                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length}</span>
                   )}
                 </button>
 
@@ -2630,6 +2680,23 @@ function App() {
                     </div>
                     <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
                       {erroAlertasChecklist && <div className="alerta-sync-erro" role="alert">{erroAlertasChecklist}</div>}
+                      {erroAvisosServicos && <div className="alerta-sync-erro" role="alert">{erroAvisosServicos}</div>}
+                      {avisosServicosNaoLidos.length > 0 && (
+                        <div className="alertas-checklist-lista">
+                          <strong className="alertas-checklist-categoria">Tarefas e serviços ({avisosServicosNaoLidos.length})</strong>
+                          {avisosServicosNaoLidos.slice(0, 10).map(aviso => (
+                            <button key={aviso.id} type="button" className="alerta-checklist-item"
+                              onClick={() => {
+                                setPagina('servicos')
+                                setServicoLinkId(aviso.servico_id)
+                                setMostrarMenuNotificacoes(false)
+                              }}>
+                              <span><strong>{aviso.mensagem}</strong><small>Serviço #{aviso.servico_id} · Abrir e registrar no aplicativo</small></span>
+                            </button>
+                          ))}
+                          {avisosServicosNaoLidos.length > 10 && <p className="alertas-checklist-extra">+{avisosServicosNaoLidos.length - 10} avisos na Central de Serviços</p>}
+                        </div>
+                      )}
                       {alertasChecklist.length > 0 && (
                         <div className="alertas-checklist-lista">
                           <strong className="alertas-checklist-categoria">Vistorias em atraso ({alertasChecklist.length})</strong>
@@ -2650,7 +2717,7 @@ function App() {
                       {!ehChecklist && solicitacoesPendentesLista.length > 0 && (
                         <strong className="alertas-checklist-categoria">Solicitações para análise</strong>
                       )}
-                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 ? (
+                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 && avisosServicosNaoLidos.length === 0 ? (
                         <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
                       ) : (
                         !ehChecklist && solicitacoesPendentesLista.map(s => (
@@ -2696,7 +2763,7 @@ function App() {
 
         {!ehFinanceiro && pagina === 'servicos' && (
           <div className="page">
-            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} />
+            <CentralServicos key={usuarioLogado.token} apiUrl={API_URL} usuario={usuarioLogado} condominios={condominios} linkServicoId={servicoLinkId} onLinkConcluido={concluirAberturaLink} onAvisosLidos={ids => { const lidos = new Set(ids); setAvisosServicos(atuais => atuais.map(a => lidos.has(a.id) ? { ...a, lida: true } : a)) }} />
           </div>
         )}
 
