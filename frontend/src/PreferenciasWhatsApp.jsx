@@ -23,7 +23,10 @@ export default function PreferenciasWhatsApp({ apiUrl, token, onClose }) {
     try {
       const res = await fetch(`${apiUrl}/avisos-whatsapp/me`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ receber_alertas: receberAlertas }),
+        // Confirma exatamente o número que a pessoa viu ao marcar o opt-in.
+        // Se a Controladoria trocar o telefone nesse intervalo, a API rejeita.
+        body: JSON.stringify({ receber_alertas: receberAlertas,
+          numero_confirmado: receberAlertas ? numero : null }),
       })
       const d = await res.json()
       if (!res.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Não foi possível salvar.')
