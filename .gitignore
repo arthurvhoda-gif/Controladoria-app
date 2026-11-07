@@ -12,6 +12,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv_demo_v73/
 venv/
 .pytest_cache/
 
