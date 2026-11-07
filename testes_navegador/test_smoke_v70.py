@@ -151,6 +151,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.telefone_whatsapp_ficticio = '+5543999991111'
         self.ultimo_consentimento_ficticio = None
         self.consentimento_whatsapp_ficticio = False
+        self.previas_whatsapp_ficticias = []
+        self.verificacoes_whatsapp_ficticias = []
         self.leituras_avisos_ficticios = []
         self.erros_js = []
         self.page.on("pageerror", lambda erro: self.erros_js.append(str(erro)))
