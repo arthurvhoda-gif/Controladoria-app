@@ -287,6 +287,9 @@ function App() {
   // Avisos de tarefas internos persistidos por usuário e validados na API.
   const [avisosServicos, setAvisosServicos] = useState([])
   const [erroAvisosServicos, setErroAvisosServicos] = useState('')
+  const [atrasosServicos, setAtrasosServicos] = useState([])
+  const [totalAtrasosServicos, setTotalAtrasosServicos] = useState(0)
+  const [erroAtrasosServicos, setErroAtrasosServicos] = useState('')
 
   const [toasts, setToasts] = useState([])
   const [dialog, setDialog] = useState({
@@ -453,6 +456,9 @@ function App() {
     requisicaoAvisosServicosRef.current = null
     setAvisosServicos([])
     setErroAvisosServicos('')
+    setAtrasosServicos([])
+    setTotalAtrasosServicos(0)
+    setErroAtrasosServicos('')
     setMostrarMenuNotificacoes(false)
     setCarregandoChecklist(false)
     setErroChecklist('')
@@ -741,20 +747,32 @@ function App() {
     const controller = new AbortController()
     requisicaoAvisosServicosRef.current = controller
     try {
-      const resposta = await fetch(`${API_URL}/servicos/notificacoes`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store', signal: controller.signal,
-      })
-      if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Falha ao buscar notificações de serviços.'))
-      const dados = await resposta.json()
+      const opcoes = { headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store', signal: controller.signal }
+      const lerLista = async (caminho, descricao) => {
+        const resposta = await fetch(`${API_URL}${caminho}`, opcoes)
+        if (!resposta.ok) throw new Error(await extrairErro(resposta, descricao))
+        return resposta.json()
+      }
+      // Erro em alertas de prazo NÃO suprime notificações de ações e vice-versa.
+      const [avisosResultado, atrasosResultado] = await Promise.allSettled([
+        lerLista('/servicos/notificacoes', 'Falha ao buscar notificações de serviços.'),
+        lerLista('/servicos/alertas-prazos', 'Falha ao buscar serviços atrasados.'),
+      ])
       if (tokenSessaoRef.current !== token || requisicaoAvisosServicosRef.current !== controller) return
-      if (!Array.isArray(dados)) throw new Error('Formato inválido de notificações de serviços.')
-      setAvisosServicos(dados)
-      setErroAvisosServicos('')
-    } catch (erro) {
-      if (erro.name !== 'AbortError' && tokenSessaoRef.current === token &&
-          requisicaoAvisosServicosRef.current === controller) {
-        setErroAvisosServicos(erro.message || 'Não foi possível carregar notificações de serviços.')
+      if (avisosResultado.status === 'fulfilled' && Array.isArray(avisosResultado.value)) {
+        setAvisosServicos(avisosResultado.value)
+        setErroAvisosServicos('')
+      } else {
+        setErroAvisosServicos('Não foi possível atualizar as notificações de tarefas.')
+      }
+      const atrasos = atrasosResultado.status === 'fulfilled' ? atrasosResultado.value : null
+      if (atrasos && Array.isArray(atrasos.alertas) && Number.isInteger(atrasos.total)) {
+        setAtrasosServicos(atrasos.alertas)
+        setTotalAtrasosServicos(atrasos.total)
+        setErroAtrasosServicos('')
+      } else {
+        setErroAtrasosServicos('Não foi possível atualizar os serviços em atraso.')
       }
     } finally {
       if (requisicaoAvisosServicosRef.current === controller) requisicaoAvisosServicosRef.current = null
@@ -2665,8 +2683,8 @@ function App() {
                   title="Central de Alertas e Notificações"
                 >
                   <IconeHaize nome="bell" tamanho={18} />
-                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length) > 0 && (
-                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length}</span>
+                  {(alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length + totalAtrasosServicos) > 0 && (
+                    <span className="notification-badge">{alertasChecklist.length + (ehChecklist ? 0 : quantidadePendentes) + avisosServicosNaoLidos.length + totalAtrasosServicos}</span>
                   )}
                 </button>
 
@@ -2681,6 +2699,23 @@ function App() {
                     <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
                       {erroAlertasChecklist && <div className="alerta-sync-erro" role="alert">{erroAlertasChecklist}</div>}
                       {erroAvisosServicos && <div className="alerta-sync-erro" role="alert">{erroAvisosServicos}</div>}
+                      {erroAtrasosServicos && <div className="alerta-sync-erro" role="alert">{erroAtrasosServicos}</div>}
+                      {atrasosServicos.length > 0 && (
+                        <div className="alertas-checklist-lista">
+                          <strong className="alertas-checklist-categoria">Serviços em atraso ({totalAtrasosServicos})</strong>
+                          {atrasosServicos.slice(0, 10).map(alerta => (
+                            <button key={alerta.servico_id} type="button" className="alerta-checklist-item"
+                              onClick={() => {
+                                setPagina('servicos')
+                                setServicoLinkId(alerta.servico_id)
+                                setMostrarMenuNotificacoes(false)
+                              }}>
+                              <span><strong>{alerta.titulo}</strong><small>{alerta.condominio} · {alerta.dias_atraso} dia(s) de atraso</small></span>
+                            </button>
+                          ))}
+                          {totalAtrasosServicos > 10 && <p className="alertas-checklist-extra">+{totalAtrasosServicos - 10} serviços atrasados no painel</p>}
+                        </div>
+                      )}
                       {avisosServicosNaoLidos.length > 0 && (
                         <div className="alertas-checklist-lista">
                           <strong className="alertas-checklist-categoria">Tarefas e serviços ({avisosServicosNaoLidos.length})</strong>
@@ -2717,7 +2752,7 @@ function App() {
                       {!ehChecklist && solicitacoesPendentesLista.length > 0 && (
                         <strong className="alertas-checklist-categoria">Solicitações para análise</strong>
                       )}
-                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 && avisosServicosNaoLidos.length === 0 ? (
+                      {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 && avisosServicosNaoLidos.length === 0 && totalAtrasosServicos === 0 ? (
                         <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
                       ) : (
                         !ehChecklist && solicitacoesPendentesLista.map(s => (
