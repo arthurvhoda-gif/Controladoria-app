@@ -88,3 +88,73 @@ with SessionLocal() as db:
     assert db.query(models.WhatsAppAuditoriaContato).count() == 2
 
 print('V7.3: PostgreSQL real confirma bloqueio concorrente, troca segura e opt-in 409. OK.')
+
+# Migração V7.3: em bases legadas um mesmo telefone pode ter dois titulares.
+# Validar que o script falha sem apagar cadastros; depois valida que cria
+# restrição quando a Controladoria já desfez a duplicidade.
+import psycopg2
+
+with SessionLocal() as db:
+    db.add(models.Usuario(id=3, nome='Colaborador de teste',
+                          email='interno@local.test', senha='hash-ficticio',
+                          perfil='Solicitante'))
+    db.commit()
+
+with engine.begin() as conn:
+    conn.exec_driver_sql(
+        'ALTER TABLE whatsapp_preferencias '
+        'DROP CONSTRAINT uq_whatsapp_preferencias_telefone'
+    )
+    conn.exec_driver_sql(
+        "INSERT INTO whatsapp_preferencias "
+        "(usuario_id, telefone, consentimento, atualizado_em) "
+        "VALUES (3, '+5543988882222', 0, CURRENT_TIMESTAMP)"
+    )
+
+script_migracao = (
+    Path(__file__).resolve().parents[1]
+    / 'migracoes' / 'v73_whatsapp_telefone_unico.sql'
+).read_text(encoding='utf-8')
+
+
+def aplicar_migracao():
+    # O script contem BEGIN/COMMIT e deve ser executado inteiro.
+    conexao = psycopg2.connect(os.environ['DATABASE_URL'])
+    conexao.autocommit = True
+    try:
+        with conexao.cursor() as cursor:
+            cursor.execute(script_migracao)
+    finally:
+        conexao.close()
+
+
+try:
+    aplicar_migracao()
+except psycopg2.Error as erro:
+    assert 'V7.3 BLOQUEADA' in str(erro), (
+        'A migração falhou por motivo diferente de telefone duplicado.'
+    )
+else:
+    raise AssertionError('Migração aceitou números duplicados indevidamente.')
+
+with engine.begin() as conn:
+    quantidade = conn.exec_driver_sql(
+        "SELECT count(*) FROM whatsapp_preferencias "
+        "WHERE telefone = '+5543988882222'"
+    ).scalar_one()
+    assert quantidade == 2, 'Pré-validação alterou dados legados indevidamente.'
+    conn.exec_driver_sql(
+        'DELETE FROM whatsapp_preferencias WHERE usuario_id = 3'
+    )
+
+aplicar_migracao()
+with engine.connect() as conn:
+    indices = conn.exec_driver_sql(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+        "AND tablename = 'whatsapp_preferencias' "
+        "AND indexname = 'uq_whatsapp_preferencias_telefone'"
+    ).all()
+    assert len(indices) == 1 and 'UNIQUE INDEX' in indices[0][0], (
+        'Índice UNIQUE não criado após limpeza dos duplicados.'
+    )
+print('V7.3: migração bloqueia legado duplicado e aplica UNIQUE após saneamento. OK.')
