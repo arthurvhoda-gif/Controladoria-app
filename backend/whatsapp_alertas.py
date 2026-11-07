@@ -17,6 +17,7 @@ from whatsapp_mensagens import preparar_previa_whatsapp, link_direto_servico
 from whatsapp_validade import avaliar_vigencia
 from whatsapp_historico import avaliar_historico
 from whatsapp_preenvio import avaliar_preenvio
+from whatsapp_verificacao_transacional import verificar_fila_transacional
 from servicos_api import pessoa_visivel
 
 router = APIRouter(prefix='/avisos-whatsapp', tags=['Avisos WhatsApp - preparacao'])
@@ -243,6 +244,13 @@ def resumo_fila(request: Request, db: Session = Depends(sessao)):
         'por_status': {status: quantidade for status, quantidade in registros},
         'observacao': 'Simulação da fila; nenhuma mensagem enviada ao WhatsApp.',
     }
+
+@router.post('/fila/{fila_id}/verificar')
+def verificar_aviso_preparado(fila_id: int, request: Request, db: Session = Depends(sessao)):
+    """Confere escopo e integridade em uma única transação, SEM envios."""
+    exigir_controladoria(request, db)
+    return verificar_fila_transacional(db, fila_id)
+
 
 @router.get('/fila/previas')
 def listar_previas_fila(request: Request, db: Session = Depends(sessao)):
