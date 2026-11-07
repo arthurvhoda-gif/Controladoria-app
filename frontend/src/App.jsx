@@ -732,7 +732,10 @@ function App() {
       if (!resposta.ok) throw new Error(await extrairErro(resposta, 'Falha ao buscar alertas de vistorias.'))
       const resultado = await resposta.json()
       if (tokenSessaoRef.current !== token || requisicaoAlertasRef.current !== controller) return
-      setAlertasChecklist(Array.isArray(resultado.alertas) ? resultado.alertas : [])
+      if (!Array.isArray(resultado.alertas)) {
+        throw new Error('A API retornou alertas de checklist em formato inválido.')
+      }
+      setAlertasChecklist(resultado.alertas)
       setErroAlertasChecklist('')
     } catch (erro) {
       if (erro.name !== 'AbortError' && tokenSessaoRef.current === token &&
@@ -2789,7 +2792,11 @@ function App() {
                         <strong className="alertas-checklist-categoria">Solicitações para análise</strong>
                       )}
                       {solicitacoesPendentesLista.length === 0 && alertasChecklist.length === 0 && avisosServicosNaoLidos.length === 0 && totalAtrasosServicos === 0 ? (
-                        <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>Nenhuma solicitação pendente no momento. Tudo em dia!</div>
+                        <div style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
+                          {erroAlertasChecklist || erroAvisosServicos || erroAtrasosServicos
+                            ? 'Não foi possível confirmar todas as pendências. Sincronize novamente.'
+                            : 'Nenhuma solicitação pendente no momento. Tudo em dia!'}
+                        </div>
                       ) : (
                         !ehChecklist && solicitacoesPendentesLista.map(s => (
                           <div key={s.id} onClick={() => { abrirSolicitacao(s); setMostrarMenuNotificacoes(false) }} style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2822,7 +2829,7 @@ function App() {
               </div>
 
 
-            <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
+            <button className="icon-button" onClick={() => { carregarDados(true); carregarAlertasChecklist(); carregarAvisosServicos() }} title="Sincronizar agora" aria-label="Sincronizar dados"><IconeHaize nome="refresh" tamanho={18} /></button>
             {!ehChecklist && !ehFinanceiro && pagina !== 'servicos' && (
               <button className="new-request" onClick={() => setMostrarFormulario(true)}><IconeHaize nome="plus" tamanho={17} /> Nova Solicitação</button>
             )}
