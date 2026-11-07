@@ -367,6 +367,52 @@ def _avisos_visiveis(db: Session, user):
     return consulta.filter(autorizado)
 
 
+@router.get('/alertas-prazos')
+def alertas_prazos(request: Request, db: Session = Depends(sessao)):
+    """Pendências de PRAZO, recalculadas no servidor, sem gerar mensagens.
+
+    Não usa fila WhatsApp nem registra aviso a cada leitura: uma tarefa
+    atrasada aparece até ser concluída, sem inundar a caixa de notificações.
+    Escopo idêntico ao de /servicos, inclusive na compatibilidade legada.
+    """
+    user = obter_usuario(request, db)
+    if user.perfil not in ('Controladoria', 'Checklist', 'Solicitante'):
+        raise HTTPException(403, detail='Perfil não autorizado.')
+    if user.perfil == 'Checklist' and not user.condominio_id:
+        return {'total': 0, 'alertas': []}
+    query = db.query(models.ServicoInterno).filter(
+        models.ServicoInterno.status != STATUS_FECHADO,
+        models.ServicoInterno.prazo < hoje(),
+    )
+    if user.perfil != 'Controladoria':
+        vinculados = db.query(models.ServicoParticipante.servico_id).filter(
+            models.ServicoParticipante.usuario_id == user.id
+        )
+        registrados = db.query(models.ServicoParticipante.servico_id)
+        query = query.filter(or_(
+            models.ServicoInterno.id.in_(vinculados),
+            and_(models.ServicoInterno.responsavel_id == user.id,
+                 ~models.ServicoInterno.id.in_(registrados)),
+        ))
+        if user.perfil == 'Checklist':
+            query = query.filter(models.ServicoInterno.condominio_id == user.condominio_id)
+    total = query.count()
+    servicos = query.order_by(
+        models.ServicoInterno.prazo.asc(), models.ServicoInterno.id.asc()
+    ).limit(100).all()
+    return {
+        'total': total,
+        'alertas': [{
+            'servico_id': item.id,
+            'titulo': item.titulo,
+            'condominio': item.condominio_nome,
+            'prazo': item.prazo.isoformat(),
+            'dias_atraso': (hoje() - item.prazo).days,
+        } for item in servicos],
+        'limite': 100,
+    }
+
+
 @router.get('/notificacoes')
 def notificacoes(request: Request, db: Session = Depends(sessao)):
     user = obter_usuario(request, db)
