@@ -325,12 +325,54 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
     return serializar(servico, db, autor)
 
 
+def _avisos_visiveis(db: Session, user):
+    """Mesma regra de acesso da tarefa para listar e marcar avisos.
+
+    O aviso pode ter sido emitido antes de uma troca de condomínio ou da
+    revogação da participação; isso não dá acesso permanente ao conteúdo.
+    Filtrar ANTES do limite evita que avisos antigos e inacessíveis ocultem
+    avisos legítimos mais antigos na central.
+    """
+    consulta = (
+        db.query(models.ServicoAviso)
+        .join(models.ServicoInterno,
+              models.ServicoAviso.servico_id == models.ServicoInterno.id)
+        .filter(models.ServicoAviso.usuario_id == user.id)
+    )
+    if user.perfil == 'Controladoria':
+        return consulta
+    if user.perfil not in ('Checklist', 'Solicitante'):
+        return consulta.filter(False)
+
+    # Participantes efetivos têm precedência sobre o responsável legado.
+    # O fallback legado só vale quando não há NENHUM participante registrado.
+    participantes_existentes = db.query(models.ServicoParticipante.id).filter(
+        models.ServicoParticipante.servico_id == models.ServicoInterno.id
+    ).exists()
+    participacao_atual = db.query(models.ServicoParticipante.id).filter(
+        models.ServicoParticipante.servico_id == models.ServicoInterno.id,
+        models.ServicoParticipante.usuario_id == user.id,
+    ).exists()
+    autorizado = or_(
+        participacao_atual,
+        and_(~participantes_existentes,
+             models.ServicoInterno.responsavel_id == user.id),
+    )
+    if user.perfil == 'Checklist':
+        if user.condominio_id is None:
+            return consulta.filter(False)
+        autorizado = and_(
+            autorizado, models.ServicoInterno.condominio_id == user.condominio_id
+        )
+    return consulta.filter(autorizado)
+
+
 @router.get('/notificacoes')
 def notificacoes(request: Request, db: Session = Depends(sessao)):
     user = obter_usuario(request, db)
-    avisos = db.query(models.ServicoAviso).filter(
-        models.ServicoAviso.usuario_id == user.id
-    ).order_by(models.ServicoAviso.id.desc()).limit(100).all()
+    avisos = _avisos_visiveis(db, user).order_by(
+        models.ServicoAviso.id.desc()
+    ).limit(100).all()
     return [{'id': a.id, 'servico_id': a.servico_id, 'mensagem': a.mensagem,
              'lida': bool(a.lida_em), 'criada_em': a.criado_em.isoformat()} for a in avisos]
 
@@ -338,8 +380,8 @@ def notificacoes(request: Request, db: Session = Depends(sessao)):
 @router.post('/notificacoes/{aviso_id}/ler')
 def ler_aviso(aviso_id: int, request: Request, db: Session = Depends(sessao)):
     user = obter_usuario(request, db)
-    aviso = db.query(models.ServicoAviso).filter(
-        models.ServicoAviso.id == aviso_id, models.ServicoAviso.usuario_id == user.id
+    aviso = _avisos_visiveis(db, user).filter(
+        models.ServicoAviso.id == aviso_id
     ).first()
     if not aviso:
         raise HTTPException(404, detail='Aviso não encontrado.')
