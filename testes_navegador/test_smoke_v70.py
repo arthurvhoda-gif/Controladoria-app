@@ -136,6 +136,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.set_default_timeout(12000)
         self.usuario = USUARIOS["admin@teste.local"]
         self.sessao_invalida = False
+        self.avisos_servicos_ficticios = []
+        self.leituras_avisos_ficticios = []
         self.erros_js = []
         self.page.on("pageerror", lambda erro: self.erros_js.append(str(erro)))
         self.page.route(API + "/**", self.responder_api)
@@ -170,7 +172,30 @@ class HaizeNavegadorV70(unittest.TestCase):
             resposta = []
         elif caminho == "/checklists/alertas":
             resposta = {"alertas": []}
-        elif caminho in {"/servicos", "/servicos/notificacoes", "/servicos/responsaveis"}:
+        elif caminho == "/servicos/notificacoes":
+            resposta = self.avisos_servicos_ficticios
+        elif caminho.startswith("/servicos/notificacoes/") and caminho.endswith("/ler") and metodo == "POST":
+            try:
+                aviso_id = int(caminho.split("/")[3])
+                aviso = next(a for a in self.avisos_servicos_ficticios if a["id"] == aviso_id)
+                aviso["lida"] = True
+                self.leituras_avisos_ficticios.append(aviso_id)
+                resposta = {"ok": True}
+            except (ValueError, StopIteration):
+                status, resposta = 404, {"detail": "Aviso não encontrado."}
+        elif caminho == "/servicos/17":
+            resposta = {
+                "id": 17, "titulo": "Verificar iluminação fictícia",
+                "descricao": "Conferência de teste da iluminação comum",
+                "condominio": "Condomínio Fictício A", "prioridade": "Normal",
+                "prazo": "2026-12-05", "status": "Aguardando ciência",
+                "criador": "Gestora Teste", "responsavel": "Zelador Teste",
+                "atrasado": False, "executores": [], "fiscalizadores": [],
+                "acoes_disponiveis": [],
+            }
+        elif caminho in ("/servicos/17/historico", "/servicos/17/fotos"):
+            resposta = []
+        elif caminho in {"/servicos", "/servicos/responsaveis"}:
             resposta = []
         elif caminho == "/financeiro/solicitacoes":
             resposta = FINANCEIRO
@@ -202,6 +227,27 @@ class HaizeNavegadorV70(unittest.TestCase):
     def menu(self, nome):
         # O contador de pendências pode acrescentar um número ao nome acessível.
         self.page.locator(".sidebar-nav").get_by_role("button", name=nome, exact=False).click()
+
+    def test_08_aviso_de_tarefa_no_sino_global_abre_detalhe_e_confirma_leitura(self):
+        self.avisos_servicos_ficticios = [{
+            "id": 501, "servico_id": 17,
+            "mensagem": "Nova tarefa para executar: Verificar iluminação fictícia",
+            "lida": False, "criada_em": "2026-11-07T11:00:00",
+        }]
+        self.login("zelador@teste.local")
+        sino = self.page.get_by_role("button", name="Ver alertas e notificações")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        sino.click()
+        expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
+        self.page.locator(".alertas-checklist-item").filter(
+            has_text="Verificar iluminação fictícia"
+        ).click()
+        expect(self.page.get_by_role("heading", name="Central de Serviços")).to_be_visible()
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
+        self.page.wait_for_function(
+            "() => document.querySelector('.notification-badge') === null"
+        )
+        self.assertEqual(self.leituras_avisos_ficticios, [501])
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
