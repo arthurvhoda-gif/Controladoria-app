@@ -4,6 +4,18 @@ import PreviaAvisosWhatsApp from './PreviaAvisosWhatsApp'
 
 const texto = value => String(value || '').toLocaleLowerCase('pt-BR')
 
+const nomeEvento = {
+  numero_atualizado: 'Número atualizado pela Controladoria',
+  concedido: 'Autorização concedida pela pessoa',
+  revogado: 'Autorização revogada pela pessoa',
+  revogado_troca_numero: 'Autorização revogada após troca de número',
+}
+const dataAuditoria = value => {
+  if (!value) return 'Data indisponível'
+  const data = new Date(value)
+  return Number.isNaN(data.getTime()) ? 'Data indisponível' : data.toLocaleString('pt-BR')
+}
+
 export default function GestaoContatosWhatsApp({ apiUrl, token }) {
   const [usuarios, setUsuarios] = useState([])
   const [carregando, setCarregando] = useState(true)
@@ -15,6 +27,7 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
   const [editando, setEditando] = useState(null)
   const [numero, setNumero] = useState('')
   const [salvando, setSalvando] = useState(false)
+  const [auditoria, setAuditoria] = useState(null)
 
   const buscarUsuarios = useCallback(async () => {
     const resposta = await fetch(`${apiUrl}/avisos-whatsapp/admin/usuarios`, {
@@ -59,6 +72,24 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
 
   const comecarEdicao = u => { setEditando(u.id); setNumero(u.numero || ''); setErro(''); setAviso('') }
 
+  async function alternarAuditoria(u) {
+    if (auditoria?.id === u.id) { setAuditoria(null); return }
+    setAuditoria({ id: u.id, carregando: true, registros: [], erro: '' })
+    try {
+      const resposta = await fetch(`${apiUrl}/avisos-whatsapp/admin/usuarios/${u.id}/auditoria`, {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+      })
+      const dados = await resposta.json()
+      if (!resposta.ok) throw new Error(typeof dados.detail === 'string' ? dados.detail : 'Falha ao consultar o histórico.')
+      if (!Array.isArray(dados.historico)) throw new Error('Formato de histórico inválido.')
+      setAuditoria(anterior => anterior?.id === u.id
+        ? { id: u.id, carregando: false, registros: dados.historico, erro: '' } : anterior)
+    } catch (e) {
+      setAuditoria(anterior => anterior?.id === u.id
+        ? { id: u.id, carregando: false, registros: [], erro: e.message || 'Erro ao carregar histórico.' } : anterior)
+    }
+  }
+
   async function salvar(e, u) {
     e.preventDefault()
     setSalvando(true); setErro(''); setAviso('')
@@ -74,6 +105,7 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
         ? { ...item, numero: dados.numero || '', receber_alertas: Boolean(dados.receber_alertas), consentido_em: dados.alterado ? null : item.consentido_em }
         : item))
       setEditando(null)
+      setAuditoria(null)
       setAviso(dados.alterado
         ? `Número de ${u.nome} atualizado. A pessoa precisará autorizar o recebimento dos avisos.`
         : `Cadastro de ${u.nome} já estava atualizado.`)
@@ -153,8 +185,25 @@ export default function GestaoContatosWhatsApp({ apiUrl, token }) {
                     {!u.numero ? 'Sem número' : u.receber_alertas ? 'Autorizado pela pessoa' : 'Aguardando autorização'}
                   </span>
                   <button type="button" className="wa-admin-button wa-admin-change" onClick={() => comecarEdicao(u)} disabled={editando !== null}>Editar número</button>
+                  <button type="button" className="wa-admin-button" onClick={() => alternarAuditoria(u)}
+                    aria-expanded={auditoria?.id === u.id} aria-controls={`wa-admin-auditoria-${u.id}`}>
+                    {auditoria?.id === u.id ? 'Ocultar histórico' : 'Ver histórico'}
+                  </button>
                 </>}
               </div>
+              {auditoria?.id === u.id && <div className="wa-admin-auditoria" id={`wa-admin-auditoria-${u.id}`}>
+                <strong>Histórico de número e autorizações</strong>
+                {auditoria.carregando ? <p role="status">Carregando histórico...</p>
+                  : auditoria.erro ? <p role="alert">{auditoria.erro}</p>
+                    : auditoria.registros.length === 0 ? <p>Nenhuma alteração registrada.</p>
+                      : <ul>{auditoria.registros.map((registro, i) => <li key={`${registro.tipo}-${registro.criado_em}-${i}`}>
+                        <strong>{nomeEvento[registro.tipo] || 'Evento registrado'}</strong>
+                        <span>{dataAuditoria(registro.criado_em)}</span>
+                        {registro.tipo === 'numero_atualizado'
+                          ? <small>Final anterior: {registro.telefone_anterior_final || 'não cadastrado'} · novo: {registro.telefone_novo_final || 'removido'}</small>
+                          : <small>Número final ****{registro.telefone_final || '----'} · {registro.origem === 'controladoria' ? 'ação da Controladoria' : 'ação da pessoa'}</small>}
+                      </li>)}</ul>}
+              </div>}
             </article>)}
       </div>
     }
