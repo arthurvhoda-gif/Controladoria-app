@@ -514,6 +514,66 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
         expect(self.page.get_by_text("Nova tarefa criada na Controladoria")).to_be_visible()
 
+    def preparar_servico_listado(self):
+        self.servicos_ficticios = [{
+            "id": 17, "titulo": "Verificar iluminação fictícia",
+            "descricao": "Conferência de teste da iluminação comum",
+            "condominio": "Condomínio Fictício A",
+            "prioridade": "Normal", "prazo": "2026-12-05",
+            "status": "Aguardando ciência", "criador": "Gestora Teste",
+            "responsavel": "Zelador Teste", "atrasado": False,
+            "executores": [], "fiscalizadores": [], "acoes_disponiveis": [],
+        }]
+
+    def test_18_tarefa_da_lista_e_revalidada_antes_de_abrir(self):
+        self.preparar_servico_listado()
+        self.login("zelador@teste.local")
+        self.menu("Serviços Internos")
+        linha = self.page.get_by_role(
+            "button", name="Abrir serviço 17: Verificar iluminação fictícia")
+        expect(linha).to_be_visible()
+        # O usuário perdeu a permissão DEPOIS de a lista chegar ao navegador.
+        self.detalhe_servico_revogado = True
+        linha.click()
+        self.page.wait_for_function(
+            "() => !document.querySelector('.hs-v4-taskrow')"
+        )
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_have_count(0)
+        self.assertGreater(self.consultas_detalhe_servico, 0)
+
+    def test_19_falha_no_refresh_remove_dados_de_tarefa_em_tela(self):
+        self.preparar_servico_listado()
+        self.login("zelador@teste.local")
+        self.menu("Serviços Internos")
+        linha = self.page.get_by_role(
+            "button", name="Abrir serviço 17: Verificar iluminação fictícia")
+        expect(linha).to_be_visible()
+        linha.click()
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
+        self.lista_servicos_indisponivel = True
+        # Equivale a uma sincronização automática enquanto o modal está aberto.
+        self.page.evaluate("document.querySelector('.hs-v4-refresh').click()")
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_have_count(0)
+        expect(self.page.get_by_text(
+            "Não foi possível confirmar suas permissões e atualizar os serviços.",
+            exact=False,
+        )).to_be_visible()
+        expect(self.page.locator(".hs-v4-taskrow")).to_have_count(0)
+
+    def test_20_link_temporariamente_indisponivel_pode_ser_retentado(self):
+        self.link_servico_indisponivel = True
+        self.login("zelador@teste.local", "?servico=17")
+        expect(self.page.get_by_text(
+            "O servidor está temporariamente indisponível.", exact=False,
+        )).to_be_visible()
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_have_count(0)
+        self.assertIn("servico=17", self.page.url)
+        self.link_servico_indisponivel = False
+        self.page.get_by_role("button", name="Tentar abrir novamente").click()
+        expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
+        self.page.wait_for_function("() => !location.search.includes('servico=')")
+        self.assertGreaterEqual(self.consultas_detalhe_servico, 2)
+
     def test_01_login_e_termino_da_sessao(self):
         self.login()
         self.menu("Solicitações")
