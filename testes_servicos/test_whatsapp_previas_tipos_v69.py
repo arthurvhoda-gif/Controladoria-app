@@ -30,7 +30,7 @@ class PreviaTiposIntegradaV69Teste(unittest.TestCase):
         self.c.setUp()
         self.db = self.c.db
         wa.salvar_numero_admin(2, wa.NumeroAdministrado(numero='43999990002'), self.c.req(1), self.db)
-        wa.salvar_preferencias(wa.PreferenciaEntrada(receber_alertas=True), self.c.req(2), self.db)
+        wa.salvar_preferencias(wa.PreferenciaEntrada(receber_alertas=True, numero_confirmado='+5543999990002'), self.c.req(2), self.db)
         s = self.c.novo(execs=[2], fisc=[])
         self.aviso = self.db.query(base.models.ServicoAviso).filter_by(servico_id=s['id'], usuario_id=2).one()
     def tearDown(self):
