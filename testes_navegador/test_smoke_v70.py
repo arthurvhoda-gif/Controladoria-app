@@ -239,9 +239,9 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.locator(".notification-badge")).to_have_text("1")
         sino.click()
         expect(self.page.get_by_text("Tarefas e serviços (1)")).to_be_visible()
-        self.page.locator(".alertas-checklist-item").filter(
-            has_text="Verificar iluminação fictícia"
-        ).click()
+        bloco = self.page.locator(".alertas-checklist-lista").first
+        expect(bloco).to_contain_text("Verificar iluminação fictícia")
+        bloco.locator("button").first.click()
         expect(self.page.get_by_role("heading", name="Central de Serviços")).to_be_visible()
         expect(self.page.get_by_role("dialog", name="Serviço #17")).to_be_visible()
         self.page.wait_for_function(
