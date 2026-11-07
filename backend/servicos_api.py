@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, case
 from sqlalchemy.orm import Session
 
 import models
@@ -416,8 +416,15 @@ def alertas_prazos(request: Request, db: Session = Depends(sessao)):
 @router.get('/notificacoes')
 def notificacoes(request: Request, db: Session = Depends(sessao)):
     user = obter_usuario(request, db)
+    # Um aviso pendente antigo nao pode sumir porque surgiram 100 avisos
+    # ja lidos depois dele. Ordenar PRIMEIRO os nao lidos, depois os IDs.
+    # A regra se aplica apos o filtro atual de acesso por condominio.
+    ordem_pendente = case(
+        (models.ServicoAviso.lida_em.is_(None), 0),
+        else_=1,
+    )
     avisos = _avisos_visiveis(db, user).order_by(
-        models.ServicoAviso.id.desc()
+        ordem_pendente.asc(), models.ServicoAviso.id.desc()
     ).limit(100).all()
     return [{'id': a.id, 'servico_id': a.servico_id, 'mensagem': a.mensagem,
              'lida': bool(a.lida_em), 'criada_em': a.criado_em.isoformat()} for a in avisos]
