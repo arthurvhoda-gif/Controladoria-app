@@ -764,6 +764,9 @@ function App() {
         setAvisosServicos(avisosResultado.value)
         setErroAvisosServicos('')
       } else {
+        // Acesso pode ter sido revogado desde a última leitura. Em falha da
+        // API, não manter dados de tarefas potencialmente fora do escopo.
+        setAvisosServicos([])
         setErroAvisosServicos('Não foi possível atualizar as notificações de tarefas.')
       }
       const atrasos = atrasosResultado.status === 'fulfilled' ? atrasosResultado.value : null
@@ -772,6 +775,8 @@ function App() {
         setTotalAtrasosServicos(atrasos.total)
         setErroAtrasosServicos('')
       } else {
+        setAtrasosServicos([])
+        setTotalAtrasosServicos(0)
         setErroAtrasosServicos('Não foi possível atualizar os serviços em atraso.')
       }
     } finally {
