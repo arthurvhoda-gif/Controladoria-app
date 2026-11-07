@@ -149,6 +149,10 @@ jobs:
           createdb haize_v70_restauracao
           pg_restore --exit-on-error --no-owner --no-acl -d haize_v70_restauracao "$RUNNER_TEMP/haize_v70_ci.dump"
           DATABASE_URL='postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v70_restauracao' python scripts/ensaio_pg_v70.py verificar-restauracao
+      - name: Testar corrida de consentimento WhatsApp com PostgreSQL descartavel
+        run: |
+          createdb haize_v73_notificacoes
+          DATABASE_URL='postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v73_notificacoes' python scripts/ensaio_whatsapp_pg_v73.py
 
   dependencia_npm:
     name: Auditoria npm - inventario de riscos existentes
