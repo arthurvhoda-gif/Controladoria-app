@@ -38,9 +38,13 @@ class AuditoriaConsentimentoV73(unittest.TestCase):
         return wa.salvar_numero_admin(2, wa.NumeroAdministrado(numero=numero),
                                      self.req(1), self.db)
 
-    def consentir(self, valor):
-        return wa.salvar_preferencias(wa.PreferenciaEntrada(receber_alertas=valor),
-                                     self.req(2), self.db)
+    def consentir(self, valor, confirmado=None):
+        pref = self.db.get(models.PreferenciaWhatsApp, 2)
+        return wa.salvar_preferencias(wa.PreferenciaEntrada(
+            receber_alertas=valor,
+            numero_confirmado=confirmado if confirmado is not None else
+                (pref.telefone if pref else None)),
+            self.req(2), self.db)
 
     def auditoria(self):
         return wa.consultar_auditoria(2, self.req(1), self.db)['historico']
