@@ -6,6 +6,7 @@ on:
       - estabilizacao-v70-20261106
       - seguranca-v71-20261106
       - trabalho-v72-local
+      - notificacoes-v73-20261107
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
