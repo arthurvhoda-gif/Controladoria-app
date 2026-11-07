@@ -181,7 +181,9 @@ class HaizeNavegadorV70(unittest.TestCase):
             if self.falha_consulta_servicos:
                 status, resposta = 403, {"detail": "Permissões alteradas. Faça nova consulta."}
             else:
-                resposta = self.avisos_servicos_ficticios
+                # Simula o filtro por destinatário aplicado pela API real.
+                resposta = [a for a in self.avisos_servicos_ficticios
+                            if a.get("destinatario_id", self.usuario["id"]) == self.usuario["id"]]
         elif caminho == "/servicos/alertas-prazos":
             if self.falha_consulta_servicos:
                 status, resposta = 403, {"detail": "Permissões alteradas. Faça nova consulta."}
@@ -422,6 +424,28 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.get_by_role("button", name="Ver alertas e notificações").click()
         self.page.wait_for_timeout(150)
         self.assertEqual(len(self.page.evaluate("window.__avisosNativos")), 1)
+
+    def test_16_troca_de_conta_limpa_avisos_do_usuario_anterior(self):
+        self.avisos_servicos_ficticios = [
+            {"id": 601, "servico_id": 17, "destinatario_id": 2,
+             "mensagem": "Tarefa PRIVADA Zelador A",
+             "lida": False, "criada_em": "2026-11-07T11:30:00"},
+            {"id": 602, "servico_id": 17, "destinatario_id": 3,
+             "mensagem": "Tarefa PRIVADA Colaborador",
+             "lida": False, "criada_em": "2026-11-07T11:40:00"},
+        ]
+        self.login("zelador@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Tarefa PRIVADA Zelador A")).to_be_visible()
+        self.assertEqual(self.page.get_by_text("Tarefa PRIVADA Colaborador").count(), 0)
+        self.page.get_by_role("button", name="Encerrar Sessão").click()
+        expect(self.page.locator(".login-screen")).to_be_visible()
+        self.login("compras@teste.local")
+        expect(self.page.locator(".notification-badge")).to_have_text("1")
+        self.page.get_by_role("button", name="Ver alertas e notificações").click()
+        expect(self.page.get_by_text("Tarefa PRIVADA Colaborador")).to_be_visible()
+        self.assertEqual(self.page.get_by_text("Tarefa PRIVADA Zelador A").count(), 0)
 
     def test_01_login_e_termino_da_sessao(self):
         self.login()
