@@ -210,6 +210,34 @@ with engine.connect() as conn:
     assert len(indices) == 1 and 'UNIQUE INDEX' in indices[0][0], (
         'Índice UNIQUE não criado após limpeza dos duplicados.'
     )
+# Comprovar a saída do CLI: apenas agregados, sem telefone e sem escrita.
+import io
+import json
+from contextlib import redirect_stdout
+from unittest.mock import patch
+
+saida_cli = io.StringIO()
+with redirect_stdout(saida_cli):
+    assert preflight.main() == 0
+relatorio_cli = json.loads(saida_cli.getvalue())
+assert relatorio_cli['situacao'] == 'migracao_ja_aplicada_na_copia'
+assert '+55' not in saida_cli.getvalue()
+assert 'haize_ci' not in saida_cli.getvalue()
+
+# Guardas devem impedir hosts externos e redirecionamento por query string.
+for url_fora in (
+    'postgresql://haize_ci:ficticio@neon.exemplo:5432/haize_v73_notificacoes',
+    'postgresql://haize_ci:ficticio@127.0.0.1:5432/haize_v73_notificacoes?host=neon.exemplo',
+):
+    with patch.dict(os.environ, {'DATABASE_URL': url_fora}):
+        try:
+            preflight.validar_destino()
+        except SystemExit as erro:
+            assert 'BLOQUEADO' in str(erro)
+        else:
+            raise AssertionError('Preflight aceitou banco remoto ou URL adulterada.')
+
+print('V7.3: preflight somente leitura, índice válido e recusas anti-produção. OK.')
 print('V7.3: migração bloqueia legado duplicado e aplica UNIQUE após saneamento. OK.')
 
 
