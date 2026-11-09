@@ -34,6 +34,12 @@ despachante deve ser ativado por essa homologação.
   **Aparelho físico Android/iOS continua pendente.**
 - verificação de que mensagens de link inacessível não desaparecem quando
   uma atualização de serviços conclui em paralelo.
+- ensaio de upgrade/rollback em **dois bancos PostgreSQL descartáveis**:
+  backup completo pré-migração via `pg_dump -Fc`, recusa de telefones legados
+  repetidos sem perda de registros, migração idempotente após saneamento
+  **exclusivamente fictício**, e `pg_restore` do backup pré-V7.3 em outra
+  base. A restauração reproduziu os registros e o esquema originais
+  (4/4 cenários aprovados, sem produção).
 
 ### Pacote reproduzível para revisão, NÃO implantação
 
@@ -109,6 +115,34 @@ O script `scripts/preflight_migracao_whatsapp_v73.py` foi criado para
 
 A auditoria em dados **reais** exige procedimento próprio, aprovação,
 acesso autorizado e ambiente de homologação, e **não foi executada**.
+
+## Ensaio reversível de migração antiga
+
+O script `scripts/ensaio_upgrade_rollback_v73.py` roda somente na CI,
+com usuário `haize_ci`, servidor `127.0.0.1:5432` e bancos descartáveis
+de nomes fixos. Um banco **fictício no formato legado** é criado com contatos
+duplicados e registros de solicitações, usuários e condomínio anteriores à
+V7.3. O ensaio:
+
+1. Exporta backup personalizado com `pg_dump -Fc` para diretório temporário
+   fora do repositório e calcula SHA-256, sem publicar o dump.
+2. Tenta aplicar a migração e confirma o bloqueio por duplicidade. Compara
+   hashes dos registros sintéticos, demonstrando que a tentativa falhou
+   sem alterar os dados.
+3. Resolve a duplicidade SOMENTE nos registros sintéticos; aplica a migração
+   duas vezes e confirma a integridade dos registros, inclusive os de outros
+   módulos, e a unicidade de telefone.
+4. Restaura o **backup anterior à migração** com `pg_restore` num segundo
+   banco vazio. Verifica o checksum do dump, os hashes dos registros e o
+   diagnóstico de esquema legado, comprovando a restauração independente.
+
+O script **não é uma rotina de rollback de produção** e não deve ser apontado
+para Neon. Em produção, um rollback exige cópia confiável de verdade,
+janela de interrupção, verificação de retenção e responsáveis definidos;
+restaurar um backup antigo também pode descartar gravações posteriores.
+Esses riscos devem ser avaliados antes de qualquer autorização de GO.
+A configuração do frontend e o deploy do backend deverão ter seus próprios
+procedimentos de reversão, a validar na homologação hospedada.
 
 ## Limite do marco
 
