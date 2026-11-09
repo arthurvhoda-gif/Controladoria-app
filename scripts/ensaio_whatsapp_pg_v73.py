@@ -116,6 +116,20 @@ script_migracao = (
     / 'migracoes' / 'v73_whatsapp_telefone_unico.sql'
 ).read_text(encoding='utf-8')
 
+import preflight_migracao_whatsapp_v73 as preflight
+
+
+def conferir_preflight():
+    # Só conexão CI local permitida. Transação READ ONLY, sem exibir telefones.
+    destino = preflight.validar_destino()
+    conn = psycopg2.connect(destino)
+    try:
+        resposta = preflight.avaliar_readonly(conn)
+        assert '+55' not in str(resposta), 'Pré-verificação expôs um telefone.'
+        return resposta
+    finally:
+        conn.close()
+
 
 def aplicar_migracao():
     # O script contem BEGIN/COMMIT e deve ser executado inteiro.
@@ -127,6 +141,12 @@ def aplicar_migracao():
     finally:
         conexao.close()
 
+
+pre_duplicado = conferir_preflight()
+assert pre_duplicado['situacao'] == 'bloqueado'
+assert pre_duplicado['grupos_duplicados'] == 1
+assert pre_duplicado['contas_afetadas'] == 2
+assert pre_duplicado['indice_unico_valido'] is False
 
 try:
     aplicar_migracao()
@@ -147,7 +167,40 @@ with engine.begin() as conn:
         'DELETE FROM whatsapp_preferencias WHERE usuario_id = 3'
     )
 
+pre_limpo = conferir_preflight()
+assert pre_limpo['situacao'] == 'pronto_para_migracao_na_copia'
+assert pre_limpo['grupos_duplicados'] == 0
+assert pre_limpo['indice_unico_valido'] is False
+
 aplicar_migracao()
+aplicar_migracao()  # idempotente, sem alterar cadastros ou consentimentos
+pos_migracao = conferir_preflight()
+assert pos_migracao['situacao'] == 'migracao_ja_aplicada_na_copia'
+assert pos_migracao['indice_unico_valido'] is True
+
+# Regressão: um índice NÃO UNIQUE com o mesmo nome jamais pode ser confundido
+# com a restrição pretendida por CREATE INDEX IF NOT EXISTS.
+with engine.begin() as conn:
+    conn.exec_driver_sql('DROP INDEX uq_whatsapp_preferencias_telefone')
+    conn.exec_driver_sql(
+        'CREATE INDEX uq_whatsapp_preferencias_telefone '
+        'ON whatsapp_preferencias (telefone)'
+    )
+pre_indice_invalido = conferir_preflight()
+assert pre_indice_invalido['situacao'] == 'bloqueado'
+assert pre_indice_invalido['indice_unico_valido'] is False
+try:
+    aplicar_migracao()
+except psycopg2.Error as erro:
+    assert 'V7.3 BLOQUEADA' in str(erro)
+    assert 'indice' in str(erro).lower()
+else:
+    raise AssertionError('Migração aceitou índice existente NÃO UNIQUE.')
+
+with engine.begin() as conn:
+    conn.exec_driver_sql('DROP INDEX uq_whatsapp_preferencias_telefone')
+aplicar_migracao()
+assert conferir_preflight()['situacao'] == 'migracao_ja_aplicada_na_copia'
 with engine.connect() as conn:
     indices = conn.exec_driver_sql(
         "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
