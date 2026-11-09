@@ -3,6 +3,7 @@ import base64
 import os
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 import test_multiplos_participantes as base
@@ -91,6 +92,48 @@ class PushDispositivosV74(unittest.TestCase):
                 push.registrar(self.dados(), self.req(2), self.db)
             self.assertEqual(cm.exception.status_code, 503)
         self.assertEqual(push.meus_dispositivos(self.req(2), self.db)['total'], 0)
+
+
+    def test_teste_desativado_nao_atinge_a_rede(self):
+        d = self.dados()
+        push.registrar(d, self.req(2), self.db)
+        with patch('push_api.webpush') as envio:
+            with self.assertRaises(HTTPException) as cm:
+                push.enviar_teste_manual(self.req(2), self.db)
+        self.assertEqual(cm.exception.status_code, 503)
+        envio.assert_not_called()
+
+    def test_envio_so_propria_conta_limite_e_payload(self):
+        push.registrar(self.dados(1), self.req(2), self.db)
+        push.registrar(self.dados(2, host='web.push.apple.com'), self.req(2), self.db)
+        push.registrar(self.dados(3), self.req(3), self.db)
+        with patch.dict(os.environ, {
+            'PUSH_TESTS_ENABLED': 'true',
+            'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32)),
+        }), patch('push_api.webpush') as envio:
+            self.assertTrue(push.configuracao(self.req(2), self.db)['teste_disponivel'])
+            resposta = push.enviar_teste_manual(self.req(2), self.db)
+            self.assertEqual(resposta['aceitos_pelo_provedor'], 2)
+            self.assertFalse(resposta['entrega_no_celular_confirmada'])
+            self.assertEqual(envio.call_count, 2)
+            argumentos = [c.kwargs for c in envio.call_args_list]
+            self.assertTrue(all('haize-teste-v1' in a['data'] for a in argumentos))
+            self.assertTrue(all('subscricao-ficticia-0003' not in a['subscription_info']['endpoint'] for a in argumentos))
+            with self.assertRaises(HTTPException) as cm:
+                push.enviar_teste_manual(self.req(2), self.db)
+            self.assertEqual(cm.exception.status_code, 429)
+            self.assertEqual(envio.call_count, 2)
+
+    def test_sem_dispositivos_nao_consume_cota(self):
+        with patch.dict(os.environ, {
+            'PUSH_TESTS_ENABLED': 'true', 'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32))
+        }), patch('push_api.webpush') as envio:
+            with self.assertRaises(HTTPException) as cm:
+                push.enviar_teste_manual(self.req(6), self.db)
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(self.db.query(base.models.PushTesteControle).count(), 0)
+            envio.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

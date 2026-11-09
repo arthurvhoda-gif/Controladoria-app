@@ -35,6 +35,7 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
   const [total, setTotal] = useState(null)
   const [carregando, setCarregando] = useState(true)
   const [ocupado, setOcupado] = useState(false)
+  const [testando, setTestando] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [erro, setErro] = useState('')
   const [naTelaInicial, setNaTelaInicial] = useState(instalado)
@@ -149,6 +150,33 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
     }
   }
 
+  async function testarNotificacao() {
+    setErro('')
+    setFeedback('')
+    setTestando(true)
+    try {
+      const resposta = await fetch(`${apiUrl}/push/teste`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const resultado = await resposta.json().catch(() => null)
+      if (!resposta.ok) throw new Error(mensagemErro(resultado, 'O teste não pôde ser enviado.'))
+      const aceitos = Number(resultado?.aceitos_pelo_provedor ?? 0)
+      const consultados = Number(resultado?.aparelhos_consultados ?? 0)
+      if (resultado?.assinaturas_expiradas_removidas) {
+        setErro('Uma assinatura expirou. Abra o assistente no aparelho e ative as notificações novamente.')
+      }
+      setFeedback(
+        `Provedores aceitaram ${aceitos} de ${consultados} envio(s). ` +
+        'Verifique a notificação diretamente em cada celular; o aceite não garante a entrega.'
+      )
+    } catch (e) {
+      setErro(e.message || 'Falha no envio de teste.')
+    } finally {
+      setTestando(false)
+    }
+  }
+
   async function desativar() {
     setErro('')
     setFeedback('')
@@ -223,8 +251,22 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
               Desativar notificações deste aparelho
             </button>
           </div>
+          {config?.teste_disponivel && <div style={{ border: '1px solid #cbd5e1', borderRadius: 12, padding: 14 }}>
+            <strong>4. Enviar notificação de teste</strong>
+            <p style={{ margin: '8px 0', fontSize: 13, lineHeight: 1.5 }}>
+              Envia um aviso fictício somente aos seus dispositivos cadastrados.
+              Feche os aplicativos nos celulares antes de testar a entrega.
+            </p>
+            <button type="button" onClick={testarNotificacao}
+              disabled={ocupado || testando || !total} style={estiloAcao}>
+              {testando ? 'Enviando teste...' : 'Enviar notificação de teste'}
+            </button>
+            <p style={{ margin: '8px 0 0', fontSize: 12, color: '#64748b' }}>
+              Limite: um teste por minuto. O envio de tarefas reais permanece desativado.
+            </p>
+          </div>}
           {config?.envios_ativos === false && <p style={{ fontSize: 12, color: '#854d0e', margin: 0 }}>
-            Homologação: o envio automático de mensagens push ainda não está ativo.
+            Homologação: notificações automáticas de tarefas ainda não estão ativas.
           </p>}
           {erro && <p role="alert" style={{ color: '#b91c1c', fontSize: 13, margin: 0 }}>{erro}</p>}
           {feedback && <p role="status" style={{ color: '#047857', fontSize: 13, margin: 0 }}>{feedback}</p>}

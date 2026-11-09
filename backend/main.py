@@ -116,6 +116,8 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return True  # autenticado, somente a propria configuracao
     if path == '/push/dispositivos' and method in ('GET', 'POST', 'DELETE'):
         return True  # dispositivo associado somente ao usuario da sessao
+    if path == '/push/teste' and method == 'POST':
+        return True  # somente a propria conta, com gate explicito no backend
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':

@@ -9,6 +9,19 @@ self.addEventListener('push', (event) => {
   } catch {
     return;
   }
+  if (payload?.tipo === 'haize-teste-v1') {
+    // Notificacao generica de homologacao, sem informacoes confidenciais.
+    const identificador = typeof payload.id === 'string' && /^[0-9a-f]{16}$/.test(payload.id)
+      ? payload.id : 'sem-id';
+    event.waitUntil(self.registration.showNotification('Controladoria Haize — teste', {
+      body: 'Teste de notificação recebido neste celular.',
+      icon: '/logo.png',
+      badge: '/logo.png',
+      tag: 'haize-teste-' + identificador,
+      data: { destino: new URL('/', self.registration.scope).href }
+    }));
+    return;
+  }
   const servicoId = Number(payload?.servico_id);
   if (payload?.tipo !== 'haize-servico-v1' ||
       !Number.isSafeInteger(servicoId) ||

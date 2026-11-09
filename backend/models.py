@@ -310,3 +310,12 @@ class PushDispositivo(Base):
     chave_auth = Column(String(60), nullable=False)
     criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     atualizado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+# V7.4: limitador persistente para disparos MANUAIS de teste.
+# Nao e fila de eventos e nao inicia notificacoes automaticas.
+class PushTesteControle(Base):
+    __tablename__ = 'push_teste_controle'
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'),
+                        primary_key=True)
+    ultimo_envio_epoch = Column(BigInteger, nullable=False)
+
