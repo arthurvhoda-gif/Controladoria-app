@@ -256,7 +256,8 @@ def homologar_mobile(browser):
         pagina.goto(f'{FRONTEND}/?servico={sid}', wait_until='domcontentloaded')
         expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_be_visible()
         pagina.wait_for_function("() => !location.search.includes('servico=')")
-        expect(pagina.get_by_text('Inspecionar bombas fictícias', exact=False)).to_be_visible()
+        expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}').get_by_role(
+            'heading', name='Inspecionar bombas fictícias no celular')).to_be_visible()
         # O documento deve caber no telefone sem rolagem horizontal geral.
         largura = pagina.evaluate("""() => ({
             visivel: document.documentElement.clientWidth,
