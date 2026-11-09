@@ -273,6 +273,20 @@ def homologar_mobile(browser):
                 })
                 .filter(r => r.direita > window.innerWidth + 2 || r.x < -2)
                 .sort((a,b) => b.direita - a.direita).slice(0, 14)""")
+            arvores = pagina.evaluate("""() => {
+              const sel = ['html', 'body', '.app', '.main-content', '.topbar',
+                '.topbar-actions', '.page', '.haize-servicos', '.hs-v4-drawer',
+                '.hs-v4-drawer-scroll', '.hs-v4-drawer-bar', '.hs-v3-detail-inner'];
+              return sel.map(css => {
+                const el = document.querySelector(css);
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return {css, client: el.clientWidth, scroll: el.scrollWidth,
+                  x: Math.round(r.left), direita: Math.round(r.right),
+                  overflow: getComputedStyle(el).overflowX};
+              }).filter(Boolean);
+            }""")
+            print('MOBILE DIMENSÕES: ' + json.dumps(arvores, ensure_ascii=False), flush=True)
             print('MOBILE DIAGNÓSTICO DE OVERFLOW: ' +
                   json.dumps(extrapolam, ensure_ascii=False), flush=True)
         assert largura['conteudo'] <= largura['visivel'] + 2, largura
