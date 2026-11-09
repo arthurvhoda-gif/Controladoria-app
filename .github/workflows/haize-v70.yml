@@ -244,6 +244,8 @@ jobs:
           npm ci
           npm run build
         working-directory: frontend
+      - name: Verificar pacote reproduzivel para revisao de homologacao
+        run: python scripts/empacotar_candidato_v73.py --verificar-ci
       - name: Criar contas e condominios ficticios no PostgreSQL descartavel
         run: python scripts/semear_fullstack_v73.py
       - name: Testar notificacoes entre navegador e servidor reais
