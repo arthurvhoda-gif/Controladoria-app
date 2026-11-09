@@ -136,6 +136,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.set_default_timeout(12000)
         self.usuario = USUARIOS["admin@teste.local"]
         self.sessao_invalida = False
+        self.falha_temporaria_perfil = False
         self.avisos_servicos_ficticios = []
         self.servicos_ficticios = []
         self.pessoas_servicos_ficticios = []
@@ -178,8 +179,9 @@ class HaizeNavegadorV70(unittest.TestCase):
                 self.usuario = usuario
                 resposta = {"usuario": usuario, "access_token": "token-ficticio-" + str(usuario["id"])}
         elif caminho == "/usuarios/me":
-            status = 401 if self.sessao_invalida else 200
-            resposta = {"detail": "Sessão expirada"} if status == 401 else self.usuario
+            status = 503 if self.falha_temporaria_perfil else (401 if self.sessao_invalida else 200)
+            resposta = {"detail": "Indisponibilidade temporária fictícia"} if status == 503 else (
+                {"detail": "Sessão expirada"} if status == 401 else self.usuario)
         elif caminho == "/solicitacoes":
             resposta = PEDIDOS if self.usuario["perfil"] != "Checklist" else []
         elif caminho == "/condominios":
@@ -696,7 +698,21 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.assertEqual(self.verificacoes_whatsapp_ficticias, [901])
         self.assertEqual(self.page.get_by_role("button", name="Enviar WhatsApp").count(), 0)
 
-    def test_01_login_e_termino_da_sessao(self):
+    def test_26_falha_temporaria_usuarios_me_preserva_login_e_permite_reload(self):
+        self.falha_temporaria_perfil = True
+        self.login("zelador@teste.local")
+        self.page.wait_for_function("""() =>
+            document.querySelector('.status-pill.offline') !== null""")
+        expect(self.page.locator('.sidebar-nav')).to_be_visible()
+        self.assertIn('token-ficticio-2',
+                      self.page.evaluate("sessionStorage.getItem('usuarioControladoria')"))
+        self.page.reload(wait_until='domcontentloaded')
+        expect(self.page.locator('.sidebar-nav')).to_be_visible()
+        expect(self.page.locator('.login-screen')).to_have_count(0)
+        self.assertIn('token-ficticio-2',
+                      self.page.evaluate("sessionStorage.getItem('usuarioControladoria')"))
+        self.falha_temporaria_perfil = False
+
         self.login()
         self.menu("Solicitações")
         expect(self.page.locator(".central-solicitacao-linha")).to_have_count(10)
