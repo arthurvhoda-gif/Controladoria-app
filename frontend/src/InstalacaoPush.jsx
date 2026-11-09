@@ -69,6 +69,10 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
 
   async function instalar() {
     setErro('')
+    if (ehIOS) {
+      setFeedback('No Safari do iPhone, toque Compartilhar → Adicionar à Tela de Início e abra a Controladoria pelo ícone criado.')
+      return
+    }
     if (!conviteInstalacao) {
       setFeedback('No Chrome, abra o menu ⋮ e escolha Instalar aplicativo ou Adicionar à tela inicial.')
       return
@@ -132,7 +136,8 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
         const detalhes = await resposta.json().catch(() => null)
         throw new Error(mensagemErro(detalhes, 'Não foi possível registrar este celular.'))
       }
-      setTotal(quantidade => Math.max(1, quantidade ?? 0))
+      const lista = await fetch(`${apiUrl}/push/dispositivos`, { headers: { Authorization: `Bearer ${token}` } })
+      if (lista.ok) setTotal((await lista.json()).total)
       setFeedback('Este aparelho foi registrado para receber Web Push. O envio automático ainda está em preparação.')
     } catch (e) {
       if (criadaAgora && assinatura) {
@@ -162,7 +167,8 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
       })
       if (!resposta.ok) throw new Error('Não foi possível revogar o aparelho no servidor.')
       await assinatura.unsubscribe()
-      setTotal(quantidade => Math.max(0, (quantidade ?? 1) - 1))
+      const lista = await fetch(`${apiUrl}/push/dispositivos`, { headers: { Authorization: `Bearer ${token}` } })
+      if (lista.ok) setTotal((await lista.json()).total)
       setFeedback('Assinatura deste aparelho desativada.')
     } catch (e) {
       setErro(e.message || 'Erro ao revogar assinatura.')
