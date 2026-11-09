@@ -26,7 +26,31 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'script', // Força a injeção do motor
+      // V7.4: evita servir um HTML de versão anterior quando há rede.
+      // A API (em outra origem) não é armazenada pelo Service Worker.
+      workbox: {
+        cleanupOutdatedCaches: true,
+        navigateFallback: null,
+        globIgnores: ['**/index.html'],
+        importScripts: ['/push-sw-v74.js'],
+        runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) =>
+              request.mode === 'navigate' && url.origin === self.location.origin,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'haize-paginas-v74',
+              cacheableResponse: { statuses: [200] },
+              expiration: { maxEntries: 5, maxAgeSeconds: 24 * 60 * 60 }
+            }
+          }
+        ]
+      },
       manifest: {
+        id: '/',
+        start_url: '/',
+        scope: '/',
+        lang: 'pt-BR',
         name: 'Controladoria App',
         short_name: 'Controladoria',
         description: 'Sistema de Gestão da Controladoria',
