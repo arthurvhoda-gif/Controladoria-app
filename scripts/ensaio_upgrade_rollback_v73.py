@@ -64,7 +64,9 @@ def comando(*args):
 
 
 def usar(nome, u):
-    return str(u.set(database=nome))
+    # str(URL) mascara a senha como "***"; apenas o driver deve receber
+    # a URL completa. Nunca imprimir nem registrar o retorno desta função.
+    return u.set(database=nome).render_as_string(hide_password=False)
 
 
 def criar_db(nome):
