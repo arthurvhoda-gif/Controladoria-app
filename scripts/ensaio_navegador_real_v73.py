@@ -177,6 +177,98 @@ def homologar(pagina):
     print('REAL 5/5: WhatsApp permanece desativado com APIs e frontend reais.', flush=True)
 
 
+
+def homologar_mobile(browser):
+    """Simula tela e toque de celular real, usando a API e o PostgreSQL reais.
+
+    Mobile Playwright valida layout e comportamento, não substitui teste
+    físico em aparelhos Android/iOS.
+    """
+    from datetime import date, timedelta
+    status, gestor = consultar('POST', '/login', dados={
+        'email': 'gestora@teste.local', 'senha': SENHA,
+    })
+    assert status == 200
+    token_gestor = gestor['access_token']
+    status, beta = consultar('POST', '/login', dados={
+        'email': 'zelador.beta@teste.local', 'senha': SENHA,
+    })
+    assert status == 200
+    token_beta = beta['access_token']
+
+    status, criada = consultar('POST', '/servicos', token=token_gestor, dados={
+        'condominio_id': 2, 'executores_ids': [3],
+        'fiscalizadores_ids': [],
+        'titulo': 'Inspecionar bombas fictícias no celular',
+        'descricao': 'Fluxo mobile com notificação persistente e API real.',
+        'prazo': (date.today() + timedelta(days=7)).isoformat(),
+    })
+    assert status == 201, (status, criada)
+    sid = criada['id']
+    status, avisos = consultar('GET', '/servicos/notificacoes', token=token_beta)
+    assert status == 200 and len(avisos) == 1 and avisos[0]['servico_id'] == sid
+    aviso_id = avisos[0]['id']
+
+    with browser.new_context(
+        viewport={'width': 390, 'height': 844},
+        device_scale_factor=2, is_mobile=True, has_touch=True,
+        locale='pt-BR', timezone_id='America/Sao_Paulo',
+        service_workers='block',
+    ) as contexto:
+        pagina = contexto.new_page()
+        pagina.set_default_timeout(16000)
+        erros = []
+        pagina.on('pageerror', lambda e: erros.append(str(e)))
+        pagina.goto(FRONTEND, wait_until='domcontentloaded')
+        expect(pagina.locator('.login-screen')).to_be_visible()
+        pagina.get_by_placeholder('nome@haize.com.br').fill('zelador.beta@teste.local')
+        pagina.locator('input[type="password"]').fill(SENHA)
+        pagina.get_by_role('button', name='Entrar na Plataforma').click()
+        expect(pagina.locator('.login-screen')).to_have_count(0)
+        expect(pagina.locator('.notification-badge')).to_have_text('1')
+        print('MOBILE 1/4: login e contador real em viewport touch 390px.', flush=True)
+
+        pagina.get_by_role('button', name='Ver alertas e notificações').click()
+        expect(pagina.get_by_text('Tarefas e serviços (1)')).to_be_visible()
+        bloco = pagina.locator('.alertas-checklist-lista').first
+        expect(bloco).to_contain_text('Inspecionar bombas fictícias')
+        bloco.locator('button').first.click()
+        expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_be_visible()
+        expect(pagina.locator('.notification-badge')).to_have_count(0)
+        status, atualizados = consultar('GET', '/servicos/notificacoes', token=token_beta)
+        assert status == 200 and any(a['id'] == aviso_id and a['lida'] for a in atualizados)
+        print('MOBILE 2/4: toque no sino e leitura persistida na API.', flush=True)
+
+        pagina.get_by_role('dialog', name=f'Serviço #{sid}').get_by_role(
+            'button', name='Fechar detalhes', exact=True).click()
+        expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
+        pagina.get_by_role('button', name='Abrir menu de navegação').click()
+        expect(pagina.locator('.sidebar-nav').get_by_role(
+            'button', name='Minhas Tarefas')).to_be_visible()
+        pagina.locator('.sidebar-nav').get_by_role(
+            'button', name='Minhas Tarefas').click()
+        expect(pagina.get_by_role('heading', name='Visão geral dos serviços')).to_be_visible()
+        # Nenhum dado de outro condomínio deve aparecer na listagem.
+        expect(pagina.get_by_text('Inspecionar portão fictício')).to_have_count(0)
+        expect(pagina.get_by_text('Inspecionar bombas fictícias', exact=False)).to_be_visible()
+        print('MOBILE 3/4: menu touch, tarefas e isolamento de condomínios.', flush=True)
+
+        pagina.goto(f'{FRONTEND}/?servico={sid}', wait_until='domcontentloaded')
+        expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_be_visible()
+        pagina.wait_for_function("() => !location.search.includes('servico=')")
+        expect(pagina.get_by_text('Inspecionar bombas fictícias', exact=False)).to_be_visible()
+        # O documento deve caber no telefone sem rolagem horizontal geral.
+        largura = pagina.evaluate("""() => ({
+            visivel: document.documentElement.clientWidth,
+            conteudo: document.documentElement.scrollWidth
+        })""")
+        assert largura['conteudo'] <= largura['visivel'] + 2, largura
+        assert not erros, erros
+        print('MOBILE 4/4: link profundo, gaveta e viewport sem overflow.', flush=True)
+
+    print('HOMOLOGACAO MOBILE V7.3: 4/4 APROVADOS com frontend e API reais.', flush=True)
+
+
 def main():
     guardas()
     env = dict(os.environ)
@@ -210,6 +302,7 @@ def main():
         homologar(pagina)
         assert not erros_js, erros_js
         print('HOMOLOGACAO INTEGRADA V7.3: 5/5 APROVADOS — SEM MOCK, SEM ENVIO.', flush=True)
+        homologar_mobile(browser)
     finally:
         if contexto:
             contexto.close()
