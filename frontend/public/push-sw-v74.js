@@ -46,7 +46,7 @@ self.addEventListener('notificationclick', (event) => {
   }
 
   event.waitUntil((async () => {
-    const janelas = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const janelas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const janela of janelas) {
       if (new URL(janela.url).origin !== url.origin) continue;
       if ('navigate' in janela) {
@@ -58,6 +58,6 @@ self.addEventListener('notificationclick', (event) => {
         }
       }
     }
-    if (clients.openWindow) await clients.openWindow(url.href);
+    if (self.clients.openWindow) await self.clients.openWindow(url.href);
   })());
 });
