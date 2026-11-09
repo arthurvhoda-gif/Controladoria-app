@@ -27,6 +27,33 @@ despachante deve ser ativado por essa homologação.
 - recebimento, leitura e isolamento de tarefas por condomínio;
 - consentimento, duplicidades e pré-conferência somente leitura de WhatsApp;
 - ausência de envio real e produção preservada na branch `main`.
+- homologação de celular **emulada** (Chromium, tela 390 px e toque) com
+  quatro cenários aprovados: login/contador, sino/leitura, navegação e
+  isolamento, link direto e largura da gaveta. O teste encontrou e corrigiu
+  a animação que deslocava uma janela `100vw` para fora da área visível.
+  **Aparelho físico Android/iOS continua pendente.**
+- verificação de que mensagens de link inacessível não desaparecem quando
+  uma atualização de serviços conclui em paralelo.
+
+### Pacote reproduzível para revisão, NÃO implantação
+
+O script `scripts/empacotar_candidato_v73.py` monta uma cópia de
+**homologação**, com lista positiva de arquivos permitidos, hashes SHA-256
+e manifesto que declara explicitamente `pronto_para_producao=false` e
+`envio_whatsapp_ativado=false`. A suíte de CI gera duas cópias e comprova
+que seus bytes são iguais. O pacote exclui bancos SQLite, caches,
+credenciais, arquivos de teste, uploads e a API local de demonstração.
+
+Esta é uma **verificação efêmera** dentro do GitHub Actions, não um arquivo
+publicado nem um ambiente implantado. O frontend desse ensaio foi compilado
+com URL de API local, não serve para abrir uma homologação em outro domínio
+sem reconstrução específica. O procedimento continuará bloqueado até que
+exista infraestrutura isolada e custo previamente aprovado.
+
+Validação completa da rodada:
+https://github.com/arthurvhoda-gif/Controladoria-app/actions/runs/42608495661
+(7 jobs aprovados, 245 testes Python, 25 Chromium, 5 cenários integrados,
+4 cenários mobile emulados e 3 cenários na demonstração local).
 
 ## Checklist obrigatório antes de qualquer implantação
 
