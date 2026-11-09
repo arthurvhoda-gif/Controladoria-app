@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+import push_automatico as auto
 
 from fastapi import HTTPException
 import test_multiplos_participantes as base
@@ -134,6 +135,82 @@ class PushDispositivosV74(unittest.TestCase):
             self.assertEqual(self.db.query(base.models.PushTesteControle).count(), 0)
             envio.assert_not_called()
 
+
+    def test_fila_automatica_totalmente_desligada_sem_flags(self):
+        from datetime import date, timedelta
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(), self.req(2), self.db)
+        criar(ServicoNovo(
+            condominio_id=1, executores_ids=[2], titulo='Tarefa de exemplo',
+            descricao='Verificar portas do elevador ficticio.',
+            prazo=date.today() + timedelta(days=2),
+        ), self.req(1), self.db)
+        self.assertEqual(self.db.query(base.models.PushAvisoFila).count(), 0)
+        with patch('push_automatico.webpush') as sender:
+            self.assertFalse(auto.processar_fila()['ativo'])
+            sender.assert_not_called()
+
+    def test_enfileira_transacional_por_dispositivo_sem_despachar(self):
+        from datetime import date, timedelta
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)
+        push.registrar(self.dados(2), self.req(2), self.db)
+        push.registrar(self.dados(3), self.req(3), self.db)
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+        }), patch('push_automatico.webpush') as sender:
+            s = criar(ServicoNovo(
+                condominio_id=1, executores_ids=[2], titulo='Tarefa de exemplo',
+                descricao='Revisao ficticia do elevador.',
+                prazo=date.today() + timedelta(days=2),
+            ), self.req(1), self.db)
+            fila = self.db.query(base.models.PushAvisoFila).all()
+            self.assertEqual(len(fila), 2)
+            self.assertTrue(all(x.usuario_id == 2 for x in fila))
+            self.assertTrue(all(x.servico_id == s['id'] for x in fila))
+            self.assertTrue(all(x.evento_id is not None for x in fila))
+            self.assertFalse(auto.processar_fila()['ativo'])
+            sender.assert_not_called()
+
+    def test_despacho_respeita_condominio_e_transferencia_do_dispositivo(self):
+        from datetime import date, timedelta
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+        }):
+            criar(ServicoNovo(
+                condominio_id=1, executores_ids=[2], titulo='Tarefa de exemplo',
+                descricao='Revisao ficticia do elevador.',
+                prazo=date.today() + timedelta(days=2),
+            ), self.req(1), self.db)
+        item = self.db.query(base.models.PushAvisoFila).first()
+        self.assertEqual(item.usuario_id, 2)
+        self.assertIsNotNone(auto._pode_despachar(self.db, item))
+        self.db.get(base.models.Usuario, 2).condominio_id = 2
+        self.db.commit()
+        self.assertIsNone(auto._pode_despachar(self.db, item))
+        self.db.get(base.models.Usuario, 2).condominio_id = 1
+        self.db.commit()
+        push.registrar(self.dados(1), self.req(3), self.db)
+        self.assertIsNone(auto._pode_despachar(self.db, item))
+
+    def test_falha_em_criacao_reverte_fila_e_aviso(self):
+        from datetime import date, timedelta
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)
+        with patch.dict(os.environ, {'PUSH_AUTO_QUEUE_ENABLED': 'true'}):
+            with patch.object(self.db, 'commit', side_effect=RuntimeError('falha transacional ficticia')):
+                with self.assertRaises(RuntimeError):
+                    criar(ServicoNovo(
+                        condominio_id=1, executores_ids=[2], titulo='Tarefa ficticia',
+                        descricao='Teste de rollback da fila.',
+                        prazo=date.today() + timedelta(days=2),
+                    ), self.req(1), self.db)
+            self.db.rollback()
+        self.assertEqual(self.db.query(base.models.PushAvisoFila).count(), 0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -8,7 +8,7 @@ from io import BytesIO
 from zoneinfo import ZoneInfo
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from sqlalchemy import and_, or_, case
 from sqlalchemy.orm import Session
 
 import models
+import push_automatico
 from database import SessionLocal
 
 router = APIRouter(prefix='/servicos', tags=['Serviços internos'])
@@ -159,6 +160,8 @@ def notificar(db, destino_id, servico, mensagem, *, evento_origem=None, tipo_eve
         mensagem=mensagem, tipo_evento=tipo_evento, criado_em=agora(),
     )
     db.add(aviso)
+    # V7.5: fila por dispositivo na MESMA transacao. Por padrao, desligada.
+    push_automatico.enfileirar_aviso(db, aviso)
     # Na mesma transação: sem aviso persistido, não há item para WhatsApp.
     # Sem consentimento prévio, não há fila de envio.
     preferencia = db.get(models.PreferenciaWhatsApp, destino_id)
@@ -263,7 +266,8 @@ def listar(request: Request, db: Session = Depends(sessao)):
 
 
 @router.post('', status_code=201)
-def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
+def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao),
+          background_tasks: BackgroundTasks = None):
     autor = obter_usuario(request, db)
     if autor.perfil != 'Controladoria':
         raise HTTPException(403, detail='Somente Controladoria pode criar serviços.')
@@ -321,6 +325,8 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao)):
                 else f'Você foi designado para fiscalizar: {servico.titulo}'
             ), evento_origem=evento_criacao, tipo_evento='nova_tarefa' if papel == 'executor' else 'designacao_fiscal')
     db.commit()
+    if background_tasks is not None and push_automatico.despacho_habilitado():
+        background_tasks.add_task(push_automatico.processar_fila)
     db.refresh(servico)
     return serializar(servico, db, autor)
 
@@ -462,7 +468,8 @@ def historico(servico_id: int, request: Request, db: Session = Depends(sessao)):
 
 
 @router.post('/{servico_id}/acoes')
-def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session = Depends(sessao)):
+def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session = Depends(sessao),
+              background_tasks: BackgroundTasks = None):
     user = obter_usuario(request, db)
     servico = db.query(models.ServicoInterno).filter(
         models.ServicoInterno.id == servico_id
@@ -551,6 +558,8 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
                           f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual, tipo_evento='validacao_final')
     servico.atualizado_em = agora()
     db.commit()
+    if background_tasks is not None and push_automatico.despacho_habilitado():
+        background_tasks.add_task(push_automatico.processar_fila)
     db.refresh(servico)
     return serializar(servico, db, user)
 

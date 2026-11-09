@@ -319,3 +319,22 @@ class PushTesteControle(Base):
                         primary_key=True)
     ultimo_envio_epoch = Column(BigInteger, nullable=False)
 
+# V7.5: fila transacional por aviso e dispositivo, sem envio antes da
+# ativacao EXPLICITA das duas flags de homologacao.
+class PushAvisoFila(Base):
+    __tablename__ = 'push_avisos_fila'
+    id = Column(Integer, primary_key=True)
+    aviso_id = Column(Integer, ForeignKey('servicos_avisos.id', ondelete='CASCADE'), nullable=False, index=True)
+    dispositivo_id = Column(Integer, ForeignKey('push_dispositivos.id', ondelete='CASCADE'), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    servico_id = Column(Integer, ForeignKey('servicos_internos.id'), nullable=False)
+    evento_id = Column(Integer, ForeignKey('servicos_eventos.id', ondelete='SET NULL'), nullable=True)
+    tipo_evento = Column(String(32), nullable=False)
+    status = Column(String(24), nullable=False, default='pendente', index=True)
+    tentativas = Column(Integer, nullable=False, default=0)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint('aviso_id', 'dispositivo_id', name='uq_push_aviso_dispositivo'),
+    )
+
