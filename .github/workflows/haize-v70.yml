@@ -153,6 +153,8 @@ jobs:
         run: |
           createdb haize_v73_notificacoes
           DATABASE_URL='postgresql://haize_ci:senha-temporaria-ci-nao-produção@127.0.0.1:5432/haize_v73_notificacoes' python scripts/ensaio_whatsapp_pg_v73.py
+      - name: Ensaio de upgrade legado e restauracao pre-V7.3 com pg_dump
+        run: python scripts/ensaio_upgrade_rollback_v73.py
 
   dependencia_npm:
     name: Auditoria npm - inventario de riscos existentes
