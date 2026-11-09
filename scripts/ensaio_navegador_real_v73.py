@@ -160,8 +160,8 @@ def homologar(pagina):
             return conta && conta.email === 'zelador.beta@teste.local' && !!conta.token
         } catch { return false }
     }""", timeout=5000)
-    # Permite completar a revalidação real da sessão antes de reiniciar a página.
-    pagina.wait_for_timeout(350)
+    # Reiniciar IMEDIATAMENTE após o login: exercita a corrida entre
+    # navegação e revalidação de perfil sem acrescentar espera artificial.
     antes_da_navegacao = pagina.evaluate("""() => {
         const raw = sessionStorage.getItem('usuarioControladoria');
         if (!raw) return {existe: false};
