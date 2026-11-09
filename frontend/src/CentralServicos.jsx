@@ -143,6 +143,9 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const [tentativaLink, setTentativaLink] = useState(0)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
+  // Mensagem de link protegido não pode desaparecer quando o refresh
+  // de tarefas termina logo após um 403/404 (corrida de requisições).
+  const [erroLink, setErroLink] = useState('')
   const [erroForm, setErroForm] = useState('')
   const [mensagem, setMensagem] = useState('')
   const [mostraAvisos, setMostraAvisos] = useState(false)
@@ -221,25 +224,26 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
         if (resposta.status === 401) return // Mantém o link para uma nova autenticação.
         if (resposta.status === 403 || resposta.status === 404) {
           setFalhaLink(false)
-          setErro('A tarefa do link não existe ou não está disponível para seu perfil.')
+          setErroLink('A tarefa do link não existe ou não está disponível para seu perfil.')
           onLinkConcluido?.(linkServicoId)
           return
         }
         if (!resposta.ok) {
           setFalhaLink(true)
-          setErro('O servidor está temporariamente indisponível. Tente abrir o link novamente.')
+          setErroLink('O servidor está temporariamente indisponível. Tente abrir o link novamente.')
           return
         }
         const detalhes = await resposta.json()
         if (controller.signal.aborted) return
         setFalhaLink(false)
+        setErroLink('')
         focoAnteriorGaveta.current = document.activeElement
         abrirServicoDoEfeito(detalhes)
         onLinkConcluido?.(linkServicoId)
       } catch {
         if (!controller.signal.aborted) {
           setFalhaLink(true)
-          setErro('Falha de conexão ao abrir a tarefa. Verifique sua rede e tente novamente.')
+          setErroLink('Falha de conexão ao abrir a tarefa. Verifique sua rede e tente novamente.')
         }
       }
     }
@@ -481,7 +485,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       </button>)}
     </div>
 
-    {erro && <div className="hs-v3-flash hs-v3-flash-error" role="alert"><SIcon nome="alert"/><span>{erro}</span>{falhaLink && linkServicoId && <button type="button" onClick={() => { setFalhaLink(false); setTentativaLink(v => v + 1) }}>Tentar abrir novamente</button>}<button type="button" aria-label="Fechar mensagem" onClick={() => setErro('')}><SIcon nome="close" size={16}/></button></div>}
+    {(erroLink || erro) && <div className="hs-v3-flash hs-v3-flash-error" role="alert"><SIcon nome="alert"/><span>{erroLink || erro}</span>{falhaLink && linkServicoId && <button type="button" onClick={() => { setFalhaLink(false); setErroLink(''); setTentativaLink(v => v + 1) }}>Tentar abrir novamente</button>}<button type="button" aria-label="Fechar mensagem" onClick={() => { setErro(''); setErroLink('') }}><SIcon nome="close" size={16}/></button></div>}
     {abrindoServicoId !== null && <p role="status" className="hs-v3-loading">Confirmando acesso ao serviço #{abrindoServicoId}...</p>}
     {mensagem && <div className="hs-v3-flash hs-v3-flash-ok" role="status"><SIcon nome="checkCircle"/><span>{mensagem}</span><button type="button" aria-label="Fechar mensagem" onClick={() => setMensagem('')}><SIcon nome="close" size={16}/></button></div>}
 
