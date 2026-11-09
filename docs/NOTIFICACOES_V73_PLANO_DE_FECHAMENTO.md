@@ -15,6 +15,13 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
   de telefone. Ensaios incluem reaplicação e índice deliberadamente inválido.
 - Documento operacional de preparação, homologação separada e rollback:
   `docs/V73_LIBERACAO_CONTROLADA.md`.
+- Ensaio completo de **migração legada + backup + restauração independente**
+  com PostgreSQL CI descartável: backup anterior à migração, bloqueio de
+  telefones duplicados sem alterar registros, aplicação idempotente após
+  saneamento apenas fictício, e `pg_restore` num segundo banco com hashes
+  de registros/esquema compatíveis com o estado anterior. **4/4 aprovados**.
+  Script `scripts/ensaio_upgrade_rollback_v73.py`. Isso NÃO equivale a
+  backup ou restauração do banco Neon nem autoriza uma implantação.
 - A verificação da base real, a homologação em infraestrutura separada e
   qualquer implantação de produção permanecem **pendentes**.
 
@@ -146,6 +153,11 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
       identifica duplicidades por contagem, reconhece índice correto,
       recusa índice falso de mesmo nome e rejeita URLs externas.
       A consulta NÃO foi executada contra o banco real.
+- [x] Ensaio PostgreSQL descartável de reversão de banco legado:
+      backup com `pg_dump`, tentativa bloqueada sem alterações, saneamento
+      somente sintético, migração repetida e restauração `pg_restore` de
+      backup anterior em banco novo com hashes conferidos.
+      Falta testar recuperação e rollback na infraestrutura homologada real.
 - [x] Prévia bloqueia telefones duplicados em base SQLite legada sem UNIQUE.
 - [x] Conferência transacional SOMENTE LEITURA, na mesma sessão DB, de
       identidade, consentimento, acesso atual, evento/ciclo, vigência e
@@ -173,7 +185,9 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
 - CI: `.github/workflows/haize-v70.yml` executa Python, frontend, Chromium,
   PostgreSQL descartável, dependências e prevenção de arquivos sensíveis.
 - Sem segredos, números reais de telefone ou dados de condomínios reais na CI.
-- Rollback seguro: a versão fica na branch, sem merge/deploy.
+- Reversão ensaiada somente nos bancos fictícios da CI; a versão continua
+  na branch, sem merge/deploy. Dados reais precisam de backup verificável,
+  janela, recuperação hospedada e aprovação própria.
 - Notificação interna não necessita comprar pacote WhatsApp; toda ação
   efetiva é feita e registrada dentro do aplicativo.
 - Não confundir a API de Notification do navegador com push remoto: avisos
