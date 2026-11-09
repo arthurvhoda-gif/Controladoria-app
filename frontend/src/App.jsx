@@ -498,22 +498,39 @@ function App() {
   useEffect(() => {
     if (!usuarioLogado?.token) return
     let canceled = false
-    fetch(`${API_URL}/usuarios/me`, { headers: { Authorization: `Bearer ${usuarioLogado.token}` } })
+    const controller = new AbortController()
+    fetch(`${API_URL}/usuarios/me`, {
+      headers: { Authorization: `Bearer ${usuarioLogado.token}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    })
       .then(async res => {
-        if (!res.ok) throw new Error('Sessão expirada. Faça login novamente.')
+        if (res.status === 401 || res.status === 403) {
+          const erro = new Error('Sessão revogada ou expirada.')
+          erro.autenticacaoInvalida = true
+          throw erro
+        }
+        // Desconexão, erro 5xx e falha de JSON não revogam o JWT.
+        // Só o servidor pode invalidar uma sessão autenticada.
+        if (!res.ok) throw new Error('Falha temporária na validação da sessão.')
         return await res.json()
       })
       .then(perfil => {
         if (!canceled) setUsuarioLogado(atual => atual ? { ...atual, ...perfil } : null)
       })
-      .catch(() => {
-        if (!canceled) {
+      .catch(erro => {
+        if (canceled || erro?.name === 'AbortError') return
+        if (erro?.autenticacaoInvalida) {
           sessionStorage.removeItem('usuarioControladoria')
           reiniciarSessaoNoEfeito()
           setUsuarioLogado(null)
+        } else {
+          // Um erro temporário (inclusive durante navegação/reload)
+          // não deve expulsar a pessoa do aplicativo.
+          setBackendOnline(false)
         }
       })
-    return () => { canceled = true }
+    return () => { canceled = true; controller.abort() }
   }, [usuarioLogado?.token])
 
   async function trocarMinhaSenha(e) {
