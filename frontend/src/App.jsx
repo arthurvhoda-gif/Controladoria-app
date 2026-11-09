@@ -7,6 +7,7 @@ import './App.css'
 import CentralServicos from './CentralServicos'
 import PreferenciasWhatsApp from './PreferenciasWhatsApp'
 import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
+import InstalacaoPush from './InstalacaoPush'
 import CentralFinanceira from './CentralFinanceira'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
@@ -199,6 +200,7 @@ function App() {
   const [senhaLogin, setSenhaLogin] = useState('')
   const [mostrarTrocaSenha, setMostrarTrocaSenha] = useState(false)
   const [mostrarWhatsapp, setMostrarWhatsapp] = useState(false)
+  const [mostrarInstalacaoPush, setMostrarInstalacaoPush] = useState(false)
   const [senhaAtual, setSenhaAtual] = useState('')
   const [senhaNova, setSenhaNova] = useState('')
   const [trocandoSenha, setTrocandoSenha] = useState(false)
@@ -2705,6 +2707,9 @@ function App() {
               </span>
             </div>
           </div>
+          <button type="button" className="logout-btn" onClick={() => setMostrarInstalacaoPush(true)}>
+            <span aria-hidden="true">🔔</span> Instalar e receber avisos
+          </button>
           <button type="button" className="logout-btn" onClick={() => setMostrarWhatsapp(true)}>
             <span aria-hidden="true">✉</span> Avisos pelo WhatsApp
           </button>
@@ -4267,6 +4272,9 @@ function App() {
 
         {mostrarWhatsapp && (
           <PreferenciasWhatsApp apiUrl={API_URL} token={usuarioLogado.token} onClose={() => setMostrarWhatsapp(false)} />
+        )}
+        {mostrarInstalacaoPush && (
+          <InstalacaoPush apiUrl={API_URL} token={usuarioLogado.token} onClose={() => setMostrarInstalacaoPush(false)} />
         )}
         {mostrarTrocaSenha && (
           <div className="modal-overlay" style={{ zIndex: 99999 }} onClick={e => { if (e.target === e.currentTarget) setMostrarTrocaSenha(false) }}>
