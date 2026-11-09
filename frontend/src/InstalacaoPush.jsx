@@ -82,6 +82,8 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
   const [receptorAtual, setReceptorAtual] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [erro, setErro] = useState('')
+  const [estadoAtivacao, setEstadoAtivacao] = useState('')
+  const [falhaAtivacao, setFalhaAtivacao] = useState(false)
   const [naTelaInicial, setNaTelaInicial] = useState(instalado)
 
   const ehIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent)
@@ -168,21 +170,30 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
   async function ativar() {
     setErro('')
     setFeedback('')
-    if (!suportado || !config?.registro_disponivel || !config?.chave_publica) return
+    setFalhaAtivacao(false)
+    setEstadoAtivacao('Solicitando permissão de notificações…')
+    if (!suportado || !config?.registro_disponivel || !config?.chave_publica) {
+      setFalhaAtivacao(true)
+      setEstadoAtivacao('O registro de notificações não está disponível neste aparelho.')
+      return
+    }
     if (ehIOS && !instalado()) {
-      setErro('No iPhone, abra o aplicativo pela tela inicial antes de ativar os avisos.')
+      setFalhaAtivacao(true)
+      setEstadoAtivacao('No iPhone, abra o aplicativo pelo ícone da tela inicial antes de ativar os avisos.')
       return
     }
     let assinatura = null
     let criadaAgora = false
     try {
-      // A permissão precisa ser solicitada diretamente após o toque do usuário.
+      setOcupado(true)
+      // Permissão solicitada em resposta direta ao toque, antes de qualquer await.
       const permissao = await Notification.requestPermission()
       if (permissao !== 'granted') {
-        setErro('Permissão negada ou não concedida. Você pode alterá-la nas configurações do aparelho.')
+        setFalhaAtivacao(true)
+        setEstadoAtivacao('Permissão não concedida. Verifique as configurações de notificações do aparelho.')
         return
       }
-      setOcupado(true)
+      setEstadoAtivacao('Verificando a assinatura Web Push do aparelho…')
       const registro = await navigator.serviceWorker.ready
       assinatura = await registro.pushManager.getSubscription()
       const publica = chaveVapidBytes(config.chave_publica)
@@ -194,11 +205,13 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
         }
       }
       if (!assinatura) {
+        setEstadoAtivacao('Criando uma nova assinatura Web Push…')
         assinatura = await registro.pushManager.subscribe({
           userVisibleOnly: true, applicationServerKey: publica,
         })
         criadaAgora = true
       }
+      setEstadoAtivacao('Salvando o aparelho no servidor de testes…')
       const resposta = await fetch(`${apiUrl}/push/dispositivos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -210,12 +223,13 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
       }
       const lista = await fetch(`${apiUrl}/push/dispositivos`, { headers: { Authorization: `Bearer ${token}` } })
       if (lista.ok) setTotal((await lista.json()).total)
-      setFeedback('Este aparelho foi registrado para receber Web Push. O envio automático ainda está em preparação.')
+      setEstadoAtivacao('✓ Este aparelho está registrado para receber Web Push. O envio automático ainda está em preparação.')
     } catch (e) {
       if (criadaAgora && assinatura) {
         await assinatura.unsubscribe().catch(() => {})
       }
-      setErro(e.message || 'Falha ao registrar dispositivo.')
+      setFalhaAtivacao(true)
+      setEstadoAtivacao(e.message || 'Falha ao registrar dispositivo.')
     } finally {
       setOcupado(false)
     }
@@ -351,7 +365,10 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
             </p>
             <button type="button" onClick={ativar}
               disabled={ocupado || carregando || !suportado || !config?.registro_disponivel || (ehIOS && !naTelaInicial)}
-              style={estiloAcao}>Ativar notificações neste aparelho</button>
+              style={estiloAcao}>{ocupado ? 'Registrando aparelho…' : 'Ativar notificações neste aparelho'}</button>
+            {estadoAtivacao && <p role="status" aria-live="polite"
+              style={{ margin: '9px 0 0', fontSize: 13, lineHeight: 1.5, fontWeight: 600,
+                color: falhaAtivacao ? '#b91c1c' : '#047857' }}>{estadoAtivacao}</p>}
             {config && !config.registro_disponivel && <p style={{ marginBottom: 0, fontSize: 12, color: '#b45309' }}>
               O cadastro ainda está sendo habilitado no servidor de testes.
             </p>}
