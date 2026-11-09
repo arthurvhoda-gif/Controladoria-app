@@ -147,8 +147,30 @@ def homologar(pagina):
     expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
     pagina.get_by_role('button', name='Encerrar Sessão').click()
     expect(pagina.locator('.login-screen')).to_be_visible()
+    respostas_sessao = []
+    def observar_revalidacao(res):
+        if res.url.endswith('/usuarios/me'):
+            respostas_sessao.append(res.status)
+    pagina.on('response', observar_revalidacao)
     login_tela(pagina, 'zelador.beta@teste.local')
     expect(pagina.locator('.notification-badge')).to_have_count(0)
+    pagina.wait_for_function("""() => {
+        try {
+            const conta = JSON.parse(sessionStorage.getItem('usuarioControladoria'));
+            return conta && conta.email === 'zelador.beta@teste.local' && !!conta.token
+        } catch { return false }
+    }""", timeout=5000)
+    # Permite completar a revalidação real da sessão antes de reiniciar a página.
+    pagina.wait_for_timeout(350)
+    antes_da_navegacao = pagina.evaluate("""() => {
+        const raw = sessionStorage.getItem('usuarioControladoria');
+        if (!raw) return {existe: false};
+        const conta = JSON.parse(raw);
+        return {existe: true, email_correto: conta.email === 'zelador.beta@teste.local'};
+    }""")
+    print('DIAGNOSTICO SESSAO ANTES DE LINK (FICTICIO): ' +
+          json.dumps({'estado': antes_da_navegacao, 'revalidacoes': respostas_sessao},
+                     ensure_ascii=False), flush=True)
     # Instrumentação de CI: caso o feedback falhe em corrida de sessão,
     # registrar apenas códigos HTTP e estado visual fictício (sem token).
     respostas_link = []
