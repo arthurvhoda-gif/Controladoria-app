@@ -700,19 +700,24 @@ class HaizeNavegadorV70(unittest.TestCase):
 
     def test_26_falha_temporaria_usuarios_me_preserva_login_e_permite_reload(self):
         self.falha_temporaria_perfil = True
-        self.login("zelador@teste.local")
-        self.page.wait_for_function("""() =>
-            document.querySelector('.status-pill.offline') !== null""")
+        # Exercita HTTP 503 do perfil, não um status visual transitório:
+        # outras rotas podem recuperar a indicação Online em paralelo.
+        with self.page.expect_response(lambda resp:
+            resp.url.endswith('/usuarios/me') and resp.status == 503):
+            self.login("zelador@teste.local")
         expect(self.page.locator('.sidebar-nav')).to_be_visible()
         self.assertIn('token-ficticio-2',
                       self.page.evaluate("sessionStorage.getItem('usuarioControladoria')"))
-        self.page.reload(wait_until='domcontentloaded')
+        with self.page.expect_response(lambda resp:
+            resp.url.endswith('/usuarios/me') and resp.status == 503):
+            self.page.reload(wait_until='domcontentloaded')
         expect(self.page.locator('.sidebar-nav')).to_be_visible()
         expect(self.page.locator('.login-screen')).to_have_count(0)
         self.assertIn('token-ficticio-2',
                       self.page.evaluate("sessionStorage.getItem('usuarioControladoria')"))
         self.falha_temporaria_perfil = False
 
+    def test_01_login_e_termino_da_sessao(self):
         self.login()
         self.menu("Solicitações")
         expect(self.page.locator(".central-solicitacao-linha")).to_have_count(10)
