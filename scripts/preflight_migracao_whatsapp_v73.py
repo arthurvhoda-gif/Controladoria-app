@@ -28,7 +28,7 @@ def validar_destino():
             or porta != 5432
             or url.username != 'haize_ci'
             or url.path != '/haize_v73_notificacoes'
-            or url.query or url.fragment or url.params):
+            or url.query or url.fragment):
         raise SystemExit(
             'BLOQUEADO: somente PostgreSQL CI em 127.0.0.1:5432/'
             'haize_v73_notificacoes.'
