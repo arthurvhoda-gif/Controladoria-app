@@ -149,8 +149,36 @@ def homologar(pagina):
     expect(pagina.locator('.login-screen')).to_be_visible()
     login_tela(pagina, 'zelador.beta@teste.local')
     expect(pagina.locator('.notification-badge')).to_have_count(0)
+    # Instrumentação de CI: caso o feedback falhe em corrida de sessão,
+    # registrar apenas códigos HTTP e estado visual fictício (sem token).
+    respostas_link = []
+    def registrar_resposta_link(res):
+        if f'/servicos/{sid}' in res.url:
+            respostas_link.append({
+                'status': res.status, 'metodo': res.request.method,
+            })
+    pagina.on('response', registrar_resposta_link)
     pagina.goto(f'{FRONTEND}/?servico={sid}', wait_until='domcontentloaded')
-    expect(pagina.get_by_text('A tarefa do link não existe ou não está disponível para seu perfil.')).to_be_visible()
+    try:
+        expect(pagina.get_by_text(
+            'A tarefa do link não existe ou não está disponível para seu perfil.'
+        )).to_be_visible(timeout=11000)
+    except AssertionError:
+        estado_visual = pagina.evaluate("""() => ({
+            tela: location.pathname + location.search,
+            sessao_existente: !!sessionStorage.getItem('usuarioControladoria'),
+            central: !!document.querySelector('[aria-label="Central de Serviços"]'),
+            avisos: [...document.querySelectorAll('[role="alert"]')]
+                .map(e => e.innerText.slice(0, 250)),
+            carregando: [...document.querySelectorAll('[role="status"]')]
+                .map(e => e.innerText.slice(0, 140)).slice(0, 5),
+            titulos: [...document.querySelectorAll('h1,h2,h3')]
+                .map(e => e.innerText.slice(0, 90)).slice(0, 8)
+        })""")
+        print('DIAGNOSTICO LINK PROTEGIDO (DADOS FICTICIOS): ' +
+              json.dumps({'api': respostas_link, 'tela': estado_visual},
+                         ensure_ascii=False), flush=True)
+        raise
     expect(pagina.get_by_role('dialog', name=f'Serviço #{sid}')).to_have_count(0)
     print('REAL 3/5: outra conta nao acessa alerta nem link profundo.', flush=True)
 
