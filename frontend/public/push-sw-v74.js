@@ -2,6 +2,14 @@
  * Só atua quando houver assinatura e envio pelo servidor (não habilitados ainda).
  * O conteúdo da notificação é genérico para não expor informações na tela bloqueada.
  */
+// Diagnóstico sem conteúdo sensível: confirma se o aparelho executa o
+// receptor que entende o payload "haize-teste-v1".
+self.addEventListener('message', (event) => {
+  if (event.data?.tipo === 'haize-push-probe-v1' && event.ports?.[0]) {
+    event.ports[0].postMessage({ tipo: 'haize-push-probe-v1', versao: 'v74-t2' });
+  }
+});
+
 self.addEventListener('push', (event) => {
   let payload;
   try {

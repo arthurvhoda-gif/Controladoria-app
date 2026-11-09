@@ -29,6 +29,9 @@ export default defineConfig({
       // V7.4: evita servir um HTML de versão anterior quando há rede.
       // A API (em outra origem) não é armazenada pelo Service Worker.
       workbox: {
+        // Atualiza o receptor de push mesmo com o PWA aberto em segundo plano.
+        skipWaiting: true,
+        clientsClaim: true,
         cleanupOutdatedCaches: true,
         navigateFallback: null,
         globIgnores: ['**/index.html'],

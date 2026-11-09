@@ -1,5 +1,46 @@
 import { useEffect, useState } from 'react'
 
+const VERSAO_RECEPTOR = 'v74-t2'
+
+function consultarReceptor(worker) {
+  if (!worker) return Promise.resolve(false)
+  return new Promise(resolve => {
+    const canal = new MessageChannel()
+    let concluido = false
+    const encerrar = pronto => {
+      if (concluido) return
+      concluido = true
+      clearTimeout(limite)
+      canal.port1.close()
+      canal.port2.close()
+      resolve(pronto)
+    }
+    const limite = setTimeout(() => encerrar(false), 900)
+    canal.port1.onmessage = ({ data }) => encerrar(
+      data?.tipo === 'haize-push-probe-v1' && data?.versao === VERSAO_RECEPTOR
+    )
+    try {
+      worker.postMessage({ tipo: 'haize-push-probe-v1' }, [canal.port2])
+    } catch {
+      encerrar(false)
+    }
+  })
+}
+
+async function prepararReceptor() {
+  if (!('serviceWorker' in navigator) || !('MessageChannel' in window)) return false
+  const registro = await navigator.serviceWorker.ready
+  // A versão anterior descartava avisos de teste. Conferir a versão ativa
+  // antes de disparar novamente evita um falso positivo (aceito 2/2).
+  try { await registro.update() } catch { /* Pode estar temporariamente offline. */ }
+  for (let tentativa = 0; tentativa < 12; tentativa += 1) {
+    if (registro.waiting) registro.waiting.postMessage({ type: 'SKIP_WAITING' })
+    if (await consultarReceptor(registro.active)) return true
+    await new Promise(resolve => setTimeout(resolve, 350))
+  }
+  return false
+}
+
 // O prompt nativo do Android pode chegar antes de abrir o assistente.
 let conviteInstalacao = null
 if (typeof window !== 'undefined') {
@@ -36,6 +77,8 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
   const [carregando, setCarregando] = useState(true)
   const [ocupado, setOcupado] = useState(false)
   const [testando, setTestando] = useState(false)
+  const [checandoReceptor, setChecandoReceptor] = useState(true)
+  const [receptorAtual, setReceptorAtual] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [erro, setErro] = useState('')
   const [naTelaInicial, setNaTelaInicial] = useState(instalado)
@@ -67,6 +110,33 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
     carregar()
     return () => controller.abort()
   }, [apiUrl, token])
+
+  useEffect(() => {
+    let ativo = true
+    prepararReceptor().then(ok => {
+      if (ativo) setReceptorAtual(ok)
+    }).catch(() => {
+      if (ativo) setReceptorAtual(false)
+    }).finally(() => {
+      if (ativo) setChecandoReceptor(false)
+    })
+    return () => { ativo = false }
+  }, [])
+
+  async function verificarReceptor() {
+    setChecandoReceptor(true)
+    setErro('')
+    try {
+      const ok = await prepararReceptor()
+      setReceptorAtual(ok)
+      if (!ok) setErro('O receptor antigo ainda está ativo neste aparelho. Feche completamente o aplicativo, abra novamente e verifique outra vez.')
+    } catch {
+      setReceptorAtual(false)
+      setErro('Não foi possível atualizar o receptor. Confira a conexão com a internet e reabra o aplicativo.')
+    } finally {
+      setChecandoReceptor(false)
+    }
+  }
 
   async function instalar() {
     setErro('')
@@ -155,6 +225,9 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
     setFeedback('')
     setTestando(true)
     try {
+      const pronto = await prepararReceptor()
+      setReceptorAtual(pronto)
+      if (!pronto) throw new Error('Receptor ainda desatualizado neste celular. Verifique e reabra o aplicativo antes de enviar.')
       const resposta = await fetch(`${apiUrl}/push/teste`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
@@ -254,11 +327,18 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
           {config?.teste_disponivel && <div style={{ border: '1px solid #cbd5e1', borderRadius: 12, padding: 14 }}>
             <strong>4. Enviar notificação de teste</strong>
             <p style={{ margin: '8px 0', fontSize: 13, lineHeight: 1.5 }}>
-              Envia um aviso fictício somente aos seus dispositivos cadastrados.
-              Feche os aplicativos nos celulares antes de testar a entrega.
+              Primeiro confirme o receptor atualizado nos dois aparelhos.
+              Depois feche os aplicativos e envie um aviso fictício somente para sua conta.
             </p>
+            <p style={{ fontSize: 13, margin: '8px 0', color: receptorAtual ? '#047857' : '#854d0e' }}>
+              {checandoReceptor ? 'Conferindo e atualizando o receptor deste celular...' :
+                receptorAtual ? '✓ Receptor deste celular atualizado para notificações de teste.' :
+                  'Receptor ainda não confirmado neste celular.'}
+            </p>
+            <button type="button" onClick={verificarReceptor} disabled={checandoReceptor || ocupado || testando}
+              style={{ ...estiloAcao, marginBottom: 8 }}>Verificar receptor novamente</button>
             <button type="button" onClick={testarNotificacao}
-              disabled={ocupado || testando || !total} style={estiloAcao}>
+              disabled={ocupado || testando || checandoReceptor || !receptorAtual || !total} style={estiloAcao}>
               {testando ? 'Enviando teste...' : 'Enviar notificação de teste'}
             </button>
             <p style={{ margin: '8px 0 0', fontSize: 12, color: '#64748b' }}>
