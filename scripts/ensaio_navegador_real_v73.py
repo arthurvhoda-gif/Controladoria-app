@@ -263,6 +263,18 @@ def homologar_mobile(browser):
             visivel: document.documentElement.clientWidth,
             conteudo: document.documentElement.scrollWidth
         })""")
+        if largura['conteudo'] > largura['visivel'] + 2:
+            extrapolam = pagina.evaluate("""() => [...document.querySelectorAll('*')]
+                .map(el => {
+                  const r = el.getBoundingClientRect();
+                  return { tag: el.tagName, css: String(el.className).slice(0, 75),
+                           x: Math.round(r.left), direita: Math.round(r.right),
+                           largura: Math.round(r.width) };
+                })
+                .filter(r => r.direita > window.innerWidth + 2 || r.x < -2)
+                .sort((a,b) => b.direita - a.direita).slice(0, 14)""")
+            print('MOBILE DIAGNÓSTICO DE OVERFLOW: ' +
+                  json.dumps(extrapolam, ensure_ascii=False), flush=True)
         assert largura['conteudo'] <= largura['visivel'] + 2, largura
         assert not erros, erros
         print('MOBILE 4/4: link profundo, gaveta e viewport sem overflow.', flush=True)
