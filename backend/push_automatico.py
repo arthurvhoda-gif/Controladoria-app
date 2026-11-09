@@ -6,6 +6,7 @@ Tanto dispositivos quanto avisos passam por nova autorizacao no despacho.
 O processamento e oportunista apos commit; nao substituir por garantia
 de entrega em segundo plano sem gatilho cron gratuito e monitoramento.
 """
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -127,7 +128,7 @@ def processar_fila(limite=LIMITE_BATCH):
                             'endpoint': aparelho.endpoint,
                             'keys': {'p256dh': aparelho.p256dh, 'auth': aparelho.chave_auth},
                         },
-                        data=__import__('json').dumps({
+                        data=json.dumps({
                             'tipo': 'haize-servico-v1',
                             'servico_id': item.servico_id,
                             'evento_id': item.evento_id,

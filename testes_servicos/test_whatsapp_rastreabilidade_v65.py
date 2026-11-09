@@ -60,7 +60,8 @@ def carregar_funcoes():
         ServicoEvento=Evento, ServicoAviso=Aviso,
         FilaWhatsApp=Fila, PreferenciaWhatsApp=Pref,
     )
-    ctx = {'models': modelos, 'agora': lambda: 'instante-de-teste'}
+    ctx = {'models': modelos, 'agora': lambda: 'instante-de-teste',
+           'push_automatico': SimpleNamespace(enfileirar_aviso=lambda *_: 0)}
     exec(compile(modulo, str(ARQUIVO), 'exec'), ctx)
     return ctx
 
