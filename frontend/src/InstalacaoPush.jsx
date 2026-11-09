@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const VERSAO_RECEPTOR = 'v74-t2'
+const VERSAO_RECEPTOR = 'v74-t3'
 
 function consultarReceptor(worker) {
   if (!worker) return Promise.resolve(false)
@@ -77,6 +77,7 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
   const [carregando, setCarregando] = useState(true)
   const [ocupado, setOcupado] = useState(false)
   const [testando, setTestando] = useState(false)
+  const [diagnosticando, setDiagnosticando] = useState(false)
   const [checandoReceptor, setChecandoReceptor] = useState(true)
   const [receptorAtual, setReceptorAtual] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -220,6 +221,44 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
     }
   }
 
+  async function diagnosticarEsteAparelho() {
+    setErro('')
+    setFeedback('')
+    setDiagnosticando(true)
+    try {
+      if (!instalado() && ehIOS) {
+        throw new Error('Abra a Controladoria pelo ícone da tela inicial do iPhone, não pelo Safari.')
+      }
+      if (Notification.permission !== 'granted') {
+        throw new Error('A permissão de notificações não está concedida neste aparelho. Verifique Ajustes → Notificações.')
+      }
+      const registro = await navigator.serviceWorker.ready
+      const assinatura = await registro.pushManager.getSubscription()
+      if (!assinatura) {
+        throw new Error('Este aparelho não possui mais assinatura Web Push ativa. Toque em Ativar notificações neste aparelho para renovar o cadastro.')
+      }
+      const host = new URL(assinatura.endpoint).hostname
+      // Diagnóstico local: não utiliza o servidor, não envia dados e não cobra mensagens.
+      await registro.showNotification('Controladoria Haize — diagnóstico', {
+        body: 'Notificação local de teste. Não é uma tarefa real.',
+        tag: 'haize-diagnostico-local-' + Date.now(),
+        data: { destino: new URL('/', window.location.origin).href },
+      })
+      const ehApple = host === 'web.push.apple.com'
+      setFeedback(
+        'Permissão concedida e assinatura ativa ' +
+        (ehApple ? '(provedor Apple).' : '(provedor do navegador).') +
+        ' O sistema solicitou ao aparelho uma notificação LOCAL, sem passar pelo servidor. ' +
+        'Abra a Central de Notificações para conferir se ela apareceu. ' +
+        'Se não aparecer no iPhone, verifique Ajustes → Notificações → Controladoria e os modos de Foco.'
+      )
+    } catch (e) {
+      setErro(e.message || 'Falha no diagnóstico de notificações deste aparelho.')
+    } finally {
+      setDiagnosticando(false)
+    }
+  }
+
   async function testarNotificacao() {
     setErro('')
     setFeedback('')
@@ -338,12 +377,24 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
             <button type="button" onClick={verificarReceptor} disabled={checandoReceptor || ocupado || testando}
               style={{ ...estiloAcao, marginBottom: 8 }}>Verificar receptor novamente</button>
             <button type="button" onClick={testarNotificacao}
-              disabled={ocupado || testando || checandoReceptor || !receptorAtual || !total} style={estiloAcao}>
+              disabled={ocupado || testando || diagnosticando || checandoReceptor || !receptorAtual || !total} style={estiloAcao}>
               {testando ? 'Enviando teste...' : 'Enviar notificação de teste'}
             </button>
             <p style={{ margin: '8px 0 0', fontSize: 12, color: '#64748b' }}>
               Limite: um teste por minuto. O envio de tarefas reais permanece desativado.
             </p>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
+              <strong>Diagnóstico deste aparelho (sem envio remoto)</strong>
+              <p style={{ margin: '8px 0', fontSize: 13, lineHeight: 1.5 }}>
+                Confira a permissão e a assinatura deste celular e solicite uma notificação local.
+                Não envia nada ao outro aparelho.
+              </p>
+              <button type="button" onClick={diagnosticarEsteAparelho}
+                disabled={ocupado || testando || diagnosticando || checandoReceptor || !receptorAtual}
+                style={estiloAcao}>
+                {diagnosticando ? 'Verificando aparelho...' : 'Testar notificação local neste aparelho'}
+              </button>
+            </div>
           </div>}
           {config?.envios_ativos === false && <p style={{ fontSize: 12, color: '#854d0e', margin: 0 }}>
             Homologação: notificações automáticas de tarefas ainda não estão ativas.
