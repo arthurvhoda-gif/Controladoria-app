@@ -42,6 +42,7 @@ from servicos_api import router as servicos_router
 from usuarios_pendencias import contar_servicos_pendentes
 from whatsapp_alertas import router as whatsapp_router
 from financeiro_api import router as financeiro_router
+from push_api import router as push_router
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
@@ -50,6 +51,7 @@ app = FastAPI(title="Controladoria Haize API")
 app.include_router(servicos_router)
 app.include_router(whatsapp_router)
 app.include_router(financeiro_router)
+app.include_router(push_router)
 
 # A autenticação é validada no servidor, inclusive em downloads e fotografias.
 # OPTIONS é liberado para permitir o preflight do navegador (CORS).
@@ -110,6 +112,10 @@ def _permissao_rota(method: str, path: str, perfil: str) -> bool:
         return gestor
     if re.fullmatch(r'/avisos-whatsapp/fila/\d+/verificar', path) and method == 'POST':
         return gestor
+    if path == '/push/config' and method == 'GET':
+        return True  # autenticado, somente a propria configuracao
+    if path == '/push/dispositivos' and method in ('GET', 'POST', 'DELETE'):
+        return True  # dispositivo associado somente ao usuario da sessao
     if path == '/usuarios/me' and method == 'GET':
         return True
     if path == '/usuarios/me/senha' and method == 'PUT':
