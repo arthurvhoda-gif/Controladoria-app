@@ -294,3 +294,19 @@ class FinanceiroComprovante(Base):
     tamanho_bytes = Column(Integer, nullable=False)
     sha256 = Column(String(64), nullable=False)
     conteudo = Column(LargeBinary, nullable=False)
+
+
+# ========================================================================
+# V7.4 Web Push: assinaturas por aparelho e usuario (sem envios ativos).
+# Endpoints sao credenciais e nunca devem ser retornados por rotas de consulta.
+# ========================================================================
+class PushDispositivo(Base):
+    __tablename__ = 'push_dispositivos'
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id', ondelete='CASCADE'), nullable=False, index=True)
+    endpoint_sha256 = Column(String(64), nullable=False, unique=True, index=True)
+    endpoint = Column(String(2048), nullable=False)
+    p256dh = Column(String(180), nullable=False)
+    chave_auth = Column(String(60), nullable=False)
+    criado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    atualizado_em = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
