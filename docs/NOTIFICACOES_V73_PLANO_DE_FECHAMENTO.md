@@ -5,6 +5,19 @@
 e aprovadas na suíte automatizada; **homologação implantada não realizada**.
 A preparação WhatsApp continua SEM despachante real. Este marco não libera produção.
 
+**Preparação de liberação em 09/11/2026 (SEM alterar produção):**
+- Foi implementado um diagnóstico somente leitura de **dados agregados** no
+  PostgreSQL descartável da CI: grupos de telefone duplicado, total de
+  cadastros atingidos e integridade do índice. O script bloqueia bancos
+  remotos, não expõe números de telefone e não aplica migrações.
+- A migração V7.3 agora recusa, além das duplicidades, a existência de
+  índice de mesmo nome que **não** seja único, válido e aplicado à coluna
+  de telefone. Ensaios incluem reaplicação e índice deliberadamente inválido.
+- Documento operacional de preparação, homologação separada e rollback:
+  `docs/V73_LIBERACAO_CONTROLADA.md`.
+- A verificação da base real, a homologação em infraestrutura separada e
+  qualquer implantação de produção permanecem **pendentes**.
+
 **Homologação manual local em 07/11/2026 (confirmada pelo usuário):**
 - Demonstração iniciada com sucesso no Windows, com React + FastAPI e SQLite
   temporário, identificada visualmente como ambiente de dados fictícios.
@@ -129,6 +142,10 @@ A preparação WhatsApp continua SEM despachante real. Este marco não libera pr
 - [x] Teste da migração `v73_whatsapp_telefone_unico.sql` no PostgreSQL
       descartável: recusa bancos com duplicados sem alterar os dados;
       aplica UNIQUE após saneamento do cenário fictício.
+- [x] Pré-diagnóstico PostgreSQL somente leitura em dados sintéticos:
+      identifica duplicidades por contagem, reconhece índice correto,
+      recusa índice falso de mesmo nome e rejeita URLs externas.
+      A consulta NÃO foi executada contra o banco real.
 - [x] Prévia bloqueia telefones duplicados em base SQLite legada sem UNIQUE.
 - [x] Conferência transacional SOMENTE LEITURA, na mesma sessão DB, de
       identidade, consentimento, acesso atual, evento/ciclo, vigência e
