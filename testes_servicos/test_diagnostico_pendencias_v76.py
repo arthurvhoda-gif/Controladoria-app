@@ -24,7 +24,7 @@ class DiagnosticoPendenciasV76(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.raiz = Path(self.temp.name)
-        nomes = ["Condominio %d" % i for i in range(10)]
+        nomes = ["Condominio %d" % i for i in range(1, 11)]
         mapping = [linha(1, {"A": "Condominio", "B": "Arquivo"})]
         for indice, nome in enumerate(nomes, 1):
             filename = "ORIGEM%d.xlsm" % indice
