@@ -1,8 +1,8 @@
-"""V7.4: cadastro e teste MANUAL, sem notificacoes automaticas.
+"""V7.5: cadastro e teste manual, com configuracao de notificacoes automaticas.
 
 Somente contas autenticadas registram/revogam suas assinaturas.
 Os endpoints de push são credenciais do aparelho: nunca os devolva ao cliente,
-nem os escreva em logs. O envio real será implementado e revisado separadamente.
+nem os escreva em logs. O envio automatico possui protecao por flags separadas.
 """
 import base64
 import hashlib
@@ -104,13 +104,13 @@ def _usuario(request: Request, db: Session):
     return pessoa
 
 
-@router.get('/config')
 def _envios_automaticos_ativos():
     # Import tardio: push_automatico utiliza as validacoes de push_api.
     from push_automatico import despacho_habilitado
     return despacho_habilitado()
 
 
+@router.get('/config')
 def configuracao(request: Request, db: Session = Depends(sessao)):
     _usuario(request, db)
     publica = _chave_publica()

@@ -39,6 +39,27 @@ class PushDispositivosV74(unittest.TestCase):
             keys=push.ChavesPush(p256dh=P256DH, auth=AUTH),
         )
 
+    def test_rota_config_requer_configuracao_correta_e_indica_automaticos(self):
+        # A rota real precisa apontar ao endpoint autenticado, nao ao helper interno.
+        rotas = [rota for rota in push.router.routes
+                 if getattr(rota, 'path', None) == '/push/config'
+                 and 'GET' in getattr(rota, 'methods', set())]
+        self.assertEqual(len(rotas), 1)
+        self.assertIs(rotas[0].endpoint, push.configuracao)
+        self.assertFalse(push.configuracao(self.req(2), self.db)['envios_ativos'])
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'true',
+            'PUSH_TESTS_ENABLED': 'true',
+            'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32)),
+        }):
+            configuracao = push.configuracao(self.req(2), self.db)
+            self.assertTrue(configuracao['envios_ativos'])
+            self.assertTrue(configuracao['registro_disponivel'])
+            self.assertTrue(configuracao['teste_disponivel'])
+        with patch.dict(os.environ, {'PUSH_AUTO_DISPATCH_ENABLED': 'false'}):
+            self.assertFalse(push.configuracao(self.req(2), self.db)['envios_ativos'])
+
     def test_registro_e_listagem_sem_expor_token(self):
         self.assertTrue(push.configuracao(self.req(2), self.db)['registro_disponivel'])
         self.assertFalse(push.configuracao(self.req(2), self.db)['envios_ativos'])
