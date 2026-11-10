@@ -105,13 +105,19 @@ def _usuario(request: Request, db: Session):
 
 
 @router.get('/config')
+def _envios_automaticos_ativos():
+    # Import tardio: push_automatico utiliza as validacoes de push_api.
+    from push_automatico import despacho_habilitado
+    return despacho_habilitado()
+
+
 def configuracao(request: Request, db: Session = Depends(sessao)):
     _usuario(request, db)
     publica = _chave_publica()
     return {
         'registro_disponivel': bool(publica),
         'chave_publica': publica,
-        'envios_ativos': False,  # Notificacoes de eventos continuam desativadas.
+        'envios_ativos': _envios_automaticos_ativos(),  # Configuracao real da homologacao.
         'teste_disponivel': _modo_teste_habilitado(),
         'maximo_dispositivos': MAX_DISPOSITIVOS,
     }
