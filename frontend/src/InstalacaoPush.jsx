@@ -223,7 +223,9 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
       }
       const lista = await fetch(`${apiUrl}/push/dispositivos`, { headers: { Authorization: `Bearer ${token}` } })
       if (lista.ok) setTotal((await lista.json()).total)
-      setEstadoAtivacao('✓ Este aparelho está registrado para receber Web Push. O envio automático ainda está em preparação.')
+      setEstadoAtivacao(config?.envios_ativos
+        ? '✓ Este aparelho está registrado para receber notificações, inclusive avisos automáticos de tarefas.'
+        : '✓ Este aparelho está registrado para receber Web Push. As notificações automáticas estão desativadas neste ambiente.')
     } catch (e) {
       if (criadaAgora && assinatura) {
         await assinatura.unsubscribe().catch(() => {})
@@ -413,8 +415,11 @@ export default function InstalacaoPush({ apiUrl, token, onClose }) {
               </button>
             </div>
           </div>}
+          {config?.envios_ativos === true && <p role="status" style={{ fontSize: 12, color: '#047857', margin: 0 }}>
+            Notificações automáticas de tarefas ativas neste ambiente.
+          </p>}
           {config?.envios_ativos === false && <p style={{ fontSize: 12, color: '#854d0e', margin: 0 }}>
-            Homologação: notificações automáticas de tarefas ainda não estão ativas.
+            Notificações automáticas de tarefas desativadas neste ambiente.
           </p>}
           {erro && <p role="alert" style={{ color: '#b91c1c', fontSize: 13, margin: 0 }}>{erro}</p>}
           {feedback && <p role="status" style={{ color: '#047857', fontSize: 13, margin: 0 }}>{feedback}</p>}
