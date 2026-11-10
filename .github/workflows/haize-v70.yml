@@ -64,6 +64,9 @@ jobs:
       - name: Testar a compatibilidade e segurança das exportações Excel
         run: npm run test:exportacao
         working-directory: frontend
+      - name: Testar conciliacao local V7.6
+        run: node --test src/custosConsolidacao.test.mjs
+        working-directory: frontend
       - name: Compilar frontend
         run: npm run build
         working-directory: frontend
