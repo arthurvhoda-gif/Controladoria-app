@@ -1,14 +1,15 @@
-"""V7.5: Web Push de eventos de tarefas, com fila segura e gatilhos desligados.
+"""V7.5: Web Push de tarefas, fila segura e recuperacao oportunista.
 
-A fila somente e gravada quando PUSH_AUTO_QUEUE_ENABLED=true.
-Nenhum pedido HTTP externo e feito sem PUSH_AUTO_DISPATCH_ENABLED=true.
-Tanto dispositivos quanto avisos passam por nova autorizacao no despacho.
-O processamento e oportunista apos commit; nao substituir por garantia
-de entrega em segundo plano sem gatilho cron gratuito e monitoramento.
+Enfileiramento e despacho exigem flags independentes; ao despachar, usuario,
+condominio e dispositivo sao revalidados. Uma thread daemon recupera falhas
+a cada minuto enquanto a instancia esta ativa. Em hospedagem gratuita, uma
+instancia adormecida nao executa o recuperador: nao prometer entrega 24/7.
 """
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
+from threading import Event, Lock, Thread
 
 from pywebpush import webpush, WebPushException
 from sqlalchemy import and_, or_
@@ -26,6 +27,11 @@ TIPOS_PERMITIDOS = frozenset({
 LIMITE_BATCH = 10
 MAX_TENTATIVAS = 3
 ESPERA_RETRY = timedelta(minutes=2)
+INTERVALO_RECUPERACAO_SEGUNDOS = 60
+_RECUPERADOR_PARAR = Event()
+_RECUPERADOR_LOCK = Lock()
+_recuperador_thread = None
+logger = logging.getLogger('haize.push.recuperacao')
 
 
 def fila_habilitada():
@@ -153,3 +159,44 @@ def processar_fila(limite=LIMITE_BATCH):
             db.commit()
             resumo['processados'] += 1
     return resumo
+
+
+def _executar_recuperacao_periodica():
+    """Verifica fila existente, sem criar notificacoes nem expor assinaturas."""
+    if not despacho_habilitado():
+        return
+    try:
+        # Uma unica iteracao e limitada a 10 avisos (processar_fila).
+        processar_fila()
+    except Exception:
+        # Falha do banco/provedor nao deve derrubar a API ou vazar endpoints.
+        logger.warning('Falha ao recuperar fila Push; sera reavaliada no proximo ciclo.')
+
+
+def _ciclo_recuperacao():
+    """Primeiro ciclo no startup e, depois, a cada minuto enquanto vivo."""
+    while not _RECUPERADOR_PARAR.is_set():
+        _executar_recuperacao_periodica()
+        if _RECUPERADOR_PARAR.wait(INTERVALO_RECUPERACAO_SEGUNDOS):
+            break
+
+
+def iniciar_recuperador():
+    """Ativa somente se a fila e o despacho estiverem explicitamente ativos."""
+    global _recuperador_thread
+    if not despacho_habilitado():
+        return False
+    with _RECUPERADOR_LOCK:
+        if _recuperador_thread is not None and _recuperador_thread.is_alive():
+            return True
+        _RECUPERADOR_PARAR.clear()
+        _recuperador_thread = Thread(
+            target=_ciclo_recuperacao, name='haize-push-retry', daemon=True
+        )
+        _recuperador_thread.start()
+    return True
+
+
+def parar_recuperador():
+    """Permite encerramento limpo no shutdown, sem bloquear o servidor."""
+    _RECUPERADOR_PARAR.set()

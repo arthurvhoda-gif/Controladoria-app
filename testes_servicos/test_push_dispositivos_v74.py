@@ -234,6 +234,32 @@ class PushDispositivosV74(unittest.TestCase):
         self.assertEqual(self.db.query(base.models.PushAvisoFila).count(), 0)
 
 
+    def test_recuperador_permanente_desligado_sem_flags(self):
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'false',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+        }), patch.object(auto, 'Thread') as worker:
+            self.assertFalse(auto.iniciar_recuperador())
+            worker.assert_not_called()
+
+    def test_recuperador_periodico_sem_novo_evento_e_sem_duplicar(self):
+        with patch('push_automatico.despacho_habilitado', return_value=True), \
+             patch('push_automatico.processar_fila') as processar, \
+             patch.object(auto._RECUPERADOR_PARAR, 'is_set', side_effect=[False, False, True]), \
+             patch.object(auto._RECUPERADOR_PARAR, 'wait', side_effect=[False, False]):
+            auto._ciclo_recuperacao()
+            self.assertEqual(processar.call_count, 2)
+
+    def test_recuperador_reavalia_apos_falha_transitoria(self):
+        with patch('push_automatico.despacho_habilitado', return_value=True), \
+             patch('push_automatico.processar_fila', side_effect=[
+                OSError('falha ficticia de conexao'), {'aceitos': 1},
+             ]) as processar, \
+             patch.object(auto._RECUPERADOR_PARAR, 'is_set', side_effect=[False, False, True]), \
+             patch.object(auto._RECUPERADOR_PARAR, 'wait', side_effect=[False, False]):
+            auto._ciclo_recuperacao()
+            self.assertEqual(processar.call_count, 2)
+
     def test_despacho_automatico_de_tarefa_para_executor_e_fiscal_sem_beta(self):
         from datetime import date, timedelta
         import json

@@ -43,6 +43,7 @@ from usuarios_pendencias import contar_servicos_pendentes
 from whatsapp_alertas import router as whatsapp_router
 from financeiro_api import router as financeiro_router
 from push_api import router as push_router
+import push_automatico
 
 # Cria todas as tabelas caso ainda não existam
 models.Base.metadata.create_all(bind=engine)
@@ -345,6 +346,14 @@ def startup_event():
     auth_utils.get_secret()  # Fail closed: Render precisa ter AUTH_SECRET_KEY configurada.
     executar_migracoes_automaticas()
     criar_usuarios_iniciais()
+    # Reconcilia falhas antigas quando a instancia gratuita acorda e permanece ativa.
+    # Desligado por padrao; producao nao inicia worker sem configuracao explicita.
+    push_automatico.iniciar_recuperador()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    push_automatico.parar_recuperador()
 
 
 # =========================================================================
