@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { lerResumo, resumoGeral, moeda } from './custosConsolidacao'
+import { lerDivergenciasCsv, resumoPorTipo, tituloTipo } from './divergenciasCustos'
 import './PainelCustosLocal.css'
 
 export default function PainelCustosLocal() {
@@ -9,7 +10,16 @@ export default function PainelCustosLocal() {
   const [filtro, setFiltro] = useState('todos')
   const [busca, setBusca] = useState('')
   const [carregando, setCarregando] = useState(false)
+  const [detalhes, setDetalhes] = useState(null)
+  const [nomeDetalhes, setNomeDetalhes] = useState('')
+  const [tipoSelecionado, setTipoSelecionado] = useState('todos')
+  const [mostrarIdentificadores, setMostrarIdentificadores] = useState(false)
+  const [carregandoDetalhes, setCarregandoDetalhes] = useState(false)
   const resumo = useMemo(() => linhas ? resumoGeral(linhas) : null, [linhas])
+  const tipos = useMemo(() => detalhes ? resumoPorTipo(detalhes.divergencias) : [], [detalhes])
+  const detalhesVisiveis = (detalhes?.divergencias || []).filter(item =>
+    (tipoSelecionado === 'todos' || item.tipo === tipoSelecionado) &&
+    (nomeDetalhes === 'todos' || item.condominio === nomeDetalhes))
   const visiveis = (linhas || []).filter(r =>
     r.nome.toLocaleLowerCase('pt-BR').includes(busca.toLocaleLowerCase('pt-BR')) &&
     (filtro === 'todos' || (filtro === 'pendente' && r.divergencias > 0) ||
@@ -26,6 +36,10 @@ export default function PainelCustosLocal() {
       const texto = await file.text()
       setLinhas(lerResumo(texto))
       setArquivo(file.name)
+      setDetalhes(null)
+      setNomeDetalhes('')
+      setTipoSelecionado('todos')
+      setMostrarIdentificadores(false)
       setFiltro('todos')
       setBusca('')
     } catch (e) {
@@ -34,8 +48,32 @@ export default function PainelCustosLocal() {
       setCarregando(false)
     }
   }
+  async function carregarDetalhes(evento) {
+    const file = evento.target.files?.[0]
+    evento.target.value = ''
+    if (!file || !linhas) return
+    setCarregandoDetalhes(true)
+    setErro('')
+    try {
+      if (file.name !== 'divergencias.csv' || file.size > 2_000_000) {
+        throw new Error('Selecione divergencias.csv, com até 2 MB.')
+      }
+      const texto = await file.text()
+      const validado = lerDivergenciasCsv(texto, linhas)
+      setDetalhes(validado)
+      setNomeDetalhes('todos')
+      setTipoSelecionado('todos')
+      setMostrarIdentificadores(false)
+    } catch (e) {
+      setDetalhes(null)
+      setErro(e instanceof Error ? e.message : 'Não foi possível conferir o relatório detalhado.')
+    } finally {
+      setCarregandoDetalhes(false)
+    }
+  }
   function limpar() {
     setLinhas(null); setArquivo(''); setErro(''); setFiltro('todos'); setBusca('')
+    setDetalhes(null); setNomeDetalhes(''); setTipoSelecionado('todos'); setMostrarIdentificadores(false)
   }
   return <section className="hc-painel" aria-label="Conciliação local de custos">
     <div className="hc-hero">
@@ -92,6 +130,50 @@ export default function PainelCustosLocal() {
           {visiveis.length === 0 && <p className="hc-sem">Nenhum condomínio corresponde aos filtros.</p>}
         </div>
       </div>
+      <section className="hc-detalhes" aria-label="Revisão das divergências">
+        <div className="hc-detalhes-cabecalho">
+          <div>
+            <h3>Conferência das divergências</h3>
+            <p>Para visualizar os tipos de alerta e localizar as pendências, escolha o arquivo detalhado da mesma auditoria.</p>
+            <p>O arquivo é lido somente nesta página, sem upload. Não corrige planilhas e não gera lançamentos.</p>
+          </div>
+          <label className="hc-detalhes-seletor">
+            Selecionar divergencias.csv
+            <input type="file" accept=".csv,text/csv" onChange={carregarDetalhes} disabled={carregandoDetalhes} />
+          </label>
+        </div>
+        {detalhes && <>
+          <p className="hc-status" role="status">{detalhes.divergencias.length} ocorrências conferidas com o resumo. {detalhes.semCorrespondencia > 0 ? detalhes.semCorrespondencia + ' fora dos condomínios do resumo.' : 'Nenhuma ocorrência fora dos condomínios do resumo.'}</p>
+          <div className="hc-tipologia">
+            {tipos.map(item => <div key={item.tipo}>
+              <strong>{item.quantidade}</strong><span>{tituloTipo(item.tipo)}</span>
+            </div>)}
+          </div>
+          <div className="hc-filtros hc-filtros-detalhes">
+            <div><h3>Ocorrências</h3><p>Confirme as diferenças na planilha de origem antes de qualquer consolidação.</p></div>
+            <label>Condomínio <select value={nomeDetalhes} onChange={e => setNomeDetalhes(e.target.value)}>
+              <option value="todos">Todos</option>
+              {Array.from(new Set(detalhes.divergencias.map(item => item.condominio))).sort((a,b)=>a.localeCompare(b,'pt-BR')).map(nome => <option key={nome} value={nome}>{nome}</option>)}
+            </select></label>
+            <label>Tipo de ocorrência <select value={tipoSelecionado} onChange={e => setTipoSelecionado(e.target.value)}>
+              <option value="todos">Todos os tipos</option>
+              {tipos.map(item => <option key={item.tipo} value={item.tipo}>{tituloTipo(item.tipo)}</option>)}
+            </select></label>
+          </div>
+          <label className="hc-opcao-ids">
+            <input type="checkbox" checked={mostrarIdentificadores} onChange={e => setMostrarIdentificadores(e.target.checked)} />
+            Exibir identificadores e observações dos lançamentos (informações financeiras locais)
+          </label>
+          <div className="hc-scroll"><table><thead><tr>
+            <th>Condomínio</th><th>Tipo</th>{mostrarIdentificadores && <><th>ID de origem</th><th>Observação</th></>}
+          </tr></thead><tbody>{detalhesVisiveis.map((item,i) => <tr key={item.tipo + '-' + item.condominio + '-' + item.id + '-' + i}>
+            <th scope="row">{item.condominio}</th><td>{tituloTipo(item.tipo)}</td>
+            {mostrarIdentificadores && <><td>{item.id || '—'}</td><td>{item.mensagem}</td></>}
+          </tr>)}</tbody></table>
+          {!detalhesVisiveis.length && <p className="hc-sem">Nenhuma ocorrência nos filtros selecionados.</p>}
+          </div>
+        </>}
+      </section>
       <p className="hc-nota">A diferença entre os totais não representa economia e não prova ausência de lançamentos duplicados. Não corrija ou importe os dados sem conferência.</p>
     </>}
   </section>
