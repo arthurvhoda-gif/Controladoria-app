@@ -212,5 +212,103 @@ class PushDispositivosV74(unittest.TestCase):
             self.db.rollback()
         self.assertEqual(self.db.query(base.models.PushAvisoFila).count(), 0)
 
+
+    def test_despacho_automatico_de_tarefa_para_executor_e_fiscal_sem_beta(self):
+        from datetime import date, timedelta
+        import json
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)  # Android Alfa
+        push.registrar(self.dados(2, host='web.push.apple.com'), self.req(1), self.db)  # iPhone Gestora
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+            'PUSH_TESTS_ENABLED': 'true',
+            'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32)),
+        }):
+            tarefa = criar(ServicoNovo(
+                condominio_id=1, executores_ids=[2], fiscalizadores_ids=[1],
+                titulo='Inspecionar portao de testes',
+                descricao='Validacao de evento de tarefa no ambiente ficticio.',
+                prazo=date.today() + timedelta(days=2),
+            ), self.req(1), self.db)
+            self.assertEqual(self.db.query(base.models.PushAvisoFila).count(), 2)
+            with patch.dict(os.environ, {'PUSH_AUTO_DISPATCH_ENABLED': 'true'}):
+                with patch.object(auto, 'SessionLocal', base.fixture.stub.SessionLocal), \
+                     patch('push_automatico.webpush') as enviar:
+                    resultado = auto.processar_fila()
+                    self.assertEqual(resultado['processados'], 2)
+                    self.assertEqual(resultado['aceitos'], 2)
+                    self.assertEqual(enviar.call_count, 2)
+                    payloads = [json.loads(x.kwargs['data']) for x in enviar.call_args_list]
+                    self.assertEqual({x['tipo'] for x in payloads}, {'haize-servico-v1'})
+                    self.assertEqual({x['servico_id'] for x in payloads}, {tarefa['id']})
+                    self.assertEqual(len({x['evento_id'] for x in payloads}), 1)
+                    destinos = [x.kwargs['subscription_info']['endpoint'] for x in enviar.call_args_list]
+                    self.assertTrue(any('fcm.googleapis.com' in x for x in destinos))
+                    self.assertTrue(any('web.push.apple.com' in x for x in destinos))
+                    self.assertTrue(all('subscricao-ficticia-0003' not in x for x in destinos))
+                    self.assertEqual(auto.processar_fila()['processados'], 0)
+                    self.assertEqual(enviar.call_count, 2)
+            self.assertEqual({x.status for x in self.db.query(base.models.PushAvisoFila).all()}, {'aceito'})
+
+    def test_despacho_descarta_aviso_se_usuario_mudou_de_condominio(self):
+        from datetime import date, timedelta
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+            'PUSH_TESTS_ENABLED': 'true',
+            'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32)),
+        }):
+            criar(ServicoNovo(
+                condominio_id=1, executores_ids=[2],
+                titulo='Inspecionar portao de testes',
+                descricao='Validacao de evento de tarefa no ambiente ficticio.',
+                prazo=date.today() + timedelta(days=2),
+            ), self.req(1), self.db)
+            self.db.get(base.models.Usuario, 2).condominio_id = 2
+            self.db.commit()
+            with patch.dict(os.environ, {'PUSH_AUTO_DISPATCH_ENABLED': 'true'}):
+                with patch.object(auto, 'SessionLocal', base.fixture.stub.SessionLocal), \
+                     patch('push_automatico.webpush') as enviar:
+                    resultado = auto.processar_fila()
+                    self.assertEqual(resultado['processados'], 1)
+                    self.assertEqual(resultado['descartados'], 1)
+                    enviar.assert_not_called()
+            self.assertEqual(self.db.query(base.models.PushAvisoFila).first().status, 'descartado')
+
+    def test_despacho_falha_controlada_sem_duplicar_e_reenvia_apos_intervalo(self):
+        from datetime import date, timedelta, datetime, timezone
+        from servicos_api import ServicoNovo, criar
+        push.registrar(self.dados(1), self.req(2), self.db)
+        with patch.dict(os.environ, {
+            'PUSH_AUTO_QUEUE_ENABLED': 'true',
+            'PUSH_AUTO_DISPATCH_ENABLED': 'false',
+            'PUSH_TESTS_ENABLED': 'true',
+            'VAPID_PRIVATE_KEY': url_key(bytes([9] * 32)),
+        }):
+            criar(ServicoNovo(
+                condominio_id=1, executores_ids=[2],
+                titulo='Inspecionar portao de testes',
+                descricao='Validacao de evento de tarefa no ambiente ficticio.',
+                prazo=date.today() + timedelta(days=2),
+            ), self.req(1), self.db)
+            with patch.dict(os.environ, {'PUSH_AUTO_DISPATCH_ENABLED': 'true'}):
+                with patch.object(auto, 'SessionLocal', base.fixture.stub.SessionLocal), \
+                     patch('push_automatico.webpush', side_effect=TimeoutError('ficticio')):
+                    resultado = auto.processar_fila()
+                    self.assertEqual(resultado['falhas'], 1)
+                    self.assertEqual(auto.processar_fila()['processados'], 0)
+                item = self.db.query(base.models.PushAvisoFila).first()
+                self.assertEqual(item.tentativas, 1)
+                item.atualizado_em = datetime(2020, 1, 1, tzinfo=timezone.utc)
+                self.db.commit()
+                with patch.object(auto, 'SessionLocal', base.fixture.stub.SessionLocal), \
+                     patch('push_automatico.webpush') as enviar:
+                    resultado = auto.processar_fila()
+                    self.assertEqual(resultado['aceitos'], 1)
+                    self.assertEqual(enviar.call_count, 1)
+
 if __name__ == '__main__':
     unittest.main()
