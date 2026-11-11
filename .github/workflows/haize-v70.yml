@@ -8,6 +8,7 @@ on:
       - trabalho-v72-local
       - notificacoes-v73-20261107
       - push-pwa-v74-20261109
+      - inteligencia-custos-v77-20261111
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
