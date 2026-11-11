@@ -110,7 +110,9 @@ class ValidacaoCustoV77(unittest.TestCase):
         ]
         for caso in invalidos:
             with self.subTest(caso=str(caso)), self.assertRaises(ErroValidacaoCustos):
-                validar_lote([ficticio(), ficticio(id="novo", **caso)], MAPA)
+                invalido = ficticio(id="novo")
+                invalido.update(caso)
+                validar_lote([ficticio(), invalido], MAPA)
 
     def test_valores_negativos_preservados_sem_inferir_reembolso(self):
         reg = validar_lote([ficticio(valor="-21.12")], MAPA)[0]

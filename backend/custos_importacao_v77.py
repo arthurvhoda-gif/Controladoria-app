@@ -205,9 +205,10 @@ def montar_previa(validados, existentes, *, cobertura_completa=False):
     faltantes = 0
     if cobertura_completa:
         abrangidos = {(r.condominio_id, r.origem) for r in validados}
+        conjunto_chaves = set(chaves)
         faltantes = sum(
             1 for chave in existentes
-            if (chave[0], chave[1]) in abrangidos and chave not in set(chaves)
+            if (chave[0], chave[1]) in abrangidos and chave not in conjunto_chaves
         )
     return PreviaImportacao(
         novos=novos, alterados=alterados, inalterados=inalterados,
