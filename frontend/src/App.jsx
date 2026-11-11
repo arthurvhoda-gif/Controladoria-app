@@ -10,6 +10,7 @@ import GestaoContatosWhatsApp from './GestaoContatosWhatsApp'
 import InstalacaoPush from './InstalacaoPush'
 import CentralFinanceira from './CentralFinanceira'
 import PainelCustosLocal from './PainelCustosLocal'
+import HaizeIntelligence from './HaizeIntelligence'
 
 const API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
 const DEMO_LOCAL_V73 = import.meta.env.VITE_HAIZE_DEMO_V73 === '1'
@@ -2655,6 +2656,18 @@ function App() {
                 <button className={pagina === 'custos' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('custos'); setSidebarAberta(false); }}>
                   <span className="nav-icon"><IconeHaize nome="analyses" /></span><span>Conciliação de Custos</span>
                 </button>
+                <button
+  className={pagina === 'intelligence' ? 'nav-item active' : 'nav-item'}
+  onClick={() => {
+    setPagina('intelligence')
+    setSidebarAberta(false)
+  }}
+>
+  <span className="nav-icon">
+    <IconeHaize nome="analyses" />
+  </span>
+  <span>HAIZE INTELLIGENCE</span>
+</button>
               </>}
               <button className={pagina === 'solicitacoes' ? 'nav-item active' : 'nav-item'} onClick={() => { setPagina('solicitacoes'); setSidebarAberta(false); }}>
                 <span className="nav-icon"><IconeHaize nome="requests" /></span><span>Solicitações</span>
@@ -2870,6 +2883,11 @@ function App() {
           <div className="page">
             <PainelCustosLocal />
           </div>
+        )}
+        {ehControladoria && pagina === 'intelligence' && (
+  <div className="page">
+    <HaizeIntelligence />
+  </div>
         )}
 
         {(ehControladoria || ehFinanceiro) && pagina === 'financeiro' && (
