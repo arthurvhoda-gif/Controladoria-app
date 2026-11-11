@@ -100,7 +100,7 @@ jobs:
       - name: Instalar Chromium e driver Python
         run: |
           python -m pip install "playwright==1.56.0"
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromiumm
       - name: Exercitar telas com API totalmente simulada
         env:
           CI: 'true'
