@@ -51,7 +51,14 @@ def _verificar_ambiente(sessao):
             "Sessão de banco inválida."
         )
 
+    
+    if sessao.new or sessao.dirty or sessao.deleted:
+        raise ErroFonteIntelligence(
+            "Sessao possui alteracoes pendentes."
+        )
+
     bind = sessao.get_bind()
+
 
     if (
         bind.dialect.name != "sqlite"
