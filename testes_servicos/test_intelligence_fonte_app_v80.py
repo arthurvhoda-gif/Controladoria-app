@@ -64,10 +64,10 @@ class TestFonteAppV80(unittest.TestCase):
     def test_configuracao_tls(self):
         with tempfile.TemporaryDirectory() as d:
             ca=Path(d)/'ca.crt'; ca.touch()
-            cfg=validar_conexao('postgresql://haize_intelligence_ro:fake@ep-teste.neon.tech/teste','ep-teste.neon.tech','teste',ca)
+            cfg=validar_conexao('postgresql://haize_intelligence_v80_ro:fake@ep-teste.neon.tech/teste','ep-teste.neon.tech','teste',ca)
             self.assertEqual(cfg['sslmode'],'verify-full'); self.assertEqual(cfg['sslrootcert'],str(ca.resolve()))
     def test_uri_admin_ou_parametros(self):
-        for url in ('postgresql://admin:fake@ep-teste.neon.tech/teste','postgresql://haize_intelligence_ro:fake@ep-teste.neon.tech/teste?sslmode=disable','postgresql://haize_intelligence_ro:fake@outro.neon.tech/teste'):
+        for url in ('postgresql://admin:fake@ep-teste.neon.tech/teste','postgresql://haize_intelligence_v80_ro:fake@ep-teste.neon.tech/teste?sslmode=disable','postgresql://haize_intelligence_v80_ro:fake@outro.neon.tech/teste'):
             with self.subTest(url=url), self.assertRaisesRegex(ErroFonteApp,'CONFIGURACAO'): validar_conexao(url,'ep-teste.neon.tech','teste','ca')
 
 if __name__=='__main__': unittest.main()

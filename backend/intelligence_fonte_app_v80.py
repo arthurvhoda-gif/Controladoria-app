@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qsl
 
-ROLE = 'haize_intelligence_ro'
+ROLE = 'haize_intelligence_v80_ro'
 # Consultas fixas: nenhuma interpolação de valores recebidos do usuário.
 PROJECOES = (
     ('condominios', 'condominios', ('id','nome'), 1000),
