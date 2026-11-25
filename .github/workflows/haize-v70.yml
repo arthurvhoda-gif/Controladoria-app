@@ -9,6 +9,7 @@ on:
       - notificacoes-v73-20261107
       - push-pwa-v74-20261109
       - inteligencia-custos-v77-20261111
+      - haize-intelligence-motor-v78-20261124
   pull_request:
     branches:
       - central-servicos-notificacoes-2026
