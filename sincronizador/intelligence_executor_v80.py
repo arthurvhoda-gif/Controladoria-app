@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Homologacao em comando unico. Leitura de planilhas e Neon ficticio. Sem envio."""
 import argparse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import importlib.util
 import getpass
 import hashlib
 import json
@@ -17,6 +18,7 @@ sys.path.insert(0,str(REPO/'backend'))
 from intelligence_executor_v80 import executar_ciclo_v80
 from intelligence_fonte_app_v80 import carregar_app_v80, ROLE, ErroFonteApp
 from intelligence_auditoria_v80 import ErroAuditoria, exigir
+from intelligence_cobertura_ciclo_v80 import conferir_cobertura, linhas_cobertura
 
 HOST='ep-royal-union-acmuwc5a.sa-east-1.aws.neon.tech'
 BANCO='neondb'
@@ -48,15 +50,26 @@ def extrair_local(pasta):
     return dados,agenda,nomes,sem_aba,manifesto
 
 
+def extrair_local_com_cobertura(pasta):
+    dados,agenda,nomes,sem_aba,manifesto=extrair_local(pasta)
+    spec=importlib.util.spec_from_file_location('_haize_cli_cobertura',REPO/'sincronizador'/'intelligence_cobertura_v80.py')
+    mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    cobertura=conferir_cobertura(mod.extrair(pasta),manifesto,nomes,dados,date.today())
+    return dados,agenda,nomes,sem_aba,manifesto,cobertura
+
+
 def serializar(x):
     return json.dumps(x,ensure_ascii=False,sort_keys=True,allow_nan=False,indent=2).encode('utf-8')
 
 
-def publicar(raiz,r,snapshot,manifesto):
+def publicar(raiz,r,snapshot,manifesto,cobertura=None):
     exigir(r['estado']=='APROVADO_HOMOLOGACAO_MISTA','PUBLICACAO_NAO_AUTORIZADA')
     run=uuid.uuid4().hex; utc=datetime.now(timezone.utc).isoformat()
     snap=serializar(snapshot); c=r['central']; p=r['carteira']; a=r['auditoria_local']; b=r['auditoria_app']
     r.update(execucao=run,utc=utc,manifesto_planilhas=manifesto,sha256_snapshot_app=hashlib.sha256(snap).hexdigest())
+    if cobertura is not None:
+        exigir(cobertura['referencia']==c['data_referencia'],'COBERTURA_REFERENCIA_CICLO')
+        r['cobertura_financeira']=cobertura
     local=r['local_para_memoria']; local.update(manifesto,execucao=run,utc=utc,nomes_locais=r['nomes_locais'])
     linhas=['HAIZE INTELLIGENCE V8.0 | HOMOLOGACAO PRIVADA','PLANILHAS REAIS (SIMULACAO); NEON FICTICIO; SEM ENVIO',f'Referencia: {c["data_referencia"]} | Competencia historica: {c["competencia"]}',
             'Fontes: '+', '.join(f'{k}={v}' for k,v in c['fontes'].items()),
@@ -68,6 +81,7 @@ def publicar(raiz,r,snapshot,manifesto):
         linhas.append(f'P{g["prioridade"]} | {"PLANILHAS REAIS - SIMULACAO" if origem=="planilhas" else "APP FICTICIO"} | {nomes.get(g["condominio_id"],"Sem vinculo / multiconominio")} | {g["tema"]}')
         for d in g['acoes']: linhas.append(f'  P{d["prioridade"]} {d["chave"]}: {d["fato"]} | {d["acao"]}')
         linhas.append('')
+    if cobertura is not None: linhas.extend(linhas_cobertura(cobertura))
     linhas.extend(['LIMITES',*r['limites'],'Nenhuma economia comprovada. Fila integral no JSON.','CONFIDENCIAL.'])
     raiz.mkdir(parents=True,exist_ok=True)
     tmp=Path(tempfile.mkdtemp(prefix='.ciclo-',dir=raiz)); destino=raiz/('ciclo_'+run)
@@ -76,6 +90,7 @@ def publicar(raiz,r,snapshot,manifesto):
         (tmp/'CICLO_AUDITADO.json').write_bytes(serializar(r))
         (tmp/'SNAPSHOT_APP_FICTICIO.json').write_bytes(snap)
         (tmp/'EVIDENCIAS_CENTRAL.json').write_bytes(serializar(local))
+        if cobertura is not None: (tmp/'COBERTURA_FINANCEIRA.json').write_bytes(serializar(cobertura))
         tmp.rename(destino)
     except BaseException:
         shutil.rmtree(tmp,ignore_errors=True); raise
@@ -92,19 +107,19 @@ def main():
         exigir(ROLE=='haize_intelligence_v80_ro','CONECTOR_DESATUALIZADO')
         pasta=a.planilhas.resolve(strict=True); raiz=(Path.home()/'Documents'/'HAIZE_INTELLIGENCE_V80_PRIVADA').resolve()
         exigir(not raiz.is_relative_to(REPO) and not raiz.is_relative_to(pasta) and not pasta.is_relative_to(raiz),'PASTA_PRIVADA_INVALIDA')
-        etapa='extracao_planilhas'; dados,agenda,nomes,sem_aba,manifesto=extrair_local(pasta)
+        etapa='extracao_planilhas'; dados,agenda,nomes,sem_aba,manifesto,cobertura=extrair_local_com_cobertura(pasta)
         etapa='extracao_app'; print('Destino exclusivo de homologacao:',HOST)
         senha=getpass.getpass('Senha exclusiva da Intelligence: ')
         dsn='postgresql://'+ROLE+':'+quote(senha,safe='')+'@'+HOST+'/'+BANCO
         try: snapshot=carregar_app_v80(dsn=dsn,host=HOST,banco=BANCO,ca=certifi.where())
         finally: del senha,dsn
         etapa='investigacao_e_auditorias'; r=executar_ciclo_v80(registros=dados,agenda=agenda,nomes=nomes,sem_aba=sem_aba,competencia=a.competencia,snapshot=snapshot)
-        etapa='publicacao_local'; destino=publicar(raiz,r,snapshot,manifesto)
+        etapa='publicacao_local'; destino=publicar(raiz,r,snapshot,manifesto,cobertura)
         print(r['estado']); print('Lancamentos historicos:',len(dados)); print('Linhas agenda:',len(agenda))
         print('Auditoria local:',r['auditoria_local']['estado']); print('Auditoria app:',r['auditoria_app']['estado'])
         print('Decisoes planilhas:',r['auditoria_local']['decisoes']); print('Decisoes app FICTICIO:',r['auditoria_app']['decisoes'])
         print('Grupos executivos:',len(r['carteira']['executivo'])); print('Grupos na fila:',len(r['carteira']['fila']))
-        print('SEM ENVIO - HOMOLOGACAO MISTA'); print('Pasta privada:',destino); return 0
+        print('Cobertura financeira: OK -',len(cobertura['candidatos_duplicidade']),'grupos candidatos a duplicidade'); print('SEM ENVIO - HOMOLOGACAO MISTA'); print('Pasta privada:',destino); return 0
     except (ErroFonteApp,ErroAuditoria) as e:
         print('CICLO BLOQUEADO:',etapa,str(e),file=sys.stderr)
     except Exception as e:

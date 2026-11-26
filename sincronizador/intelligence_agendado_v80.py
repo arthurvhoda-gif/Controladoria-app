@@ -93,7 +93,7 @@ def executar(competencia):
         dia=date.today()
         def produzir(stage):
             nonlocal etapa
-            etapa='extracao_local'; dados,agenda,nomes,sem_aba,manifesto=cli.extrair_local(pasta.resolve(strict=True))
+            etapa='extracao_local'; dados,agenda,nomes,sem_aba,manifesto,cobertura=cli.extrair_local_com_cobertura(pasta.resolve(strict=True))
             etapa='credencial'; p=arquivo_credencial()
             exigir(p.is_file() and not p.is_symlink() and p.stat().st_size<=65536,'CREDENCIAL_INDISPONIVEL')
             senha=dpapi(p.read_bytes(),False).decode('utf-8')
@@ -102,7 +102,7 @@ def executar(competencia):
             finally: del senha
             exigir(s['data_referencia']==dia.isoformat(),'DIA_WINDOWS_DIVERGENTE_DO_NEON')
             etapa='auditorias'; r=cli.executar_ciclo_v80(registros=dados,agenda=agenda,nomes=nomes,sem_aba=sem_aba,competencia=competencia,snapshot=s)
-            etapa='publicacao_staging'; return cli.publicar(stage,r,s,manifesto)
+            etapa='publicacao_staging'; return cli.publicar(stage,r,s,manifesto,cobertura)
         def memorizar(raiz,run):
             nonlocal etapa
             etapa='memoria'; return mem.registrar_pasta(raiz,run)
