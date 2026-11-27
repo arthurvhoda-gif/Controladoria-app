@@ -224,15 +224,10 @@ class HaizeNavegadorV70(unittest.TestCase):
             elif self.detalhe_servico_revogado:
                 status, resposta = 404, {"detail": "Serviço não encontrado."}
             else:
-                resposta = {
-                    "id": 17, "titulo": "Verificar iluminação fictícia",
-                    "descricao": "Conferência de teste da iluminação comum",
-                    "condominio": "Condomínio Fictício A", "prioridade": "Normal",
-                    "prazo": "2026-12-05", "status": "Aguardando ciência",
-                    "criador": "Gestora Teste", "responsavel": "Zelador Teste",
-                    "atrasado": False, "executores": [], "fiscalizadores": [],
-                    "acoes_disponiveis": [],
-                }
+                resposta = next((item for item in self.servicos_ficticios
+                                 if item["id"] == 17), None)
+                if resposta is None:
+                    status, resposta = 404, {"detail": "Serviço não encontrado."}
         elif caminho in ("/servicos/17/historico", "/servicos/17/fotos",
                            "/servicos/18/historico", "/servicos/18/fotos"):
             resposta = []
@@ -334,6 +329,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.page.locator(".sidebar-nav").get_by_role("button", name=nome, exact=False).click()
 
     def test_08_aviso_de_tarefa_no_sino_global_abre_detalhe_e_confirma_leitura(self):
+        self.preparar_servico_listado()
         self.avisos_servicos_ficticios = [{
             "id": 501, "servico_id": 17,
             "mensagem": "Nova tarefa para executar: Verificar iluminação fictícia",
@@ -355,6 +351,8 @@ class HaizeNavegadorV70(unittest.TestCase):
         self.assertEqual(self.leituras_avisos_ficticios, [501])
 
     def test_09_servico_atrasado_no_sino_sem_criar_aviso_de_whatsapp(self):
+        self.preparar_servico_listado()
+        self.servicos_ficticios[0].update(atrasado=True, prazo="2026-10-30")
         self.atrasos_servicos_ficticios = [{
             "servico_id": 17, "titulo": "Verificar iluminação fictícia",
             "condominio": "Condomínio Fictício A", "prazo": "2026-10-30",
@@ -586,6 +584,7 @@ class HaizeNavegadorV70(unittest.TestCase):
         expect(self.page.locator(".hs-v4-taskrow")).to_have_count(0)
 
     def test_20_link_temporariamente_indisponivel_pode_ser_retentado(self):
+        self.preparar_servico_listado()
         self.link_servico_indisponivel = True
         self.login("zelador@teste.local", "?servico=17")
         expect(self.page.get_by_text(
