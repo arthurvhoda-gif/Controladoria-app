@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, load_only
 
 import models
 from database import SessionLocal
+from indicadores_financeiros_v80 import FORMAS, indicadores_pagamento
 
 router = APIRouter(prefix='/financeiro', tags=['Central Financeira'])
 MAX_COMPROVANTE = 5 * 1024 * 1024
@@ -97,7 +98,7 @@ def serializar_resumo(sol, totais):
     pago = totais.get('pagamentos', 0) - totais.get('estornos', 0)
     aprovado = valor_herdado_centavos(sol.valor_aprovado)
     solicitado = valor_herdado_centavos(sol.valor)
-    realizado = valor_herdado_centavos(sol.valor_realizado) if sol.status == 'Finalizada' else None
+    realizado = valor_herdado_centavos(sol.valor_realizado) if sol.status == 'Finalizada' and sol.valor_realizado is not None else None
     excedente = max(0, pago - aprovado) if aprovado is not None else None
     return {
         'solicitacao_id': sol.id, 'numero': sol.numero or f'SOL-{sol.id:04d}',
@@ -107,6 +108,7 @@ def serializar_resumo(sol, totais):
         'solicitado_centavos': solicitado,
         'aprovado_centavos': aprovado, 'realizado_centavos': realizado,
         'pago_centavos': pago,
+        **indicadores_pagamento(aprovado, realizado, pago),
         'saldo_centavos': (aprovado - pago) if aprovado is not None else None,
         'excedente_centavos': excedente,
         'alerta_sobrepagamento': excedente is not None and excedente > 0,
@@ -136,6 +138,8 @@ def serializar_lancamento(lan, comprovante=None):
         'id': lan.id, 'solicitacao_id': lan.solicitacao_id, 'tipo': lan.tipo,
         'valor_centavos': lan.valor_centavos,
         'excedente_centavos_no_lancamento': lan.excedente_centavos_no_lancamento,
+        'forma_pagamento': lan.forma_pagamento,
+        'excedente_realizado_centavos_no_lancamento': lan.excedente_realizado_centavos_no_lancamento,
         'data_pagamento': lan.data_pagamento.isoformat() if lan.data_pagamento else None,
         'estorno_de_id': lan.estorno_de_id, 'autor_nome': lan.autor_nome,
         'observacao': lan.observacao, 'criado_em': lan.criado_em.isoformat() if lan.criado_em else None,
@@ -197,11 +201,14 @@ def _comprovante_validado(arquivo: UploadFile):
 def registrar_pagamento(solicitacao_id: int, request: Request,
                        data_pagamento: date = Form(...), valor: str = Form(...),
                        chave_operacao: str = Form(...), observacao: str = Form(''),
-                       comprovante: UploadFile = File(...), db: Session = Depends(sessao)):
+                       comprovante: UploadFile = File(...), db: Session = Depends(sessao),
+                       forma_pagamento: str = Form(...)):
     # Somente Controladoria pode registrar. Perfil Financeiro é consulta exclusiva.
     autor = usuario_financeiro(request, db, so_controladoria=True)
     chave = chave_validada(chave_operacao)
     valor_c = centavos(valor)
+    if not isinstance(forma_pagamento, str) or forma_pagamento not in FORMAS:
+        raise HTTPException(422, detail='Selecione uma forma de pagamento válida.')
     if data_pagamento < date(2000, 1, 1) or data_pagamento > date.today():
         raise HTTPException(422, detail='Data de pagamento inválida ou futura.')
     if len(observacao) > 500:
@@ -219,8 +226,12 @@ def registrar_pagamento(solicitacao_id: int, request: Request,
         pago_anterior = anterior.get('pagamentos', 0) - anterior.get('estornos', 0)
         aprovado = valor_herdado_centavos(sol.valor_aprovado)
         excedente_agora = max(0, pago_anterior + valor_c - aprovado) if aprovado is not None else 0
+        realizado = valor_herdado_centavos(sol.valor_realizado) if sol.status == 'Finalizada' and sol.valor_realizado is not None else None
+        indicador = indicadores_pagamento(aprovado, realizado, pago_anterior + valor_c)
         lan = models.FinanceiroLancamento(
             solicitacao_id=sol.id, tipo='pagamento', valor_centavos=valor_c,
+            forma_pagamento=forma_pagamento,
+            excedente_realizado_centavos_no_lancamento=indicador['excedente_realizado_centavos'],
             excedente_centavos_no_lancamento=excedente_agora,
             data_pagamento=data_pagamento, chave_operacao=chave,
             observacao=observacao.strip(), autor_id=autor.id, autor_nome=autor.nome,

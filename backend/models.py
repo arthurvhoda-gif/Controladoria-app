@@ -276,6 +276,8 @@ class FinanceiroLancamento(Base):
     valor_centavos = Column(BigInteger, nullable=False)
     # Fotografia do excedente na inclusão (alerta persistente, não reescrito após estorno).
     excedente_centavos_no_lancamento = Column(BigInteger, nullable=False, default=0)
+    forma_pagamento = Column(String(24), nullable=True)  # NULL em lancamentos legados
+    excedente_realizado_centavos_no_lancamento = Column(BigInteger, nullable=True)  # NULL: nao apurado na inclusao
     data_pagamento = Column(Date, nullable=True)
     estorno_de_id = Column(Integer, ForeignKey('financeiro_lancamentos.id', ondelete='RESTRICT'), nullable=True)
     chave_operacao = Column(String(64), nullable=False)

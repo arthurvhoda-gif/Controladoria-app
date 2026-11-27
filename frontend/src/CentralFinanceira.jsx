@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import './CentralFinanceira.css'
 
 const moeda = c => c == null ? '—' : (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const formas = { pix: 'Pix', boleto: 'Boleto bancário', transferencia: 'Transferência bancária', credito: 'Cartão de crédito', debito: 'Cartão de débito', dinheiro: 'Dinheiro', outros: 'Outros' }
+const situacoes = { valor_final_indefinido: 'Valor final ainda não definido', quitado: 'Pagamento quitado', parcial: 'Pagamento parcial', pendente: 'Pagamento pendente', divergencia_financeira: 'Divergência financeira', sobrepagamento: 'Sobrepagamento' }
 const hoje = () => new Date().toLocaleDateString('en-CA')
 const valorParaAPI = valor => {
   const v = String(valor || '').trim()
@@ -23,7 +25,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
   const [estado, setEstado] = useState('Carregando dados financeiros...')
   const [erro, setErro] = useState('')
   const [processando, setProcessando] = useState(false)
-  const [form, setForm] = useState({ data: hoje(), valor: '', observacao: '', arquivo: null })
+  const [form, setForm] = useState({ data: hoje(), valor: '', forma: '', observacao: '', arquivo: null })
   const [usuarios, setUsuarios] = useState([])
   const [vinculoId, setVinculoId] = useState('')
   const [justificativa, setJustificativa] = useState('')
@@ -85,8 +87,8 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
     ev.preventDefault()
     if (perfil !== 'Controladoria' || !selecionado || processando) return
     const valor = valorParaAPI(form.valor)
-    if (!valor || Number(valor) <= 0 || !form.arquivo || !form.data) {
-      setErro('Informe data, valor positivo e comprovante em PDF, PNG ou JPG.'); return
+    if (!valor || Number(valor) <= 0 || !form.arquivo || !form.data || !Object.hasOwn(formas, form.forma)) {
+      setErro('Informe data, valor positivo, forma de pagamento e comprovante em PDF, PNG ou JPG.'); return
     }
     if (form.arquivo.size > 5 * 1024 * 1024) {
       setErro('O comprovante não pode ultrapassar 5 MB.'); return
@@ -96,6 +98,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
     const corpo = new FormData()
     corpo.append('data_pagamento', form.data)
     corpo.append('valor', valor)
+    corpo.append('forma_pagamento', form.forma)
     corpo.append('observacao', form.observacao)
     corpo.append('chave_operacao', chaveRef.current)
     corpo.append('comprovante', form.arquivo)
@@ -104,7 +107,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
       const res = await fetch(`${apiUrl}/financeiro/solicitacoes/${selecionado}/pagamentos`, { method: 'POST', headers, body: corpo })
       if (!res.ok) throw new Error(await erroHttp(res))
       chaveRef.current = null
-      setForm({ data: hoje(), valor: '', observacao: '', arquivo: null })
+      setForm({ data: hoje(), valor: '', forma: '', observacao: '', arquivo: null })
       const entrada = document.querySelector('#comprovante-financeiro')
       if (entrada) entrada.value = ''
       await carregar(selecionado)
@@ -194,6 +197,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
     String(v || '').toLocaleLowerCase('pt-BR').includes(busca.toLocaleLowerCase('pt-BR'))))
   const sum = itens.reduce((acc, item) => acc + (item.pago_centavos || 0), 0)
   const excesso = itens.reduce((acc, item) => acc + (item.excedente_centavos || 0), 0)
+  const excessoFinal = itens.reduce((acc, item) => acc + (item.excedente_realizado_centavos || 0), 0)
   const estornos = new Set((detalhe?.lancamentos || []).filter(i => i.tipo === 'estorno').map(i => i.estorno_de_id))
 
   return <div className="fin-root">
@@ -216,7 +220,8 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
     </form>}
     <section className="fin-kpis">
       <article><span>Pagamentos líquidos</span><strong>{moeda(sum)}</strong></article>
-      <article className={excesso > 0 ? 'fin-danger' : ''}><span>Excedentes detectados</span><strong>{moeda(excesso)}</strong></article>
+      <article className={excesso > 0 ? 'fin-danger' : ''}><span>Excedentes sobre o aprovado</span><strong>{moeda(excesso)}</strong></article>
+      <article className={excessoFinal > 0 ? 'fin-warning' : ''}><span>Divergências acima do valor final</span><strong>{moeda(excessoFinal)}</strong></article>
       <article><span>Solicitações listadas</span><strong>{itens.length}</strong></article>
     </section>
     <div className="fin-layout">
@@ -227,7 +232,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
           {filtrados.map(i => <button role="listitem" type="button" key={i.solicitacao_id} onClick={() => abrir(i.solicitacao_id)} className={`fin-linha ${selecionado === i.solicitacao_id ? 'fin-ativa' : ''}`}>
             <span className="fin-linha-top"><strong>{i.numero}</strong><small>{i.status}</small></span>
             <span>{i.condominio} · {i.fornecedor}</span>
-            <span className="fin-linha-valor">Pago: <b>{moeda(i.pago_centavos)}</b>{i.alerta_sobrepagamento && <em>Excedente {moeda(i.excedente_centavos)}</em>}</span>
+            <span className="fin-linha-valor">Pago: <b>{moeda(i.pago_centavos)}</b>{i.alerta_sobrepagamento && <em>Acima do aprovado {moeda(i.excedente_centavos)}</em>}{i.excedente_realizado_centavos > 0 && <em className="fin-warning-text">Divergência sobre valor final {moeda(i.excedente_realizado_centavos)}</em>}</span>
           </button>)}
           {!filtrados.length && <p className="fin-vazio">Nenhuma solicitação localizada.</p>}
         </div>
@@ -236,13 +241,17 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
         {!detalhe ? <div className="fin-vazio">Selecione uma solicitação para acompanhar pagamentos e comprovantes.</div> : <>
           <header><h3>{detalhe.resumo.numero} · {detalhe.resumo.condominio}</h3><p>{detalhe.resumo.descricao}</p></header>
           <div className="fin-resumo">
-            <span>Solicitado <b>{moeda(detalhe.resumo.solicitado_centavos)}</b></span>
-            <span>Aprovado <b>{moeda(detalhe.resumo.aprovado_centavos)}</b></span>
-            <span>Realizado <b>{moeda(detalhe.resumo.realizado_centavos)}</b></span>
-            <span>Pago <b>{moeda(detalhe.resumo.pago_centavos)}</b></span>
+            <span>Valor solicitado <b>{moeda(detalhe.resumo.solicitado_centavos)}</b></span>
+            <span>Valor aprovado <b>{moeda(detalhe.resumo.aprovado_centavos)}</b></span>
+            <span>Valor final da compra <b>{moeda(detalhe.resumo.realizado_centavos)}</b></span>
+            <span>Total pago <b>{moeda(detalhe.resumo.pago_centavos)}</b></span>
             <span>Saldo versus aprovado <b>{moeda(detalhe.resumo.saldo_centavos)}</b></span>
+            <span>Saldo a pagar <b>{detalhe.resumo.saldo_a_pagar_centavos == null ? 'Ainda não definido' : moeda(detalhe.resumo.saldo_a_pagar_centavos)}</b></span>
+            <span>Diferença: aprovado menos valor final <b>{detalhe.resumo.diferenca_orcamento_centavos == null ? '—' : moeda(detalhe.resumo.diferenca_orcamento_centavos)}</b></span>
           </div>
-          {detalhe.resumo.alerta_sobrepagamento && <div className="fin-alerta" role="alert"><strong>Alerta de sobrepagamento: {moeda(detalhe.resumo.excedente_centavos)}</strong><p>O pagamento foi registrado, sem bloqueio, e o excedente permanecerá rastreável.</p></div>}
+          {detalhe.resumo.progresso_pagamento_pontos_base != null && <div className={`fin-progresso ${detalhe.resumo.alerta_sobrepagamento ? 'fin-progresso-danger' : detalhe.resumo.excedente_realizado_centavos > 0 ? 'fin-progresso-warning' : ''}`}><strong>{detalhe.resumo.alerta_sobrepagamento ? 'Sobrepagamento' : detalhe.resumo.excedente_realizado_centavos > 0 ? 'Divergência financeira' : situacoes[detalhe.resumo.situacao_pagamento]}</strong><progress aria-label="Progresso do pagamento" max={10000} value={detalhe.resumo.progresso_pagamento_pontos_base} /><small>{(detalhe.resumo.progresso_pagamento_pontos_base / 100).toLocaleString('pt-BR')}% do valor final (limitado a 100%)</small></div>}
+          {detalhe.resumo.alerta_sobrepagamento && <div className="fin-alerta" role="alert"><strong>Alerta de sobrepagamento</strong><p>Acima do aprovado: {moeda(detalhe.resumo.excedente_centavos)}</p><p>Lançamento permitido e auditado.</p></div>}
+          {detalhe.resumo.excedente_realizado_centavos > 0 && <div className="fin-alerta fin-alerta-warning" role="status"><strong>Divergência financeira</strong><p>Acima do valor final: {moeda(detalhe.resumo.excedente_realizado_centavos)}</p><p>{detalhe.resumo.alerta_sobrepagamento ? 'Comparação distinta do sobrepagamento; não somar os valores.' : 'Pagamento dentro do limite aprovado.'}</p></div>}
           {detalhe.resumo.solicitante_id == null && perfil === 'Controladoria' && <section className="fin-legado">
             <h4>Solicitação legada sem vínculo de identidade</h4>
             <p>Para preservar o acesso seguro, vincule manualmente após confirmar a autoria. Não será feita atribuição por nome.</p>
@@ -258,6 +267,7 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
             <h4>Registrar pagamento</h4>
             <div className="fin-form-grid"><label>Data do pagamento<input type="date" max={hoje()} value={form.data} onChange={e => atualizarForm('data', e.target.value)} required /></label>
             <label>Valor (R$)<input inputMode="decimal" placeholder="700,00" value={form.valor} onChange={e => atualizarForm('valor', e.target.value)} required /></label></div>
+            <label>Forma de pagamento<select required value={form.forma} onChange={e => atualizarForm('forma', e.target.value)}><option value="">Selecione a forma de pagamento</option>{Object.entries(formas).map(([k,v]) => <option key={k} value={k}>{v}</option>)}</select></label>
             <label>Comprovante (PDF, PNG ou JPG — até 5 MB)<input id="comprovante-financeiro" type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={e => atualizarForm('arquivo', e.target.files?.[0] || null)} required /></label>
             <label>Observação (opcional)<textarea maxLength={500} value={form.observacao} onChange={e => atualizarForm('observacao', e.target.value)} /></label>
             <button className="button-primary" type="submit" disabled={processando}>{processando ? 'Registrando...' : 'Registrar pagamento auditado'}</button>
@@ -268,7 +278,9 @@ export default function CentralFinanceira({ apiUrl, token, perfil }) {
             {detalhe.lancamentos.map(l => <article className={`fin-evento ${l.tipo === 'estorno' ? 'fin-estorno' : ''}`} key={l.id}>
               <div><strong>#{l.id} · {l.tipo === 'estorno' ? `Estorno do #${l.estorno_de_id}` : 'Pagamento'}</strong><strong>{l.tipo === 'estorno' ? '−' : '+'}{moeda(l.valor_centavos)}</strong></div>
               <small>{l.data_pagamento || l.criado_em?.slice(0, 10)} · {l.autor_nome}</small>
-              {l.excedente_centavos_no_lancamento > 0 && <p className="fin-alerta"><b>Alerta histórico:</b> excedente de {moeda(l.excedente_centavos_no_lancamento)} após este lançamento.</p>}
+              {l.tipo === 'pagamento' && <small>Forma: {formas[l.forma_pagamento] || 'Não informado'}</small>}
+              {l.excedente_centavos_no_lancamento > 0 && <p className="fin-alerta"><b>Alerta histórico:</b> acima do aprovado {moeda(l.excedente_centavos_no_lancamento)} após este lançamento.</p>}
+              {l.excedente_realizado_centavos_no_lancamento > 0 && <p className="fin-alerta fin-alerta-warning"><b>Divergência histórica:</b> acima do valor final {moeda(l.excedente_realizado_centavos_no_lancamento)} após este lançamento.</p>}
               {l.observacao && <p>{l.observacao}</p>}
               <div className="fin-evento-botoes">
                 {l.comprovante && <button type="button" className="button-secondary" onClick={() => baixar(l)}>Baixar comprovante</button>}

@@ -52,7 +52,35 @@ class TesteFinanceiroV68(unittest.TestCase):
 
     def pagar(self, valor, chave=None, uid=1, sol=10, arquivo=None):
         return f.registrar_pagamento(sol, req(uid), date.today(), valor, chave or str(uuid4()),
-                                    'Pagamento de teste', arquivo or pdf(), self.db)
+                                    'Pagamento de teste', arquivo or pdf(), self.db, forma_pagamento='pix')
+
+    def test_23_forma_de_pagamento_invalida(self):
+        with self.assertRaises(HTTPException) as cm:
+            f.registrar_pagamento(10, req(1), date.today(), '10', str(uuid4()), '', pdf(), self.db, forma_pagamento='invalida')
+        self.assertEqual(cm.exception.status_code, 422)
+        self.assertEqual(self.db.query(models.FinanceiroLancamento).count(), 0)
+
+    def test_24_excedente_final_e_estorno(self):
+        sol = self.db.get(models.Solicitacao, 10)
+        sol.status = 'Finalizada'; sol.valor_realizado = 850
+        self.db.commit()
+        self.pagar('850')
+        p = self.pagar('50')
+        self.assertEqual(p['resumo']['excedente_centavos'], 0)
+        self.assertEqual(p['resumo']['excedente_realizado_centavos'], 5000)
+        self.assertEqual(p['resumo']['situacao_pagamento'], 'divergencia_financeira')
+        self.assertFalse(p['resumo']['alerta_sobrepagamento'])
+        self.assertEqual(p['lancamento']['forma_pagamento'], 'pix')
+        self.assertEqual(p['lancamento']['excedente_realizado_centavos_no_lancamento'], 5000)
+        r = f.estornar_pagamento(p['lancamento']['id'], f.EstornoEntrada(motivo='Pagamento duplicado', chave_operacao=str(uuid4())), req(1), self.db)
+        self.assertEqual(r['resumo']['situacao_pagamento'], 'quitado')
+        self.assertEqual(r['resumo']['excedente_realizado_centavos'], 0)
+        self.assertEqual(f.listar_lancamentos(10, req(1), self.db)['lancamentos'][1]['excedente_realizado_centavos_no_lancamento'], 5000)
+
+    def test_25_aprovacao_nominal(self):
+        principal.atualizar_status_solicitacao(11, principal.schemas.StatusUpdate(status='Aprovada', valor_aprovado=1000), req(1), self.db)
+        evento = self.db.query(models.HistoricoSolicitacao).filter_by(solicitacao_id=11).first()
+        self.assertEqual(evento.responsavel, 'Gestora')
 
     def test_01_conversao_precisa_e_validacao(self):
         self.assertEqual(f.centavos('700.00'), 70000)
@@ -224,7 +252,7 @@ class TesteFinanceiroV68(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 409)
         with self.assertRaises(HTTPException) as cm2:
             principal.atualizar_status_solicitacao(10, principal.schemas.StatusUpdate(
-                    status='Reprovada', valor_aprovado=0), self.db)
+                    status='Reprovada', valor_aprovado=0), req(1), self.db)
         self.assertEqual(cm2.exception.status_code, 409)
 
     def test_19_sol_legada_sem_vinculo_nao_visivel_ao_homonimo(self):

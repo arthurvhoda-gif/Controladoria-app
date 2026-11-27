@@ -301,6 +301,8 @@ def executar_migracoes_automaticas():
     # Migração crítica de isolamento: se falhar, o serviço não deve abrir
     # com proteção parcial dos condomínios.
     with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE financeiro_lancamentos ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(24)'))
+        conn.execute(text('ALTER TABLE financeiro_lancamentos ADD COLUMN IF NOT EXISTS excedente_realizado_centavos_no_lancamento BIGINT'))
         conn.execute(text('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
         conn.execute(text('ALTER TABLE checklist_itens ADD COLUMN IF NOT EXISTS condominio_id INTEGER'))
         conn.execute(text('CREATE INDEX IF NOT EXISTS ix_usuarios_condominio_id ON usuarios(condominio_id)'))
@@ -935,7 +937,7 @@ def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, r
 
 
 @app.put("/solicitacoes/{solicitacao_id}/status")
-def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdate, db: Session = Depends(get_db)):
+def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdate, request: Request, db: Session = Depends(get_db)):
     db_sol = db.query(models.Solicitacao).filter(models.Solicitacao.id == solicitacao_id).first()
     if not db_sol:
         raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
@@ -958,7 +960,7 @@ def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdat
     if dados.motivo_ajuste:
         detalhe += f" — Motivo: {dados.motivo_ajuste}"
 
-    registrar_historico_seguro(db, db_sol.id, detalhe, "Controladoria")
+    registrar_historico_seguro(db, db_sol.id, detalhe, request.state.auth_user_name)
     return db_sol
 
 
