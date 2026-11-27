@@ -134,6 +134,8 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const [pesquisaExec, setPesquisaExec] = useState('')
   const [pesquisaFiscal, setPesquisaFiscal] = useState('')
   const [textoAcao, setTextoAcao] = useState('')
+  const [fotoConclusao, setFotoConclusao] = useState(null)
+  const [erroAcao, setErroAcao] = useState('')
   const [filtro, setFiltro] = useState('todos')
   const [ordem, setOrdem] = useState('recentes')
   const [busca, setBusca] = useState('')
@@ -181,7 +183,11 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       setServicos(Array.isArray(lista) ? lista : [])
       setAvisos(Array.isArray(notificacoes) ? notificacoes : [])
       if (gestor) setPessoas(Array.isArray(responsaveis) ? responsaveis : [])
-      setSelecionado(anterior => anterior ? (lista.find(s => s.id === anterior.id) || null) : null)
+      setSelecionado(anterior => {
+        if (!anterior) return null
+        const novo = lista.find(s => s.id === anterior.id) || null
+        return JSON.stringify(novo) === JSON.stringify(anterior) ? anterior : novo
+      })
       setErro('')
     } catch {
       if (chave === ultimaRequisicao.current) {
@@ -199,15 +205,26 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
     finally { if (!silencioso && chave === ultimaRequisicao.current) setCarregando(false) }
   }, [token, gestor, requisitar])
 
-  const atualizarNoEfeito = useEffectEvent((silencioso = false) => atualizar(silencioso))
+  const atualizarNoEfeito = useEffectEvent((silencioso = false) => {
+    if (!silencioso || (!salvando && !enviandoFotos && !carregando)) return atualizar(silencioso)
+  })
   useEffect(() => {
     // O componente eh remontado por token na App: inicia com listas vazias.
     // Nao limpamos dados sincronamente em useEffect para evitar render em cascata.
     let ativo = true
-    queueMicrotask(() => { if (ativo) atualizarNoEfeito() })
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') atualizarNoEfeito(true) }, 60000)
+    let emCurso = false
+    const sincronizar = async (silencioso = true) => {
+      if (!ativo || emCurso || (silencioso && document.visibilityState !== 'visible')) return
+      emCurso = true
+      try { await atualizarNoEfeito(silencioso) } finally { emCurso = false }
+    }
+    const aoRetornar = () => sincronizar()
+    queueMicrotask(() => sincronizar(false))
+    const timer = setInterval(aoRetornar, 5000)
+    window.addEventListener('focus', aoRetornar)
+    document.addEventListener('visibilitychange', aoRetornar)
     const ref = ultimaRequisicao
-    return () => { ativo = false; ref.current++; clearInterval(timer) }
+    return () => { ativo = false; ref.current++; clearInterval(timer); window.removeEventListener('focus', aoRetornar); document.removeEventListener('visibilitychange', aoRetornar) }
   }, [atualizar])
 
   // Abertura direta após login: sempre consulta o endpoint protegido de detalhes.
@@ -363,6 +380,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   const revisao = servicos.filter(s => ['Aguardando fiscalização', 'Aguardando validação'].includes(s.status)).length
   const naoLidas = avisos.filter(a => !a.lida)
   const acoes = selecionado?.acoes_disponiveis || []
+  const exigeFoto = acoes.includes('concluir') && selecionado?.foto_conclusao_obrigatoria === true
   const concluidos = selecionado?.executores?.filter(p => p.status === 'Finalizado').length || 0
   const totalExec = selecionado?.executores?.length || 0
 
@@ -375,6 +393,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   }
 
   async function abrirServico(s) {
+    setFotoConclusao(null); setErroAcao('')
     setSelecionado(s); setHistorico([]); setFotos([]); setFotosEnvio([]); setEtapaFoto('durante'); setLegendaFoto(''); setErroFoto(''); setTextoAcao(''); setErro(''); setMensagem('')
     const pendentes = avisos.filter(a => a.servico_id === s.id && !a.lida)
     if (pendentes.length) {
@@ -382,7 +401,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       const resultados = await Promise.allSettled(pendentes.map(a => requisitar(`/servicos/notificacoes/${a.id}/ler`, { method: 'POST' })))
       const lidos = new Set(pendentes.filter((_, i) => resultados[i].status === 'fulfilled').map(a => a.id))
       setAvisos(anterior => anterior.map(a => lidos.has(a.id) ? { ...a, lida: true } : a))
-      if (lidos.size) onAvisosLidos?.([...lidos])
+      if (lidos.size) { onAvisosLidos?.([...lidos]); onAvisosAlterados?.(); await atualizar(true) }
     }
   }
 
@@ -415,6 +434,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
       setEnviandoFotos(false)
       setFotosVersao(v => v + 1)
       requisitar(`/servicos/${selecionado.id}/historico`).then(setHistorico).catch(() => {})
+      await atualizar(true)
     }
   }
 
@@ -450,21 +470,30 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
   }
 
   async function executar(acao) {
-    if (!selecionado || salvando) return
-    if (['concluir', 'devolver'].includes(acao) && textoAcao.trim().length < 10) {
-      setErro('Descreva o resultado ou motivo com pelo menos 10 caracteres.'); return
+    if (!selecionado || salvando || enviandoFotos) return
+    if ((acao === 'devolver' || (acao === 'concluir' && !exigeFoto)) && textoAcao.trim().length < 10) {
+      setErroAcao('Descreva o resultado ou motivo com pelo menos 10 caracteres.'); return
     }
-    setSalvando(true); setErro(''); setMensagem('')
+    setSalvando(true); setErro(''); setErroAcao(''); setMensagem('')
     try {
       const id = selecionado.id
+      if (acao === 'concluir' && exigeFoto) {
+        const atual = await requisitar(`/servicos/${id}`)
+        if (!atual.acoes_disponiveis?.includes('concluir')) throw new Error('A etapa mudou. Confira a situação atual.')
+        if (!atual.foto_conclusao_ok) {
+          if (!fotoConclusao) throw new Error('Selecione uma foto da execução para concluir.')
+          await enviarImagem(id, fotoConclusao, 'depois')
+          setFotoConclusao(null); setFotosVersao(v => v + 1)
+        }
+      }
       const atualizado = await requisitar(`/servicos/${id}/acoes`, { method: 'POST', body: JSON.stringify({ acao, observacao: textoAcao.trim() }) })
-      setSelecionado(atualizado); setTextoAcao('')
+      setSelecionado(atualizado); setTextoAcao(''); setFotoConclusao(null)
       setMensagem('Atualização registrada no histórico do serviço.')
       await atualizar(true)
       // Ação pode concluir/desatrasar tarefa ou gerar novo aviso de fiscalização.
       onAvisosAlterados?.()
       setHistorico(await requisitar(`/servicos/${id}/historico`))
-    } catch (e) { setErro(e.message || 'Não foi possível registrar a ação.'); await atualizar(true) }
+    } catch (e) { setErroAcao(e.message || 'Não foi possível registrar a ação.'); await atualizar(true) }
     finally { setSalvando(false) }
   }
 
@@ -532,7 +561,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
           <div className="hs-v3-section-head"><h4><SIcon nome="users" size={17}/>Equipe e responsabilidades</h4><span>{totalExec} executor(es)</span></div>
           {totalExec > 0 && <div className="hs-v3-execution-progress"><div className="hs-v3-progress-head"><span>Execução concluída</span><strong>{concluidos} de {totalExec}</strong></div><div className="hs-v3-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={totalExec} aria-valuenow={concluidos} aria-label="Etapas dos executores concluídas"><span style={{ width: `${100 * concluidos / totalExec}%` }}/></div></div>}
           <div className="hs-v3-team"><h5>Quem executa</h5>{(selecionado.executores || []).map(p => <div className="hs-v3-person" key={`e-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Executor</small></span><Etiqueta status={p.status}/></div>)}<h5>Quem fiscaliza</h5>{selecionado.fiscalizadores?.length ? selecionado.fiscalizadores.map(p => <div className="hs-v3-person" key={`f-${p.usuario_id}`}><Avatar nome={p.nome}/><span className="hs-v3-person-name">{p.nome}<small>Fiscalizador</small></span><Etiqueta status={p.status}/></div>) : <p className="hs-v3-no-inspector">Sem fiscalizador designado. A validação final será realizada pela Controladoria.</p>}</div>
-          {!!acoes.length && <section className="hs-v3-action"><div className="hs-v3-action-title"><SIcon nome="checkCircle" size={18}/><strong>Sua próxima ação</strong></div><p>As atualizações são vinculadas ao seu usuário e ficam no histórico.</p><label htmlFor="hs-v3-observacao">Observação ou resultado</label><textarea id="hs-v3-observacao" rows={3} maxLength={3000} value={textoAcao} onChange={e => setTextoAcao(e.target.value)} placeholder="Descreva o andamento, os resultados ou o motivo da devolução..."/><div className="hs-v3-action-buttons">{acoes.map(acao => <button key={acao} type="button" className={`hs-v3-button ${acao === 'devolver' ? 'hs-v3-button-warn' : 'hs-v3-button-primary'}`} onClick={() => executar(acao)} disabled={salvando}>{salvando ? 'Registrando...' : NOMES_ACOES[acao] || acao}</button>)}</div>{acoes.some(acao => ['concluir', 'devolver'].includes(acao)) && <small>Ao concluir ou devolver, informe pelo menos 10 caracteres.</small>}</section>}
+          {!!acoes.length && <section className="hs-v3-action"><div className="hs-v3-action-title"><SIcon nome="checkCircle" size={18}/><strong>Sua próxima ação</strong></div><p>As atualizações são vinculadas ao seu usuário e ficam no histórico.</p><label htmlFor="hs-v3-observacao">{exigeFoto ? 'Observação (opcional)' : 'Observação ou resultado'}</label><textarea id="hs-v3-observacao" rows={3} maxLength={3000} value={textoAcao} onChange={e => setTextoAcao(e.target.value)} placeholder="Descreva o andamento, os resultados ou o motivo da devolução..."/>{exigeFoto && <div className="hs-v5-photo-upload"><label htmlFor="hs-v80-foto-conclusao">Foto da execução (obrigatória)</label>{selecionado.foto_conclusao_ok ? <p>Foto desta etapa já registrada. Você pode concluir.</p> : <><input id="hs-v80-foto-conclusao" type="file" accept="image/jpeg,image/png,image/webp" disabled={salvando || enviandoFotos} onChange={e => { try { setFotoConclusao(validarArquivos(e.target.files)[0] || null); setErroAcao('') } catch (err) { setFotoConclusao(null); setErroAcao(err.message); e.target.value = '' } }}/>{fotoConclusao && <small>{fotoConclusao.name}</small>}<small>JPG, PNG ou WebP, até 4 MB. A foto será anexada ao concluir.</small></>}</div>}{erroAcao && <p className="hs-v5-upload-error" role="alert">{erroAcao}</p>}<div className="hs-v3-action-buttons">{acoes.map(acao => <button key={acao} type="button" className={`hs-v3-button ${acao === 'devolver' ? 'hs-v3-button-warn' : 'hs-v3-button-primary'}`} onClick={() => executar(acao)} disabled={salvando || enviandoFotos || (acao === 'concluir' && exigeFoto && !selecionado.foto_conclusao_ok && !fotoConclusao)}>{salvando ? 'Registrando...' : NOMES_ACOES[acao] || acao}</button>)}</div>{acoes.some(acao => acao === 'devolver' || (acao === 'concluir' && !exigeFoto)) && <small>Na devolução ou conclusão sem exigência de foto, informe pelo menos 10 caracteres.</small>}</section>}
           <section className="hs-v5-photo-section" aria-label="Fotos do serviço">
             <div className="hs-v3-section-head"><h4><SIcon nome="camera" size={18}/>Fotos e evidências</h4><span>{fotos.length} de 15 fotos</span></div>
             <p className="hs-v5-photo-hint">Fotografias de antes, durante, depois e da fiscalização. Cada foto fica registrada com o autor e a data.</p>
@@ -549,7 +578,7 @@ export default function CentralServicos({ apiUrl, usuario, condominios = [], lin
               {fotosEnvio.length > 0 && <div className="hs-v5-photo-selection">{fotosEnvio.map((f,i)=><span key={`${f.name}-${i}`}>{f.name}<button type="button" aria-label={`Remover ${f.name}`} onClick={()=>setFotosEnvio(p=>p.filter((_,k)=>k!==i))}>×</button></span>)}</div>}
               {erroFoto && <p className="hs-v5-upload-error" role="alert">{erroFoto}</p>}
               <button type="button" className="hs-v3-button hs-v3-button-primary hs-v5-photo-submit" disabled={enviandoFotos || !fotosEnvio.length || fotos.length+fotosEnvio.length>15} onClick={adicionarFotos}>{enviandoFotos ? 'Enviando fotos...' : `Anexar ${fotosEnvio.length || ''} foto(s)`}</button>
-              <small>JPG, PNG e WebP · até 4 MB por foto · máximo de 15 por serviço.</small>
+              <small>JPG, PNG e WebP · até 4 MB por foto · máximo de 15 por serviço, exceto evidência obrigatória de conclusão.</small>
             </div>}
           </section>
           <div className="hs-v3-section-head hs-v3-history-heading"><h4><SIcon nome="clock" size={17}/>Histórico de atividades</h4><span>{historico.length} registros</span></div><ol className="hs-v3-timeline">{historico.length ? historico.map(ev => <li key={ev.id}><span className="hs-v3-timeline-dot"/><div><strong>{String(ev.acao || 'Atualização').replaceAll('_', ' ')}</strong><small>{ev.autor} · {dataBR(ev.data)}</small>{ev.observacao && <p>{ev.observacao}</p>}</div></li>) : <li className="hs-v3-timeline-empty">Nenhum evento encontrado.</li>}</ol>

@@ -41,6 +41,10 @@ class MultiplosParticipantesTeste(unittest.TestCase):
     def acao(self, servico, uid, action, obs=''):
         return api.atualizar(servico['id'], api.ServicoAcao(acao=action, observacao=obs), self.req(uid), self.db)
 
+    def concluir_com_foto(self, servico, uid, obs=''):
+        fixture.anexar_evidencia_teste(self.db, servico['id'], self.req(uid))
+        return self.acao(servico, uid, 'concluir', obs)
+
     def test_criar_dois_executores_e_fiscalizador(self):
         s = self.novo()
         self.assertEqual(len(s['executores']), 2)
@@ -60,11 +64,11 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         self.assertEqual(api.detalhes(s['id'], self.req(1), self.db)['status'], 'Recebido')
         self.acao(s, 2, 'iniciar')
         # Exigência de iniciar e concluir por pessoa; um executor não finaliza o trabalho do outro.
-        a = self.acao(s, 2, 'concluir', 'Minha parte foi executada e verificada.')
+        a = self.concluir_com_foto(s, 2, 'Minha parte foi executada e verificada.')
         self.assertEqual(a['status'], 'Em andamento')
         self.assertEqual(next(p for p in a['executores'] if p['usuario_id'] == 5)['status'], 'Recebido')
         self.acao(s, 5, 'iniciar')
-        a = self.acao(s, 5, 'concluir', 'Minha etapa da manutenção foi concluída.')
+        a = self.concluir_com_foto(s, 5, 'Minha etapa da manutenção foi concluída.')
         self.assertEqual(a['status'], 'Aguardando fiscalização')
         self.assertIn('validar', api.detalhes(s['id'], self.req(6), self.db)['acoes_disponiveis'])
         with self.assertRaises(HTTPException) as cm:
@@ -74,7 +78,7 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         self.assertEqual(a['status'], 'Aguardando validação')
         a = self.acao(s, 1, 'validar')
         self.assertEqual(a['status'], 'Concluído')
-        self.assertEqual(len(api.historico(s['id'], self.req(1), self.db)), 10)
+        self.assertEqual(len(api.historico(s['id'], self.req(1), self.db)), 12)
 
     def test_fiscalizador_pode_devolver_mas_nao_executar(self):
         s = self.novo(execs=[2], fisc=[6])
@@ -84,7 +88,7 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 403)
         self.acao(s, 2, 'confirmar')
         self.acao(s, 2, 'iniciar')
-        self.acao(s, 2, 'concluir', 'Manutenção efetuada no condomínio.')
+        self.concluir_com_foto(s, 2, 'Manutenção efetuada no condomínio.')
         a = self.acao(s, 6, 'devolver', 'Faltou corrigir um problema identificado na vistoria.')
         self.assertEqual(a['status'], 'Em andamento')
         self.assertEqual(a['executores'][0]['status'], 'Em andamento')
@@ -95,7 +99,7 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         self.acao(s, 6, 'confirmar')
         self.acao(s, 2, 'confirmar')
         self.acao(s, 2, 'iniciar')
-        self.acao(s, 2, 'concluir', 'Etapa de reparo executada.')
+        self.concluir_com_foto(s, 2, 'Etapa de reparo executada.')
         with self.assertRaises(HTTPException) as cm:
             self.acao(s, 6, 'validar')
         self.assertEqual(cm.exception.status_code, 409)
@@ -120,7 +124,7 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         for u in (2, 4, 6):
             self.acao(s, u, 'confirmar')
         self.acao(s, 2, 'iniciar')
-        self.acao(s, 2, 'concluir', 'Execução integral concluída e documentada.')
+        self.concluir_com_foto(s, 2, 'Execução integral concluída e documentada.')
         a = self.acao(s, 4, 'validar')
         self.assertEqual(a['status'], 'Aguardando fiscalização')
         a = self.acao(s, 6, 'validar')
@@ -138,7 +142,7 @@ class MultiplosParticipantesTeste(unittest.TestCase):
         self.assertEqual(s['executores'][0]['usuario_id'], 2)
         self.assertEqual(self.acao(s, 2, 'confirmar')['status'], 'Recebido')
         self.acao(s, 2, 'iniciar')
-        self.assertEqual(self.acao(s, 2, 'concluir', 'Trabalho finalizado pela pessoa designada.')['status'], 'Aguardando validação')
+        self.assertEqual(self.concluir_com_foto(s, 2, 'Trabalho finalizado pela pessoa designada.')['status'], 'Aguardando validação')
         self.assertEqual(self.acao(s, 1, 'validar')['status'], 'Concluído')
 
 

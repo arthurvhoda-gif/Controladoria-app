@@ -29,6 +29,7 @@ STATUS_VALIDACAO = 'Aguardando validação'
 STATUS_FECHADO = 'Concluído'
 STATUS_EXEC_CONCLUIDO = 'Finalizado'
 STATUS_FISC_APROVADO = 'Aprovado'
+STATUS_DISPENSADO = 'Dispensado'
 PRIORIDADES = ('Baixa', 'Normal', 'Alta', 'Urgente')
 MAX_FOTO_ENTRADA = 4 * 1024 * 1024  # 4 MiB por arquivo antes de compactar
 MAX_FOTOS_SERVICO = 15
@@ -179,15 +180,56 @@ def publicar_para(db, servico, pessoas, mensagem, excluir=None, *, evento_origem
         notificar(db, uid, servico, mensagem, evento_origem=evento_origem, tipo_evento=tipo_evento)
 
 
-def derivar_status(pessoas):
+def perfis_participantes(db, pessoas):
+    ids = {p.usuario_id for p in pessoas if p.usuario_id is not None}
+    return dict(db.query(models.Usuario.id, models.Usuario.perfil).filter(models.Usuario.id.in_(ids)).all()) if ids else {}
+
+
+def status_participante(p, perfis):
+    if p.status == STATUS_NOVO and perfis.get(p.usuario_id) == 'Controladoria':
+        return STATUS_CIENTE
+    return p.status
+
+
+def rotulo_participante(p, perfis):
+    status = status_participante(p, perfis)
+    if status == STATUS_CIENTE and perfis.get(p.usuario_id) == 'Controladoria' and p.confirmado_em is None:
+        return 'Ciência dispensada'
+    return status
+
+
+def fiscais_independentes(pessoas, perfis):
+    # Controladoria faz uma única validação final; demais fiscalizadores mantêm sua etapa.
+    return [p for p in pessoas if p.papel == 'fiscalizador' and perfis.get(p.usuario_id) != 'Controladoria']
+
+
+def foto_conclusao(db, servico, participante):
+    """Evidência própria, após o início ou a última devolução, nunca foto inicial."""
+    q = db.query(models.ServicoFoto.id).filter(
+        models.ServicoFoto.servico_id == servico.id,
+        models.ServicoFoto.usuario_id == participante.usuario_id,
+        models.ServicoFoto.etapa == 'depois',
+        models.ServicoFoto.tamanho_bytes > 0,
+    )
+    inicio = participante.iniciado_em or servico.criado_em
+    if inicio is not None:
+        q = q.filter(models.ServicoFoto.criado_em >= inicio)
+    devolucao = db.query(models.ServicoEvento).filter_by(servico_id=servico.id, acao='devolver').order_by(models.ServicoEvento.id.desc()).first()
+    if devolucao is not None:
+        q = q.filter(models.ServicoFoto.criado_em > devolucao.criado_em)
+    return q.first() is not None
+
+
+def derivar_status(pessoas, perfis=None):
+    perfis = perfis or {}
     executores = [p for p in pessoas if p.papel == 'executor']
-    fiscais = [p for p in pessoas if p.papel == 'fiscalizador']
+    fiscais = fiscais_independentes(pessoas, perfis)
     if not executores:
         return STATUS_NOVO
     if not all(p.status == STATUS_EXEC_CONCLUIDO for p in executores):
         if any(p.status in (STATUS_EXECUCAO, STATUS_EXEC_CONCLUIDO) for p in executores):
             return STATUS_EXECUCAO
-        if all(p.status != STATUS_NOVO for p in executores):
+        if all(status_participante(p, perfis) != STATUS_NOVO for p in executores):
             return STATUS_CIENTE
         return STATUS_NOVO
     if fiscais and not all(p.status == STATUS_FISC_APROVADO for p in fiscais):
@@ -195,23 +237,38 @@ def derivar_status(pessoas):
     return STATUS_VALIDACAO
 
 
+def status_efetivo(servico, pessoas, perfis):
+    # Compatibilidade com tarefas abertas na versão anterior, sem alterar dados em GET.
+    if servico.status == STATUS_FECHADO or not pessoas:
+        return servico.status
+    if any(perfis.get(p.usuario_id) == 'Controladoria' for p in pessoas):
+        return derivar_status(pessoas, perfis)
+    return servico.status
+
+
 def serializar(servico, db=None, user=None):
     pessoas = participantes(db, servico) if db else []
     executores = [p for p in pessoas if p.papel == 'executor']
     fiscais = [p for p in pessoas if p.papel == 'fiscalizador']
+    perfis = perfis_participantes(db, pessoas) if db is not None else {}
+    atual = status_efetivo(servico, pessoas, perfis)
+    obrigatoria = False
+    evidencia_ok = False
     acoes = []
     if user is not None:
         me = next((p for p in pessoas if p.usuario_id == user.id), None)
-        if me and me.status == STATUS_NOVO and servico.status != STATUS_FECHADO:
+        if me and status_participante(me, perfis) == STATUS_NOVO and atual != STATUS_FECHADO:
             acoes.append('confirmar')
         if me and me.papel == 'executor':
-            if me.status == STATUS_CIENTE and servico.status != STATUS_FECHADO:
+            if status_participante(me, perfis) == STATUS_CIENTE and atual != STATUS_FECHADO:
                 acoes.append('iniciar')
-            if me.status == STATUS_EXECUCAO and servico.status != STATUS_FECHADO:
+            if me.status == STATUS_EXECUCAO and atual != STATUS_FECHADO:
                 acoes.append('concluir')
-        if me and me.papel == 'fiscalizador' and servico.status == STATUS_FISCALIZACAO and me.status == STATUS_CIENTE:
+                obrigatoria = user.perfil == 'Checklist'
+                evidencia_ok = foto_conclusao(db, servico, me) if obrigatoria else False
+        if me and me.papel == 'fiscalizador' and user.perfil != 'Controladoria' and atual == STATUS_FISCALIZACAO and me.status == STATUS_CIENTE:
             acoes += ['validar', 'devolver']
-        if user.perfil == 'Controladoria' and servico.status == STATUS_VALIDACAO:
+        if user.perfil == 'Controladoria' and atual == STATUS_VALIDACAO:
             acoes += ['validar', 'devolver']
     return {
         'id': servico.id, 'condominio_id': servico.condominio_id,
@@ -219,14 +276,15 @@ def serializar(servico, db=None, user=None):
         'responsavel_id': servico.responsavel_id,
         'responsavel': servico.responsavel_nome,
         'executores': [{'usuario_id': p.usuario_id, 'nome': p.usuario_nome,
-                        'status': p.status} for p in executores],
+                        'status': rotulo_participante(p, perfis)} for p in executores],
         'fiscalizadores': [{'usuario_id': p.usuario_id, 'nome': p.usuario_nome,
-                            'status': p.status} for p in fiscais],
+                            'status': rotulo_participante(p, perfis)} for p in fiscais],
         'acoes_disponiveis': list(dict.fromkeys(acoes)),
+        'foto_conclusao_obrigatoria': obrigatoria, 'foto_conclusao_ok': evidencia_ok,
         'criador_id': servico.criador_id, 'criador': servico.criador_nome,
         'titulo': servico.titulo, 'descricao': servico.descricao,
         'prioridade': servico.prioridade, 'prazo': servico.prazo.isoformat(),
-        'status': servico.status,
+        'status': atual,
         'criado_em': servico.criado_em.isoformat() if servico.criado_em else None,
         'atualizado_em': servico.atualizado_em.isoformat() if servico.atualizado_em else None,
         'atrasado': servico.status != STATUS_FECHADO and servico.prazo < hoje(),
@@ -318,12 +376,15 @@ def criar(dados: ServicoNovo, request: Request, db: Session = Depends(sessao),
             pessoa = por_id[uid]
             db.add(models.ServicoParticipante(
                 servico_id=servico.id, usuario_id=uid,
-                usuario_nome=pessoa.nome, papel=papel, status=STATUS_NOVO,
+                usuario_nome=pessoa.nome, papel=papel,
+                status=STATUS_CIENTE if pessoa.perfil == 'Controladoria' else STATUS_NOVO,
             ))
             notificar(db, uid, servico, (
                 f'Nova tarefa para executar: {servico.titulo}' if papel == 'executor'
                 else f'Você foi designado para fiscalizar: {servico.titulo}'
             ), evento_origem=evento_criacao, tipo_evento='nova_tarefa' if papel == 'executor' else 'designacao_fiscal')
+    db.flush()
+    servico.status = derivar_status(participantes(db, servico), {uid: p.perfil for uid, p in por_id.items()})
     db.commit()
     if background_tasks is not None and push_automatico.despacho_habilitado():
         background_tasks.add_task(push_automatico.processar_fila)
@@ -419,21 +480,42 @@ def alertas_prazos(request: Request, db: Session = Depends(sessao)):
     }
 
 
+def expressao_aviso_resolvido(db, user):
+    a, s, p, e = models.ServicoAviso, models.ServicoInterno, models.ServicoParticipante, models.ServicoEvento
+    vinculo = db.query(p.id).filter(p.servico_id == a.servico_id, p.usuario_id == a.usuario_id)
+    tem_execucao = vinculo.filter(p.papel == 'executor', p.status.in_((STATUS_EXECUCAO, STATUS_EXEC_CONCLUIDO))).exists()
+    tem_ciencia = vinculo.filter(p.status != STATUS_NOVO).exists()
+    tem_fiscalizacao = vinculo.filter(p.papel == 'fiscalizador', p.status.in_((STATUS_FISC_APROVADO, STATUS_DISPENSADO))).exists()
+    concluiu = vinculo.filter(p.papel == 'executor', p.status == STATUS_EXEC_CONCLUIDO).exists()
+    anterior_a_devolucao = db.query(e.id).filter(e.servico_id == a.servico_id, e.acao == 'devolver', e.id > a.evento_id).exists()
+    fechou = s.status == STATUS_FECHADO
+    # Tipos NULL são legados: não inferir a intenção pelo texto da mensagem.
+    # 'servico_validado' é informativo e permanece até a leitura real.
+    ciencia = tem_execucao if user.perfil == 'Controladoria' else tem_ciencia
+    return case(
+        (a.tipo_evento == 'nova_tarefa', or_(fechou, ciencia, and_(~vinculo.exists(), s.status != STATUS_NOVO))),
+        (a.tipo_evento == 'designacao_fiscal', or_(fechou, tem_ciencia, user.perfil == 'Controladoria')),
+        (a.tipo_evento == 'pronto_fiscalizacao', or_(fechou, tem_fiscalizacao, anterior_a_devolucao, s.status != STATUS_FISCALIZACAO, user.perfil == 'Controladoria')),
+        (a.tipo_evento == 'validacao_final', or_(fechou, anterior_a_devolucao, s.status != STATUS_VALIDACAO)),
+        (a.tipo_evento == 'devolucao', or_(fechou, concluiu, anterior_a_devolucao)),
+        else_=False,
+    )
+
+
 @router.get('/notificacoes')
 def notificacoes(request: Request, db: Session = Depends(sessao)):
     user = obter_usuario(request, db)
     # Um aviso pendente antigo nao pode sumir porque surgiram 100 avisos
     # ja lidos depois dele. Ordenar PRIMEIRO os nao lidos, depois os IDs.
     # A regra se aplica apos o filtro atual de acesso por condominio.
-    ordem_pendente = case(
-        (models.ServicoAviso.lida_em.is_(None), 0),
-        else_=1,
-    )
-    avisos = _avisos_visiveis(db, user).order_by(
+    resolvido = expressao_aviso_resolvido(db, user)
+    ordem_pendente = case((and_(models.ServicoAviso.lida_em.is_(None), ~resolvido), 0), else_=1)
+    avisos = _avisos_visiveis(db, user).add_columns(resolvido.label('resolvido')).order_by(
         ordem_pendente.asc(), models.ServicoAviso.id.desc()
     ).limit(100).all()
     return [{'id': a.id, 'servico_id': a.servico_id, 'mensagem': a.mensagem,
-             'lida': bool(a.lida_em), 'criada_em': a.criado_em.isoformat()} for a in avisos]
+             'lida': bool(a.lida_em) or bool(resolvido), 'resolvido': bool(resolvido),
+             'criada_em': a.criado_em.isoformat()} for a, resolvido in avisos]
 
 
 @router.post('/notificacoes/{aviso_id}/ler')
@@ -479,9 +561,11 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
     garantir_participantes_legados(db, servico)
     pessoas = participantes(db, servico)
     eu = next((p for p in pessoas if p.usuario_id == user.id), None)
+    perfis = perfis_participantes(db, pessoas)
+    atual = status_efetivo(servico, pessoas, perfis)
     acao = dados.acao
     observacao = dados.observacao.strip()
-    if acao in ('concluir', 'devolver') and len(observacao) < 10:
+    if (acao == 'devolver' or (acao == 'concluir' and user.perfil != 'Checklist')) and len(observacao) < 10:
         raise HTTPException(400, detail='Informe uma observação com pelo menos 10 caracteres.')
     if servico.status == STATUS_FECHADO:
         raise HTTPException(409, detail='Serviço já concluído.')
@@ -490,15 +574,15 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
     if acao == 'confirmar':
         if not eu:
             raise HTTPException(403, detail='Você não está designado a este serviço.')
-        if eu.status != STATUS_NOVO:
-            raise HTTPException(409, detail='Recebimento já confirmado ou indisponível.')
+        if user.perfil == 'Controladoria' or eu.status != STATUS_NOVO:
+            raise HTTPException(409, detail='Ciência dispensada ou recebimento já confirmado.')
         eu.status = STATUS_CIENTE
         eu.confirmado_em = agora()
         evento_atual = evento(db, servico, user, 'confirmar', f'{eu.papel}: confirmou recebimento. {observacao}')
     elif acao == 'iniciar':
         if not eu or eu.papel != 'executor':
             raise HTTPException(403, detail='Somente executor designado pode iniciar.')
-        if eu.status != STATUS_CIENTE:
+        if status_participante(eu, perfis) != STATUS_CIENTE:
             raise HTTPException(409, detail='Confirme o recebimento antes de iniciar.')
         eu.status = STATUS_EXECUCAO
         eu.iniciado_em = agora()
@@ -508,29 +592,36 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
             raise HTTPException(403, detail='Somente executor designado pode concluir.')
         if eu.status != STATUS_EXECUCAO:
             raise HTTPException(409, detail='Inicie sua etapa antes de concluir.')
+        if user.perfil == 'Checklist' and not foto_conclusao(db, servico, eu):
+            raise HTTPException(400, detail='Anexe uma foto de depois da execução, enviada por você nesta etapa.')
         eu.status = STATUS_EXEC_CONCLUIDO
         eu.concluido_em = agora()
         evento_atual = evento(db, servico, user, 'concluir', observacao)
     elif acao == 'validar':
-        if servico.status == STATUS_FISCALIZACAO:
-            if not eu or eu.papel != 'fiscalizador':
+        if atual == STATUS_FISCALIZACAO:
+            if not eu or eu.papel != 'fiscalizador' or user.perfil == 'Controladoria':
                 raise HTTPException(403, detail='Somente fiscalizador designado pode fiscalizar.')
             if eu.status != STATUS_CIENTE:
                 raise HTTPException(409, detail='Confirme ciência antes de fiscalizar.')
             eu.status = STATUS_FISC_APROVADO
             eu.validado_em = agora()
             evento_atual = evento(db, servico, user, 'fiscalizar', observacao or 'Fiscalização aprovada.')
-        elif servico.status == STATUS_VALIDACAO:
+        elif atual == STATUS_VALIDACAO:
             if user.perfil != 'Controladoria':
                 raise HTTPException(403, detail='Somente Controladoria pode encerrar.')
+            for p in pessoas:
+                if p.papel == 'fiscalizador' and perfis.get(p.usuario_id) == 'Controladoria' and p.status != STATUS_FISC_APROVADO:
+                    p.status = STATUS_FISC_APROVADO if p.usuario_id == user.id else STATUS_DISPENSADO
+                    if p.usuario_id == user.id:
+                        p.validado_em = agora()
             servico.status = STATUS_FECHADO
             evento_atual = evento(db, servico, user, 'validar', observacao or 'Serviço validado pela Controladoria.')
             publicar_para(db, servico, pessoas, f'Serviço validado: {servico.titulo}', excluir=user.id, evento_origem=evento_atual, tipo_evento='servico_validado')
         else:
             raise HTTPException(409, detail='Ainda não é possível validar o serviço.')
     elif acao == 'devolver':
-        pode_fiscalizar = servico.status == STATUS_FISCALIZACAO and eu and eu.papel == 'fiscalizador' and eu.status == STATUS_CIENTE
-        pode_gestor = servico.status == STATUS_VALIDACAO and user.perfil == 'Controladoria'
+        pode_fiscalizar = atual == STATUS_FISCALIZACAO and eu and eu.papel == 'fiscalizador' and eu.status == STATUS_CIENTE and user.perfil != 'Controladoria'
+        pode_gestor = atual == STATUS_VALIDACAO and user.perfil == 'Controladoria'
         if not (pode_fiscalizar or pode_gestor):
             raise HTTPException(403, detail='Você não pode devolver neste momento.')
         for p in pessoas:
@@ -548,14 +639,15 @@ def atualizar(servico_id: int, dados: ServicoAcao, request: Request, db: Session
 
     if servico.status != STATUS_FECHADO:
         anterior = servico.status
-        servico.status = derivar_status(pessoas)
+        servico.status = derivar_status(pessoas, perfis)
         if anterior != servico.status:
             if servico.status == STATUS_FISCALIZACAO:
-                publicar_para(db, servico, [p for p in pessoas if p.papel == 'fiscalizador'],
+                publicar_para(db, servico, fiscais_independentes(pessoas, perfis),
                               f'Serviço pronto para fiscalização: {servico.titulo}', evento_origem=evento_atual, tipo_evento='pronto_fiscalizacao')
             elif servico.status == STATUS_VALIDACAO:
-                notificar(db, servico.criador_id, servico,
-                          f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual, tipo_evento='validacao_final')
+                destinos = {servico.criador_id} | {p.usuario_id for p in pessoas if p.papel == 'fiscalizador' and perfis.get(p.usuario_id) == 'Controladoria'}
+                for uid in sorted(d for d in destinos if d is not None):
+                    notificar(db, uid, servico, f'Serviço aguardando validação final: {servico.titulo}', evento_origem=evento_atual, tipo_evento='validacao_final')
     servico.atualizado_em = agora()
     db.commit()
     if background_tasks is not None and push_automatico.despacho_habilitado():
@@ -608,7 +700,11 @@ async def adicionar_foto(
         raise HTTPException(400, detail='Legenda muito longa (máximo 250 caracteres).')
     total = db.query(models.ServicoFoto).filter(models.ServicoFoto.servico_id == servico_id).count()
     if total >= MAX_FOTOS_SERVICO:
-        raise HTTPException(409, detail=f'Limite de {MAX_FOTOS_SERVICO} fotos por serviço atingido.')
+        # Não impedir a evidência obrigatória caso as fotos opcionais esgotem o limite.
+        me = next((p for p in participantes(db, servico) if p.usuario_id == user.id and p.papel == 'executor'), None)
+        excecao = user.perfil == 'Checklist' and etapa == 'depois' and me is not None and me.status == STATUS_EXECUCAO and not foto_conclusao(db, servico, me)
+        if not excecao:
+            raise HTTPException(409, detail=f'Limite de {MAX_FOTOS_SERVICO} fotos por serviço atingido.')
     if foto.content_type not in ('image/jpeg', 'image/png', 'image/webp'):
         raise HTTPException(415, detail='Envie JPG, PNG ou WebP.')
     bruto = await foto.read(MAX_FOTO_ENTRADA + 1)

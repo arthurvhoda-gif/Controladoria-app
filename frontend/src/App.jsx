@@ -843,10 +843,11 @@ function App() {
     if (!usuarioLogado?.token || !['Controladoria', 'Checklist', 'Solicitante'].includes(usuarioLogado?.perfil)) return
     let ativo = true
     queueMicrotask(() => { if (ativo) atualizarAvisosServicosNoEfeito() })
-    const atualizar = () => { if (document.visibilityState === 'visible') atualizarAvisosServicosNoEfeito() }
-    const intervalo = setInterval(atualizar, 45000)
+    const atualizar = () => { if (document.visibilityState === 'visible' && !requisicaoAvisosServicosRef.current) atualizarAvisosServicosNoEfeito() }
+    const intervalo = setInterval(atualizar, 5000)
     window.addEventListener('focus', atualizar)
-    return () => { ativo = false; clearInterval(intervalo); window.removeEventListener('focus', atualizar) }
+    document.addEventListener('visibilitychange', atualizar)
+    return () => { ativo = false; clearInterval(intervalo); window.removeEventListener('focus', atualizar); document.removeEventListener('visibilitychange', atualizar) }
   }, [usuarioLogado?.token, usuarioLogado?.perfil])
 
   const atualizarAlertasNoEfeito = useEffectEvent(() => { carregarAlertasChecklist() })

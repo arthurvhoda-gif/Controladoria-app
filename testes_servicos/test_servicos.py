@@ -26,6 +26,21 @@ models.Base.metadata.create_all(stub.engine)
 api.SessionLocal = stub.SessionLocal
 
 
+def anexar_evidencia_teste(db, servico_id, request):
+    # Usa a mesma rota de upload do aplicativo; nenhuma foto simulada no banco.
+    import asyncio
+    from io import BytesIO
+    from PIL import Image
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+    arquivo = BytesIO()
+    Image.new('RGB', (32, 32), 'blue').save(arquivo, 'PNG')
+    arquivo.seek(0)
+    return asyncio.run(api.adicionar_foto(servico_id, request,
+        UploadFile(file=arquivo, filename='evidencia.png', headers=Headers({'content-type': 'image/png'})),
+        etapa='depois', legenda='', db=db))
+
+
 class ServicosTeste(unittest.TestCase):
     def setUp(self):
         models.Base.metadata.drop_all(stub.engine)
@@ -62,9 +77,11 @@ class ServicosTeste(unittest.TestCase):
             (2, 'concluir', 'Finalizado com revisão visual.', 'Aguardando validação'),
             (1, 'validar', 'Verificação presencial concluída.', 'Concluído'),
         ]:
+            if acao == 'concluir':
+                anexar_evidencia_teste(self.db, s['id'], self.req(usuario))
             res = api.atualizar(s['id'], api.ServicoAcao(acao=acao, observacao=observacao), self.req(usuario), self.db)
             self.assertEqual(res['status'], status)
-        self.assertEqual(len(api.historico(s['id'], self.req(1), self.db)), 5)
+        self.assertEqual(len(api.historico(s['id'], self.req(1), self.db)), 6)
         self.assertEqual(len(api.notificacoes(self.req(1), self.db)), 1)
 
     def test_restricoes_por_condominio_e_perfil(self):

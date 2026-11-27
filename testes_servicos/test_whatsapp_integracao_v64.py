@@ -76,7 +76,7 @@ class DiagnosticoPreviaV64Teste(unittest.TestCase):
         self.cenario.acao(servico, 2, 'confirmar')
         self.cenario.acao(servico, 6, 'confirmar')
         self.cenario.acao(servico, 2, 'iniciar')
-        self.cenario.acao(servico, 2, 'concluir', 'Concluido em teste.')
+        self.cenario.concluir_com_foto(servico, 2, 'Concluido em teste.')
         self.cenario.acao(servico, 6, 'validar', 'Fiscalizacao aprovada.')
         self.cenario.acao(servico, 1, 'validar', 'Validacao final.')
         result = self.previas()

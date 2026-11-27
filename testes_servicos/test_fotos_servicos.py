@@ -57,6 +57,8 @@ class FotoSeguranca(unittest.TestCase):
         s=self.servico
         self.base.req(2)
         for a,uid,msg in [('confirmar',2,''),('iniciar',2,''),('concluir',2,'Minha etapa concluída integralmente.'),('validar',1,'')]:
+            if a == 'concluir':
+                self.envia(uid, etapa='depois')
             api.atualizar(s['id'],api.ServicoAcao(acao=a,observacao=msg),self.base.req(uid),self.db)
         with self.assertRaises(HTTPException) as cm: self.envia(2)
         self.assertEqual(cm.exception.status_code,409)

@@ -73,7 +73,7 @@ class FilaWhatsAppEventosV62Teste(unittest.TestCase):
             self.cenario.acao(servico, uid, 'confirmar')
         for uid in (2, 5):
             self.cenario.acao(servico, uid, 'iniciar')
-            self.cenario.acao(servico, uid, 'concluir', 'Concluido em teste.')
+            self.cenario.concluir_com_foto(servico, uid, 'Concluido em teste.')
         # Finalizada a execucao, apenas o fiscalizador deve ser avisado.
         self.assertEqual(self.destinatarios(servico['id'])[-1:], [6])
         self.cenario.acao(servico, 6, 'validar', 'Fiscalizacao aprovada.')
@@ -91,7 +91,7 @@ class FilaWhatsAppEventosV62Teste(unittest.TestCase):
         self.cenario.acao(servico, 2, 'confirmar')
         self.cenario.acao(servico, 6, 'confirmar')
         self.cenario.acao(servico, 2, 'iniciar')
-        self.cenario.acao(servico, 2, 'concluir', 'Etapa de teste concluida.')
+        self.cenario.concluir_com_foto(servico, 2, 'Etapa de teste concluida.')
         antes = len(self.itens(servico['id']))
         self.cenario.acao(servico, 6, 'devolver', 'Necessita ajuste.')
         novos = self.itens(servico['id'])[antes:]
