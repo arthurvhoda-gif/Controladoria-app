@@ -956,6 +956,8 @@ def criar_solicitacao(sol: schemas.SolicitacaoCreate, request: Request, db: Sess
         else "Solicitação criada e enviada para análise da Controladoria"
     )
     registrar_historico_seguro(db, nova_sol.id, acao_txt, request.state.auth_user_name)
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(nova_sol)
 
     return nova_sol
 
@@ -1005,6 +1007,8 @@ def atualizar_solicitacao(solicitacao_id: int, sol: schemas.SolicitacaoCreate, r
         "Solicitação editada/corrigida pelo solicitante",
         request.state.auth_user_name
     )
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(db_sol)
     return db_sol
 
 
@@ -1033,6 +1037,8 @@ def atualizar_status_solicitacao(solicitacao_id: int, dados: schemas.StatusUpdat
         detalhe += f" — Motivo: {dados.motivo_ajuste}"
 
     registrar_historico_seguro(db, db_sol.id, detalhe, request.state.auth_user_name)
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(db_sol)
     return db_sol
 
 
@@ -1059,6 +1065,8 @@ def iniciar_execucao_solicitacao(
         db, db_sol.id, "Solicitação enviada para execução",
         request.state.auth_user_name,
     )
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(db_sol)
     return db_sol
 
 
@@ -1095,6 +1103,8 @@ def finalizar_solicitacao(
         f"Solicitação finalizada (Valor Realizado: R$ {db_sol.valor_realizado:.2f})",
         request.state.auth_user_name,
     )
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(db_sol)
     return db_sol
 
 
@@ -1254,6 +1264,8 @@ def upload_anexo_solicitacao(
         f"Arquivo anexado ({tipo}): {nome_original}",
         request.state.auth_user_name
     )
+    # O commit do historico expira os objetos ORM da sessao.
+    db.refresh(novo_anexo)
     return novo_anexo
 
 

@@ -76,6 +76,7 @@ def migrar():
         for tabela in ('anexos','historico_solicitacoes'):
             assert any(f['referred_table']=='solicitacoes' for f in dbi.get_foreign_keys(tabela))
             assert not any(f['referred_table']=='solicitacoes_compra' for f in dbi.get_foreign_keys(tabela))
+    print('MIGRACAO: duas aplicacoes, colunas e referencias verificadas.',flush=True)
     import main as api
     import auth_utils
     from fastapi.testclient import TestClient
@@ -92,19 +93,30 @@ def migrar():
         assert len(client.get('/solicitacoes',headers=h).json())==2
         p=client.post('/solicitacoes',headers=hs,json={'condominio':'Alfa ficticio','condominio_id':1,'categoria':'Teste','fornecedor':'Ficticio','descricao':'Compra nova','valor_produto':100})
         assert p.status_code==200,p.text
+        assert isinstance(p.json(),dict) and 'id' in p.json(), p.text
         sid=p.json()['id']
         assert sid>2
         hist=client.get(f'/solicitacoes/{sid}/historico',headers=hs)
         assert hist.status_code==200 and len(hist.json())==1,hist.text
-        up=client.post(f'/solicitacoes/{sid}/anexos',headers=hs,files={'arquivo':('orcamento.txt',b'Arquivo ficticio','text/plain')},data={'tipo':'Orcamento'})
-        # O uploader pode restringir extensoes. Validar com PDF real se TXT rejeitado.
-        if up.status_code!=200:
-            from io import BytesIO
-            from reportlab.pdfgen import canvas
-            arq=BytesIO(); pdf=canvas.Canvas(arq); pdf.drawString(20,20,'Ficticio'); pdf.save()
-            up=client.post(f'/solicitacoes/{sid}/anexos',headers=hs,files={'arquivo':('orcamento.pdf',arq.getvalue(),'application/pdf')},data={'tipo':'Orcamento'})
+        from io import BytesIO
+        from reportlab.pdfgen import canvas
+        arq=BytesIO(); pdf=canvas.Canvas(arq); pdf.drawString(20,20,'Ficticio'); pdf.save()
+        up=client.post(f'/solicitacoes/{sid}/anexos',headers=hs,files={'arquivo':('orcamento.pdf',arq.getvalue(),'application/pdf')},data={'tipo':'Orcamento'})
         assert up.status_code==200,up.text
-        assert client.get(f'/anexos/{up.json()["id"]}/download',headers=hs).status_code==200
+        assert isinstance(up.json(),dict) and 'id' in up.json(),up.text
+        download=client.get(f'/anexos/{up.json()["id"]}/download',headers=hs)
+        assert download.status_code==200 and download.content==arq.getvalue()
+        atual=client.put(f'/solicitacoes/{sid}',headers=hs,json={'condominio':'Alfa ficticio','condominio_id':1,'categoria':'Teste','fornecedor':'Ficticio','descricao':'Compra editada','valor_produto':100})
+        assert atual.status_code==200 and atual.json().get('id')==sid,atual.text
+        aprovado=client.put(f'/solicitacoes/{sid}/status',headers=h,json={'status':'Aprovada','valor_aprovado':100})
+        assert aprovado.status_code==200 and aprovado.json().get('status')=='Aprovada',aprovado.text
+        iniciado=client.put(f'/solicitacoes/{sid}/iniciar-execucao',headers=hs,json={})
+        assert iniciado.status_code==200 and iniciado.json().get('status')=='Em execução',iniciado.text
+        final=client.put(f'/solicitacoes/{sid}/finalizar',headers=hs,json={'valor_realizado':90})
+        assert final.status_code==200 and final.json().get('status')=='Finalizada',final.text
+        hist=client.get(f'/solicitacoes/{sid}/historico',headers=hs)
+        assert hist.status_code==200 and len(hist.json())==6,hist.text
+        print('API: compra, anexo, edicao, aprovacao, inicio, conclusao e historico aprovados.',flush=True)
         ck=client.post('/checklists',headers=h,json={'condominio':'Alfa ficticio','condominio_id':1,'titulo':'Inspecao ficticia','frequencia':'Diária'})
         assert ck.status_code==200,ck.text
         vi=client.post(f'/checklists/{ck.json()["id"]}/executar',headers=h,data={'responsavel':'Ficticio','status_conformidade':'Conforme'})
