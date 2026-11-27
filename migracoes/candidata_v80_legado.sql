@@ -45,15 +45,16 @@ ALTER TABLE public.anexos ALTER COLUMN data_upload TYPE varchar USING data_uploa
 ALTER TABLE public.historico_solicitacoes ALTER COLUMN data TYPE varchar USING data::text;
 -- Preservar relatórios órfãos, sem reutilizar seus identificadores de execução.
 DO $m$
-DECLARE proximo bigint; reservado bigint; ultimo bigint; chamado boolean;
+DECLARE proximo bigint; reservado bigint; ultimo bigint; chamado boolean; atual bigint;
 BEGIN
-  IF pg_get_serial_sequence('public.checklist_execucoes','id') <> 'public.checklist_execucoes_id_seq'
+  IF pg_get_serial_sequence('public.checklist_execucoes','id') IS DISTINCT FROM 'public.checklist_execucoes_id_seq'
   THEN RAISE EXCEPTION 'Sequencia de checklist inesperada'; END IF;
   SELECT last_value,is_called INTO ultimo,chamado FROM public.checklist_execucoes_id_seq;
   SELECT GREATEST(COALESCE((SELECT max(id) FROM public.checklist_execucoes),0),
                   COALESCE((SELECT max(execucao_id) FROM public.checklist_envios_relatorios),0)) INTO reservado;
-  proximo := GREATEST(ultimo + CASE WHEN chamado THEN 1 ELSE 0 END,reservado+1);
-  IF proximo>ultimo+CASE WHEN chamado THEN 1 ELSE 0 END THEN
+  atual := ultimo + (CASE WHEN chamado THEN 1 ELSE 0 END);
+  proximo := GREATEST(atual, reservado + 1);
+  IF proximo > atual THEN
     EXECUTE format('ALTER SEQUENCE public.checklist_execucoes_id_seq RESTART WITH %s',proximo);
   END IF;
 END $m$;
