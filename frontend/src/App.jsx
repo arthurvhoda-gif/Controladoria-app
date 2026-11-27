@@ -1631,8 +1631,8 @@ function App() {
       return
     }
     const fracao = numero(novaUnidade.fracao_ideal)
-    if (fracao <= 0) {
-      mostrarToast('A fração ideal deve ser maior que zero.', 'error')
+    if (fracao <= 0 || fracao > 100) {
+      mostrarToast('A fração ideal deve ser maior que zero e menor ou igual a 100%.', 'error')
       return
     }
 
@@ -1681,10 +1681,11 @@ function App() {
           cache: 'no-store',
           signal: controller.signal
         })
-        const dados = res.ok ? await res.json() : null
-        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados })
-      } catch {
-        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados: null })
+        if (!res.ok) throw new Error(await extrairErro(res, 'Não foi possível calcular o rateio.'))
+        const dados = await res.json()
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados, erro: '' })
+      } catch (erro) {
+        if (!controller.signal.aborted) setResultadoRateio({ chave: chaveRateio, dados: null, erro: erro.message || 'Não foi possível calcular o rateio.' })
       }
     }
     consultarRateio()
@@ -3392,11 +3393,16 @@ function App() {
               <section className="panel analise-rateio-painel">
                 <div className="analise-secao-cabecalho"><div><span className="eyebrow">DISTRIBUIÇÃO POR FRAÇÃO IDEAL</span><h3>Rateio — {filtroCondominioAnalise}</h3><p>Rateio de solicitações finalizadas; consulte as unidades cadastradas para revisar as frações.</p></div></div>
                 <div className="analise-aviso" role="note"><IconeHaize nome="clock" tamanho={18}/><span>O rateio utiliza <strong>{filtroDataInicio ? `o mês ${filtroDataInicio.slice(0, 7).split('-').reverse().join('/')}` : 'todo o histórico'}</strong> conforme a API atual. Ele não aplica o intervalo exato de datas selecionado acima.</span></div>
-                {carregandoRateio ? <div className="analise-rateio-estado">Calculando rateio...</div> : !rateioDados || (rateioDados.rateio_unidades || []).length === 0 ? (
+                {carregandoRateio ? <div className="analise-rateio-estado">Calculando rateio...</div> : resultadoRateio.chave === chaveRateio && resultadoRateio.erro ? (
+                  <div className="analise-aviso" role="alert">{resultadoRateio.erro}</div>
+                ) : !rateioDados || (rateioDados.rateio_unidades || []).length === 0 ? (
                   <div className="analise-rateio-estado">Nenhuma unidade ou fração cadastrada para este condomínio. Configure as unidades no cadastro de condomínios.</div>
                 ) : (
                   <>
                     <div className="analise-rateio-total"><span>Total considerado pelo rateio</span><strong>{formatarValor(rateioDados.total_gasto_condominio)}</strong><small>{rateioDados.quantidade_solicitacoes} solicitação(ões) finalizada(s)</small></div>
+                    {rateioDados.percentual_cadastrado != null && rateioDados.percentual_cadastrado < 100 && (
+                      <div className="analise-aviso" role="note">Cadastro parcial: {formatarNumero(rateioDados.percentual_cadastrado)}% das frações. Total rateado: {formatarValor(rateioDados.total_rateado)}. Saldo não rateado: {formatarValor(rateioDados.saldo_nao_rateado)}. Complete as frações antes de utilizar o rateio para cobrança.</div>
+                    )}
                     <div className="analise-tabela-rolagem">
                       <table className="analise-tabela analise-rateio-tabela">
                         <thead><tr><th>Unidade</th><th>Fração ideal</th><th>Valor rateado</th></tr></thead>

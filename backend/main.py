@@ -7,6 +7,7 @@ import io
 import logging
 import hmac
 from math import isfinite
+from fractions import Fraction
 import unicodedata
 from datetime import timedelta
 from html import escape
@@ -585,16 +586,78 @@ def listar_unidades(condominio_id: int, db: Session = Depends(get_db)):
     )
 
 
+# Frações são percentuais. Usar razões exatas a partir da representação
+# decimal evita a imprecisão binária de floats no cálculo dos centavos.
+_TOLERANCIA_FRACAO = Fraction('0.000000001')
+
+
+def _fracao_rateio(valor):
+    try:
+        fracao = Fraction(str(valor))
+    except (ValueError, TypeError, ZeroDivisionError, OverflowError):
+        raise ValueError('A fração ideal deve ser um número finito.') from None
+    if not 0 < fracao <= 100:
+        raise ValueError('A fração ideal deve ser maior que zero e menor ou igual a 100%.')
+    return fracao
+
+
+def _validar_fracoes_rateio(valores):
+    fracoes = [_fracao_rateio(v) for v in valores]
+    soma = sum(fracoes, Fraction(0))
+    if soma > 100 + _TOLERANCIA_FRACAO:
+        raise ValueError('A soma das frações ideais não pode ultrapassar 100%.')
+    return fracoes, soma
+
+
+def _arredondar_rateio(valor):
+    # Meio centavo arredonda para longe de zero, inclusive para créditos.
+    sinal = -1 if valor < 0 else 1
+    valor = abs(valor)
+    inteiro, resto = divmod(valor.numerator, valor.denominator)
+    return sinal * (inteiro + int(resto * 2 >= valor.denominator))
+
+
+def _distribuir_rateio(total_centavos, unidades):
+    """Maior resto, desempate estável por ID; cadastro parcial não é normalizado."""
+    fracoes, soma = _validar_fracoes_rateio([u.fracao_ideal for u in unidades])
+    completo = bool(fracoes) and abs(soma - 100) <= _TOLERANCIA_FRACAO
+    denominador = soma if completo else Fraction(100)
+    quotas = [abs(total_centavos) * f / denominador for f in fracoes]
+    alvo = _arredondar_rateio(sum(quotas, Fraction(0)))
+    parcelas = [q.numerator // q.denominator for q in quotas]
+    ordem = sorted(range(len(quotas)), key=lambda i: (-(quotas[i] - parcelas[i]), unidades[i].id))
+    for i in ordem[:alvo - sum(parcelas)]:
+        parcelas[i] += 1
+    sinal = -1 if total_centavos < 0 else 1
+    return [sinal * p for p in parcelas], Fraction(100) if completo else soma
+
+
 @app.post("/condominios/{condominio_id}/unidades", response_model=schemas.UnidadeResponse)
 def criar_unidade(condominio_id: int, unidade: schemas.UnidadeCreate, db: Session = Depends(get_db)):
-    cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).first()
+    # Serializa cadastros do mesmo condomínio no PostgreSQL: dois usuários
+    # não podem validar simultaneamente a mesma soma de frações.
+    cond = db.query(models.Condominio).filter(models.Condominio.id == condominio_id).with_for_update().first()
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
 
+    try:
+        fracao = _fracao_rateio(unidade.fracao_ideal)
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from None
+    identificacao = unidade.identificacao.strip()
+    if not identificacao:
+        raise HTTPException(status_code=422, detail='Informe a identificação da unidade.')
+    existentes = db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).all()
+    try:
+        _validar_fracoes_rateio([u.fracao_ideal for u in existentes])
+        _validar_fracoes_rateio([u.fracao_ideal for u in existentes] + [unidade.fracao_ideal])
+    except ValueError as erro:
+        raise HTTPException(status_code=409, detail=str(erro)) from None
+
     nova = models.Unidade(
         condominio_id=condominio_id,
-        identificacao=unidade.identificacao.strip(),
-        fracao_ideal=float(unidade.fracao_ideal or 0.0)
+        identificacao=identificacao,
+        fracao_ideal=float(fracao)
     )
     db.add(nova)
     db.commit()
@@ -622,7 +685,7 @@ def calcular_rateio_condominio(
     if not cond:
         raise HTTPException(status_code=404, detail="Condomínio não encontrado.")
 
-    unidades = db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).all()
+    unidades = db.query(models.Unidade).filter(models.Unidade.condominio_id == condominio_id).order_by(models.Unidade.id).all()
     query_sols = db.query(models.Solicitacao).filter(
         models.Solicitacao.condominio == cond.nome,
         models.Solicitacao.status == "Finalizada"
@@ -632,27 +695,36 @@ def calcular_rateio_condominio(
         query_sols = query_sols.filter(models.Solicitacao.data.startswith(mes))
 
     solicitacoes_finalizadas = query_sols.all()
-    total_gasto = sum(
-        float(s.valor_realizado or s.valor_aprovado or s.valor or 0.0)
-        for s in solicitacoes_finalizadas
-    )
+    try:
+        # Preserva o critério legado de escolha do valor; arredonda o total
+        # monetário uma única vez antes de distribuir seus centavos.
+        total_centavos = _arredondar_rateio(sum((
+            Fraction(str(s.valor_realizado or s.valor_aprovado or s.valor or 0.0)) * 100
+            for s in solicitacoes_finalizadas
+        ), Fraction(0)))
+        parcelas, soma = _distribuir_rateio(total_centavos, unidades)
+    except (ValueError, TypeError, ZeroDivisionError, OverflowError) as erro:
+        raise HTTPException(status_code=409, detail=f'Rateio bloqueado: revise os valores e as frações cadastradas. {erro}') from None
 
-    rateio_lista = []
-    for u in unidades:
-        fracao = float(u.fracao_ideal or 0.0)
-        valor_devido = (total_gasto * fracao) / 100.0
-        rateio_lista.append({
+    rateio_lista = [
+        {
             "unidade_id": u.id,
             "unidade": u.identificacao,
-            "fracao_ideal": fracao,
-            "valor_devido": round(valor_devido, 2)
-        })
+            "fracao_ideal": float(u.fracao_ideal),
+            "valor_devido": centavos / 100
+        }
+        for u, centavos in zip(unidades, parcelas)
+    ]
+    total_rateado = sum(parcelas)
 
     return {
         "condominio": cond.nome,
         "mes": mes or "Todos",
-        "total_gasto_condominio": round(total_gasto, 2),
+        "total_gasto_condominio": total_centavos / 100,
         "quantidade_solicitacoes": len(solicitacoes_finalizadas),
+        "percentual_cadastrado": float(soma),
+        "total_rateado": total_rateado / 100,
+        "saldo_nao_rateado": (total_centavos - total_rateado) / 100,
         "rateio_unidades": rateio_lista
     }
 
