@@ -1,7 +1,7 @@
 name: Haize V8 - Ensaio isolado de migracao PostgreSQL 18
 on:
   push:
-    branches: [haize-v80-ensaio-migracao-pg18]
+    branches: [haize-v80-ensaio-migracao-pg18, haize-intelligence-v80-autonoma]
 permissions:
   contents: read
 jobs:
