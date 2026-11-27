@@ -139,25 +139,26 @@ CREATE TABLE public."usuarios" (
   "perfil" character varying,
   "condominio_id" integer
 );
+-- Primeiro todas as chaves primarias; depois as referencias entre tabelas.
 ALTER TABLE public."anexos" ADD CONSTRAINT "anexos_pkey" PRIMARY KEY (id);
-ALTER TABLE public."anexos" ADD CONSTRAINT "anexos_solicitacao_id_fkey" FOREIGN KEY (solicitacao_id) REFERENCES solicitacoes_compra(id);
 ALTER TABLE public."categorias" ADD CONSTRAINT "categorias_pkey" PRIMARY KEY (id);
 ALTER TABLE public."checklist_envios_relatorios" ADD CONSTRAINT "checklist_envios_relatorios_pkey" PRIMARY KEY (id);
-ALTER TABLE public."checklist_execucoes" ADD CONSTRAINT "checklist_execucoes_item_id_fkey" FOREIGN KEY (item_id) REFERENCES checklist_itens(id);
 ALTER TABLE public."checklist_execucoes" ADD CONSTRAINT "checklist_execucoes_pkey" PRIMARY KEY (id);
 ALTER TABLE public."checklist_itens" ADD CONSTRAINT "checklist_itens_pkey" PRIMARY KEY (id);
 ALTER TABLE public."condominios" ADD CONSTRAINT "condominios_pkey" PRIMARY KEY (id);
 ALTER TABLE public."fornecedores" ADD CONSTRAINT "fornecedores_pkey" PRIMARY KEY (id);
 ALTER TABLE public."historico_solicitacoes" ADD CONSTRAINT "historico_solicitacoes_pkey" PRIMARY KEY (id);
-ALTER TABLE public."historico_solicitacoes" ADD CONSTRAINT "historico_solicitacoes_solicitacao_id_fkey" FOREIGN KEY (solicitacao_id) REFERENCES solicitacoes_compra(id);
 ALTER TABLE public."limites_categoria_condominio" ADD CONSTRAINT "limites_categoria_condominio_pkey" PRIMARY KEY (id);
 ALTER TABLE public."playing_with_neon" ADD CONSTRAINT "playing_with_neon_pkey" PRIMARY KEY (id);
-ALTER TABLE public."solicitacoes" ADD CONSTRAINT "solicitacoes_condominio_id_fkey" FOREIGN KEY (condominio_id) REFERENCES condominios(id);
 ALTER TABLE public."solicitacoes" ADD CONSTRAINT "solicitacoes_pkey" PRIMARY KEY (id);
 ALTER TABLE public."solicitacoes_compra" ADD CONSTRAINT "solicitacoes_compra_pkey" PRIMARY KEY (id);
-ALTER TABLE public."unidades" ADD CONSTRAINT "unidades_condominio_id_fkey" FOREIGN KEY (condominio_id) REFERENCES condominios(id);
 ALTER TABLE public."unidades" ADD CONSTRAINT "unidades_pkey" PRIMARY KEY (id);
 ALTER TABLE public."usuarios" ADD CONSTRAINT "usuarios_pkey" PRIMARY KEY (id);
+ALTER TABLE public."anexos" ADD CONSTRAINT "anexos_solicitacao_id_fkey" FOREIGN KEY (solicitacao_id) REFERENCES solicitacoes_compra(id);
+ALTER TABLE public."checklist_execucoes" ADD CONSTRAINT "checklist_execucoes_item_id_fkey" FOREIGN KEY (item_id) REFERENCES checklist_itens(id);
+ALTER TABLE public."historico_solicitacoes" ADD CONSTRAINT "historico_solicitacoes_solicitacao_id_fkey" FOREIGN KEY (solicitacao_id) REFERENCES solicitacoes_compra(id);
+ALTER TABLE public."solicitacoes" ADD CONSTRAINT "solicitacoes_condominio_id_fkey" FOREIGN KEY (condominio_id) REFERENCES condominios(id);
+ALTER TABLE public."unidades" ADD CONSTRAINT "unidades_condominio_id_fkey" FOREIGN KEY (condominio_id) REFERENCES condominios(id);
 CREATE INDEX ix_anexos_id ON public.anexos USING btree (id);
 CREATE INDEX ix_categorias_id ON public.categorias USING btree (id);
 CREATE UNIQUE INDEX ix_categorias_nome ON public.categorias USING btree (nome);
