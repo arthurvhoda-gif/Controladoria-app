@@ -1622,7 +1622,10 @@ def _processar_envio_execucao(envio_id: int):
                  models.ChecklistEnvioRelatorio.inicio_tentativa < vencido),
         )
         linhas = db.query(models.ChecklistEnvioRelatorio).filter(
-            models.ChecklistEnvioRelatorio.id == envio_id, elegivel).update({
+            models.ChecklistEnvioRelatorio.id == envio_id, elegivel,
+            models.ChecklistEnvioRelatorio.execucao_id.in_(
+                db.query(models.ChecklistExecucao.id)
+            )).update({
                 'status': 'processando',
                 'inicio_tentativa': agora.isoformat(timespec='seconds'),
                 'tentativas': models.ChecklistEnvioRelatorio.tentativas + 1,
@@ -1663,7 +1666,8 @@ def reprocessar_envios_checklist(background_tasks: BackgroundTasks, db: Session 
         or_(models.ChecklistEnvioRelatorio.status.in_(['pendente', 'falhou']),
             and_(models.ChecklistEnvioRelatorio.status == 'processando',
                  models.ChecklistEnvioRelatorio.inicio_tentativa < vencido)),
-        models.ChecklistEnvioRelatorio.tentativas < 4).order_by(
+        models.ChecklistEnvioRelatorio.tentativas < 4,
+        models.ChecklistEnvioRelatorio.execucao_id.in_(db.query(models.ChecklistExecucao.id))).order_by(
             models.ChecklistEnvioRelatorio.id.asc()).limit(20).all()
     for envio in envios:
         background_tasks.add_task(_processar_envio_execucao, envio.id)

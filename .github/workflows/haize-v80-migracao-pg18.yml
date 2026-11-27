@@ -1,0 +1,60 @@
+name: Haize V8 - Ensaio isolado de migracao PostgreSQL 18
+on:
+  push:
+    branches: [haize-v80-ensaio-migracao-pg18]
+permissions:
+  contents: read
+jobs:
+  upgrade_pg18:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: haize_ci
+          POSTGRES_PASSWORD: senha-ficticia-local-ci
+          POSTGRES_DB: haize_v80_upgrade
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haize_ci -d haize_v80_upgrade"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    env:
+      CI: 'true'
+      DATABASE_URL: postgresql://haize_ci:senha-ficticia-local-ci@127.0.0.1:5432/haize_v80_upgrade
+      AUTH_SECRET_KEY: somente-ci-v80-migracao-postgres18-ficticio
+      ENABLE_CHECKLIST_EMAILS: 'false'
+      GAS_WEB_APP_URL: ''
+      HAIZE_SECRET: ''
+      AUTOMATION_SECRET: ''
+      HAIZE_STORAGE_MODE: local
+      FRONTEND_PUBLIC_URL: http://127.0.0.1:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: |
+          python -m pip install -r backend/requirements.txt
+          python -m pip install httpx2
+      - name: Reproduzir esquema legado sem dados reais
+        run: python scripts/ensaio_legado_v80_pg18.py preparar
+      - name: Backup antes da migracao
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG_CONTAINER" pg_dump -U haize_ci -d haize_v80_upgrade -Fc > "$RUNNER_TEMP/haize_v80_legado.dump"
+          test -s "$RUNNER_TEMP/haize_v80_legado.dump"
+          sha256sum "$RUNNER_TEMP/haize_v80_legado.dump" > "$RUNNER_TEMP/haize_v80_legado.sha256"
+      - name: Migrar e testar API sobre esquema legado
+        run: python scripts/ensaio_legado_v80_pg18.py migrar
+      - name: Restaurar backup em banco independente
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+          DATABASE_URL: postgresql://haize_ci:senha-ficticia-local-ci@127.0.0.1:5432/haize_v80_restore
+        run: |
+          sha256sum -c "$RUNNER_TEMP/haize_v80_legado.sha256"
+          docker exec "$PG_CONTAINER" createdb -U haize_ci haize_v80_restore
+          docker exec -i "$PG_CONTAINER" pg_restore -U haize_ci -d haize_v80_restore --exit-on-error --no-owner --no-acl < "$RUNNER_TEMP/haize_v80_legado.dump"
+          python scripts/ensaio_legado_v80_pg18.py restauracao
